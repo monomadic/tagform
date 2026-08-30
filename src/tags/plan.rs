@@ -203,6 +203,43 @@ mod tests {
         pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
     }
 
+    /// The shipped config and the name table are two halves of one fact, in
+    /// two files with no compiler between them. A disagreement does not fail
+    /// here -- it fails at write time, on a real file, as
+    /// `Sorry, Keys:X doesn't exist or isn't writable`.
+    ///
+    /// Only one direction is checkable: a key the config declares must carry
+    /// the name the table uses. The reverse is not a rule, because seven keys
+    /// (title, artist, description, comment, album, keywords, genre) are in
+    /// exiftool's own Keys table and must *not* be redeclared.
+    #[test]
+    fn the_shipped_exiftool_config_agrees_with_the_name_table() {
+        let cfg = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/tagform.exiftool.cfg"),
+        )
+        .expect("reading assets/tagform.exiftool.cfg");
+
+        let mut declared = 0;
+        for line in cfg.lines().map(str::trim) {
+            // `key => { Name => 'Tag', Writable => 'string' },`
+            let Some((key, rest)) = line.split_once("=>") else { continue };
+            let key = key.trim();
+            if key.is_empty() || !key.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                continue;
+            }
+            let Some(name) = rest.split('\'').nth(1) else { continue };
+            declared += 1;
+            assert_eq!(
+                exiftool_name(key),
+                Some(name),
+                "{key} is declared as {name:?} in tagform.exiftool.cfg, but \
+                 EXIFTOOL_KEY_NAMES says {:?}",
+                exiftool_name(key)
+            );
+        }
+        assert!(declared > 10, "parsed only {declared} declarations; the config format must have changed");
+    }
+
     #[test]
     fn every_schema_write_key_has_an_exiftool_name() {
         for f in crate::model::schema::FIELDS {

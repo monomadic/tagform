@@ -57,11 +57,12 @@ Use the map below instead of searching the tree.
 ## Where things are
 
 ```
-src/main.rs         CLI, --print-json report, exit codes
+src/main.rs         CLI, --print-json / --print-schema, exit codes
 src/config.rs       config.toml + the yt-dlp --alias parse (Genre/Type sets)
 src/thumb.rs        thumbnail extraction, cache, ratatui-image
 src/model/
   schema.rs         FIELDS table — field → mdta/read/xmp/ilst keys. Start here.
+                    `--print-schema` emits it as JSON; no document copies it.
   value.rs          Value, Agg (the Same/Mixed aggregation across files)
 src/tags/
   probe.rs          ffprobe + exiftool → FileTags
@@ -85,6 +86,7 @@ writes five. That fan-out is the reason the tool exists.
 cargo test                      # unit tests live in-file under #[cfg(test)]
 cargo run -- FILE...            # the form
 cargo run -- --print-json FILE... # model as JSON — the fastest way to inspect a real file
+cargo run -- --print-schema       # the field schema as JSON — what we write vs what we read
 cargo build --release
 ```
 
@@ -108,7 +110,7 @@ debugging. Changing code that violates one is a regression, not a refactor.
    writer therefore picks its backend from *file contents*, not user
    preference — never from a flag. (DESIGN's `--writer ffmpeg` / `--force`
    escape hatch is designed but not implemented; `main.rs` accepts only
-   `--print-json`, `--theme`, `--no-thumbnail`, `--help`.)
+   `--print-json`, `--print-schema`, `--theme`, `--no-thumbnail`, `--help`.)
 3. **The original is never modified until a verified replacement exists.**
    `write.rs` remuxes to a sibling temp, proves duration, tags and layout, and
    only then renames over the original. Any failure leaves the original
@@ -144,7 +146,8 @@ debugging. Changing code that violates one is a regression, not a refactor.
 - **Don't re-derive container behaviour.** If a question is "what does ffmpeg
   actually do to X", it is answered in `docs/CONTAINER.md`. Ask the doc, not a
   test file.
-- **Don't grep the repo for a field.** `FIELDS` in `schema.rs` is the index.
+- **Don't grep the repo for a field.** `FIELDS` in `schema.rs` is the index, and
+  `--print-schema | jq` answers questions about it without opening the file.
 - **Don't read `DESIGN.md` to learn the current state** — it describes the
   intended design across all 8 milestones; the README's Status section says
   where the code actually is (milestone 5 of 8: multi-file).

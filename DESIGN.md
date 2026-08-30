@@ -179,42 +179,46 @@ writes five keys — and that fan-out is the whole reason this tool exists.
 
 ### 3.1 The primary fields
 
-The ten the brief requires, plus the ones the yt-dlp config already produces and
-would otherwise be silently dropped on every rewrite. This table is now
-generated-from-life: it mirrors `FIELDS` in `src/model/schema.rs`, which is the
-authority.
+The ten the brief requires, plus the ones the yt-dlp config already produces
+and would otherwise be silently dropped on every rewrite: **Title, Actors,
+Artist, Rating, Description, URL, Channel, Tags, Genre, Type, Kind.**
 
-| # | Field | Control (§5) | Container keys (`mdta`) | XMP | ilst atom |
-|---|---|---|---|---|---|
-| 1 | **Title** | Text | `title` | `XMP-dc:Title` | `©nam` |
-| 2 | **Actors** | List (chips, `,`) | `actors`, `artist` | `XMP-iptcExt:PersonInImage` | `©ART` |
-| 3 | **Artist** | Text | `artist` | — | `©ART` |
-| 4 | **Rating** | Stars 0–5 | `rating` | `XMP-xmp:Rating` | — |
-| 5 | **Description** | TextArea | `description` | `XMP-dc:Description` | `desc` |
-| 6 | **URL** | URL (validated) | `webpage_url`, `source_url`, `purl`, `comment`, `original_url` | — | `purl` |
-| 7 | **Channel** | Text | `channel`, `album_artist`, `album` | `XMP-xmpDM:Album` | `aART` |
-| 8 | **Tags** | HashTag chips | `keywords` | `XMP-dc:Subject` | `keyw` |
-| 9 | **Genre** | Enum | `genre` | — | `©gen` |
-| 10 | **Type** | Enum | `type` | — | — |
-| 11 | **Kind** | Enum (closed) | `media_type` | — | `stik` |
+**The table is not reproduced here.** `FIELDS` in `src/model/schema.rs` is the
+authority, and `tagform --print-schema` emits it as JSON — every field with its
+control, its write keys, its read aliases, its XMP tag and its ilst atom. A
+copy kept by hand in this document would be a second source of truth, and the
+one that goes stale first; the copy that used to sit here had three errors in
+it by the time anyone checked.
 
-Read aliases are wider than the write set (§4.2): Actors also reads `cast`,
-Tags also reads `keyw`.
+```bash
+tagform --print-schema | jq '.fields[] | {id, mdta, read, ilst}'
+```
 
-⟨built, differs⟩ Four claims in the original table did not survive contact:
+Two properties of that data are worth stating because they are decisions, not
+facts about the file format:
+
+- **`mdta` is what we write; `read` is what we understand.** Read is
+  deliberately the wider set — Actors also accepts `cast`, Tags accepts `keyw`,
+  Date accepts `com.apple.quicktime.creationdate` — because this library has
+  files tagged by several generations of these scripts. Write emits only the
+  canonical keys. That asymmetry is what makes `tagform` idempotent (§4.2).
+- **A field is one label, and often many keys.** URL writes five. That fan-out
+  is the reason the tool exists, and it is why the schema is a table rather
+  than a naming convention.
+
+⟨built, differs⟩ Four claims in the original design did not survive contact:
 
 - **Rating writes one key, not two.** There is no `comment` JSON blob and no
   freeform `com.apple.iTunes:rating` atom. `rating` in `mdta`, `XMP-xmp:Rating`
-  where XMP is present, and nothing in `ilst` — the field is one of the five
-  `--print-json` reports as `ilst_lossy`.
+  where XMP is present, and nothing in `ilst`.
 - **Actors does not write `iTunMOVI`.** The plist blob is still deferred
   (§17.5), so Apple software does not see the cast list.
 - **Channel writes `aART` only**, not `©alb` and `tvnn` as well.
 - **Description does not overflow into `ldes`.** Synopsis owns `ldes`; the
   >255-byte split (§5.2) is ⟨designed⟩.
 
-⟨designed⟩ The `⌃T` title-case helper (1) and Channel completion (7) are not
-built; see §5.1.
+⟨designed⟩ The `⌃T` title-case helper and Channel completion are not built;
+see §5.1.
 
 ### 3.2 Secondary fields
 
@@ -481,7 +485,9 @@ struct KeyMap {
 `read` is wider than `mdta` on purpose: a file might carry `purl` but not
 `webpage_url`, or `cast` but not `actors`. Read accepts any alias; write emits
 the canonical set. That asymmetry is what makes the tool idempotent across files
-tagged by different generations of these scripts.
+tagged by different generations of these scripts, and
+`--print-schema | jq '.fields[] | select(.read - .mdta | length > 0)'` lists
+exactly where it applies.
 
 The ilst column in §3 is **measured** rather than asserted: `rating`, `type`
 and `origin` have no ilst mapping at all and exist only because

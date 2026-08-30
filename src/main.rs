@@ -15,9 +15,20 @@ use anyhow::{bail, Result};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use model::schema::{claimed_atom_keys, claimed_xmp_tags, FIELDS};
+use model::schema::{claimed_atom_keys, claimed_xmp_tags, FIELDS, JUNK_KEYS};
 use model::value::{Agg, Value};
 use tags::probe::{probe, FileTags};
+
+/// The field schema itself, with no file involved (DESIGN §3).
+///
+/// Emitted rather than transcribed: a table of the same facts kept by hand in
+/// a document is a second source of truth, and the one that goes stale first.
+#[derive(serde::Serialize)]
+struct Schema {
+    fields: &'static [model::schema::FieldDef],
+    /// Muxer bookkeeping: never shown, and actively cleared on every write.
+    junk_keys: &'static [&'static str],
+}
 
 #[derive(serde::Serialize)]
 struct Report {
@@ -61,12 +72,14 @@ fn main() {
 fn run() -> Result<()> {
     let mut paths: Vec<PathBuf> = Vec::new();
     let mut print_json = false;
+    let mut print_schema = false;
     let mut no_thumbnail = false;
     let mut theme: Option<String> = None;
 
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--print-json" => print_json = true,
+            "--print-schema" => print_schema = true,
             "--no-thumbnail" => no_thumbnail = true,
             a if a.starts_with("--theme=") => theme = Some(a[8..].to_string()),
             "-h" | "--help" => {
@@ -82,6 +95,12 @@ fn run() -> Result<()> {
         if !ui::theme::set_by_name(name) {
             bail!("unknown theme {name:?}; try one of: {}", ui::theme::names().join(", "));
         }
+    }
+
+    // Takes no files: it describes the schema, not a selection.
+    if print_schema {
+        println!("{}", serde_json::to_string_pretty(&Schema { fields: FIELDS, junk_keys: JUNK_KEYS })?);
+        return Ok(());
     }
 
     if paths.is_empty() {
@@ -186,6 +205,7 @@ const USAGE: &str = "\
 Usage: tagform [OPTIONS] FILE...
 
   --print-json     dump the aggregated tag model and exit
+  --print-schema   dump the field schema as JSON and exit (takes no files)
   --no-thumbnail   do not render a thumbnail
   --theme=NAME     colour scheme; `c` cycles them at runtime
   -h, --help       show this message

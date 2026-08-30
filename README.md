@@ -38,12 +38,20 @@ distinct values it is about to flatten, in the confirmation, before it happens.
 ```bash
 cargo run -- FILE...                  # the form
 cargo run -- --print-json FILE...     # the model, as JSON
+cargo run -- --print-schema           # the field schema, as JSON
 cargo test
 cargo build --release                 # binary to target/release/tagform
 ```
 
-The full CLI is four options: `--print-json`, `--no-thumbnail`, `--theme=NAME`,
-`--help`. Everything else is a key inside the form.
+The full CLI is five options: `--print-json`, `--print-schema`,
+`--no-thumbnail`, `--theme=NAME`, `--help`. Everything else is a key inside the
+form.
+
+`--print-schema` is where the metadata vocabulary is documented — every field
+with the keys it **writes** (`mdta`), the aliases it **understands** on read,
+its XMP tag and its iTunes atom. It is emitted from `FIELDS` in
+[src/model/schema.rs](src/model/schema.rs), which is the single authority; no
+document keeps a copy.
 
 The form is **modal**. Select mode moves and commands; Edit mode types. That is
 what frees the single-letter keys — `w` can mean write because in Select mode

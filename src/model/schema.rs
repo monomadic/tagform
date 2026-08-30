@@ -26,6 +26,9 @@ pub enum Control {
     ReadOnly,
 }
 
+/// Serialised by `--print-schema`, so the schema is emitted from the one
+/// authority rather than transcribed into a document beside it.
+#[derive(serde::Serialize)]
 pub struct FieldDef {
     pub id: &'static str,
     pub label: &'static str,
