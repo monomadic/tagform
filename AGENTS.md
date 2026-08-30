@@ -11,23 +11,38 @@ this file.
 The docs in this repo are large and mostly *reference*. Reading them end to end
 is the main way to waste a context window here. Budget them like this:
 
-| File | Lines | How to use it |
+| File | | How to use it |
 |---|---|---|
-| `README.md` | 135 | **Read in full, once.** Status, keymap, and the three container facts the design rests on. |
-| `DESIGN.md` | 1488 | **Never read whole.** Section-scoped: `grep -n '^## ' DESIGN.md`, then `sed -n 'A,Bp'`. |
-| `docs/CONTAINER.md` | 253 | Read §1 only, and only when touching the write path. Measured ffmpeg/exiftool behaviour. |
+| `README.md` | ~140 lines | **Read in full, once.** Status, keymap, and the three container facts the design rests on. |
+| `DESIGN.md` | ~1500 lines | **Never read whole.** One section at a time — see below. |
+| `docs/CONTAINER.md` | ~250 lines | Read §1 only, and only when touching the write path. Measured ffmpeg/exiftool behaviour. |
 
-`DESIGN.md` section starts, so you can jump without grepping first:
+Pull one section without reading the file, by its heading — no line numbers,
+nothing to keep in sync:
 
-```
-26 §1 what this is · 75 §2 container problem · 174 §3 schema · 435 §4 keys
-538 §5 controls · 754 §6 tui choice · 849 §7 layout · 901 §8 thumbnails
-949 §9 write path · 1161 §10 cli · 1218 §11 keys · 1255 §12 config
-1285 §13 crate layout · 1332 §14 testing · 1383 §15 integration
-1413 §16 milestones · 1456 §17 open questions
+```bash
+awk '/^## 9\./{f=1} f&&/^## 10\./{exit} f' DESIGN.md
 ```
 
-Regenerate with `grep -n '^## ' DESIGN.md` if an edit shifts them.
+For the last section, or when you would rather not name the next number:
+`awk '/^## 17\./{f=1;print;next} f&&/^## /{exit} f'`. Sub-sections work the
+same way with `^#+ 9\.2\.1`. (`^## 1\.` does not match `## 10.` — the escaped
+dot is what keeps that honest.)
+
+| § | |
+|---|---|
+| 1 | what this is, and the non-goals |
+| 2 | **the container problem** — mdta vs ilst vs udta vs XMP, measured |
+| 3 | the field schema — `FIELDS`, the footage profile, junk keys |
+| 4 | reading and writing keys; multi-file aggregation |
+| 5 | the controls, one subsection each |
+| 6 | why ratatui and a hand-written control layer |
+| 7 | layout · 8 thumbnails |
+| 9 | **the write path** — plan, backend choice, the remux, filename sync |
+| 10 | CLI · 11 keys · 12 config · 13 crate layout |
+| 14 | testing · 15 integration |
+| 16 | **milestones and current direction** |
+| 17 | open questions |
 
 **DESIGN.md marks what is real.** It is a design document written ahead of the
 code, so it carries two markers: **`⟨designed⟩`** means not built — intent, not
