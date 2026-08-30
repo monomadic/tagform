@@ -318,12 +318,14 @@ mod tests {
     #[test]
     fn a_file_carrying_the_old_type_key_still_reads_as_variant() {
         let def = crate::model::schema::field_by_id("variant").expect("variant field");
+        // "Master" is also the old spelling of the value, so this exercises
+        // both renames at once: old key, old value, current reading.
         let old = file(&[("type", "Master")], &[]);
-        assert_eq!(old.lookup(def), Some(Value::text("Master")));
+        assert_eq!(old.lookup(def), Some(Value::text("Enhanced")));
 
         // And the new key wins where a file somehow carries both.
-        let both = file(&[("type", "Clip"), ("variant", "Master")], &[]);
-        assert_eq!(both.lookup(def), Some(Value::text("Master")));
+        let both = file(&[("type", "Clip"), ("variant", "Original")], &[]);
+        assert_eq!(both.lookup(def), Some(Value::text("Original")));
     }
 
     #[test]

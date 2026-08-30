@@ -132,7 +132,7 @@ blind, and opening one never changes the shape of the form:
 
 ```
    Variant          Clip
-  ▶Variant           Clip  Master  Original
+  ▶Variant           Clip  Enhanced  Original
 ```
 
 `enter` opens, `h`/`l` step and wrap, `enter` accepts, `tab` accepts and
@@ -147,7 +147,12 @@ instead of being lost the first time the field is stepped.
 
 Genre and Variant are **not hardcoded** — they are parsed out of
 `~/.config/yt-dlp/config`'s `--alias` lines, so adding an alias there adds a
-dropdown value here. `Camera Footage` normalizes to `Footage`.
+dropdown value here.
+
+A value stored under an older name reads as its current one — `Camera Footage`
+shows as `Footage`, `Master` as `Enhanced` — on files as well as in the
+dropdown, so a renamed option replaces the old spelling instead of sitting
+beside it. Old files keep their stored value until the field is edited.
 
 Two things it already does that the scripts it replaces could not: it reads XMP
 and atoms together, so a `rename-footage` clip shows its people, location and

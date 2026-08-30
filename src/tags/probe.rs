@@ -148,7 +148,55 @@ fn normalize(v: Value, control: Control) -> Value {
     match (control, v) {
         (Control::List, Value::Text(s)) => Value::List(split_list(&s)),
         (Control::HashTags, Value::Text(s)) => Value::List(split_tags(&s)),
+        // A set value stored under an older name reads as its current one, so
+        // a renamed option is a rename rather than a second entry in the list.
+        // Harmless for Kind, whose values are `stik` integers that match
+        // nothing. See config::normalize.
+        (Control::Enum, Value::Text(s)) => Value::Text(crate::config::normalize(&s)),
         (_, other) => other,
+    }
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+    use crate::model::schema::field_by_id;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn tagged(key: &str, value: &str) -> FileTags {
+        let mut atoms = BTreeMap::new();
+        atoms.insert(key.to_string(), Value::text(value));
+        FileTags { path: PathBuf::from("/tmp/x.mp4"), atoms, xmp: BTreeMap::new() }
+    }
+
+    /// A renamed set value has to *replace* the old spelling on screen, not sit
+    /// beside it. Without normalising on read, a file tagged `Master` joins the
+    /// set as an unknown value and the dropdown offers Master and Enhanced as
+    /// though they were different things.
+    #[test]
+    fn an_old_variant_value_reads_as_its_current_name() {
+        let def = field_by_id("variant").expect("variant field");
+        assert_eq!(tagged("type", "Master").lookup(def), Some(Value::text("Enhanced")));
+        assert_eq!(tagged("variant", "Master").lookup(def), Some(Value::text("Enhanced")));
+        assert_eq!(tagged("variant", "Clip").lookup(def), Some(Value::text("Clip")));
+    }
+
+    /// The same mechanism, and the case that was documented as working but
+    /// never was: normalisation only ran on the yt-dlp config's literals, so a
+    /// *file* tagged the long way round kept showing the long name.
+    #[test]
+    fn camera_footage_on_a_file_reads_as_footage() {
+        let def = field_by_id("genre").expect("genre field");
+        assert_eq!(tagged("genre", "Camera Footage").lookup(def), Some(Value::text("Footage")));
+    }
+
+    /// Kind is an enum too, but its values are `stik` integers. Normalising
+    /// them must be a no-op rather than a surprise.
+    #[test]
+    fn kind_integers_pass_through_normalisation() {
+        let def = field_by_id("kind").expect("kind field");
+        assert_eq!(tagged("media_type", "9").lookup(def), Some(Value::text("9")));
     }
 }
 

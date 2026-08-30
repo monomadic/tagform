@@ -273,7 +273,7 @@ easier discipline to keep now that neither is built.
 ### 3.4 Variant, and the two things once called "type"
 
 **Variant** is the user's own axis: which version of the work this file is —
-the `Original`, a `Clip` of it, or a `Master` that has been remastered or
+the `Original`, a `Clip` of it, or an `Enhanced` pass that has been remastered or
 upscaled. It already existed as the yt-dlp config's
 `--alias clip/master/original`, writing `meta_type`.
 
@@ -332,21 +332,48 @@ The genre and type enums are not invented here. They are exactly the aliases in
 ```
 
 → Genre: `Media`, `Footage`, `Karaoke`, `VJ Clip`
-→ Variant: `Clip`, `Master`, `Original`
+→ Variant: `Clip`, `Enhanced` (stored `Master`, §3.5.1), `Original`
 
-**`Footage`, not `Camera Footage`.** The yt-dlp alias literal is currently
-`Camera Footage`; `tagform` normalises it. A `[enums.aliases]` table maps stored
-values to canonical ones on read, so existing files tagged `Camera Footage`
-display and re-save as `Footage` without a migration pass.
+#### 3.5.1 Renaming a value
 
-⟨built, differs⟩ The normalisation is real but it is **hard-coded in
-`config.rs`, not configurable** — there is no `config.toml` and so no
-`[enums.aliases]` table (§12). `Camera Footage` → `Footage` is the only alias
-that exists, which is the only one anything has needed.
+`config::normalize` maps a value stored under an older name to its current one.
+Two exist:
 
-Changing the yt-dlp alias itself (`config/yt-dlp/config`, the `--alias footage`
-line) is a separate one-line edit that only affects *new* downloads; the alias
-table above is what makes the two agree either way.
+| stored | shown and written |
+|---|---|
+| `Camera Footage` | `Footage` |
+| `Master` | `Enhanced` |
+
+It runs in **both directions**, and both halves are load-bearing: on the
+literals parsed out of the yt-dlp config, so the dropdown offers the current
+name, and on values read off files (`probe::normalize`, for `Control::Enum`),
+so a file tagged the old way displays as the new one.
+
+That second half is what makes this a rename rather than an addition. Without
+it an old value on a file is simply unrecognised, joins the set for that field
+(§5.7), and the dropdown ends up offering both spellings of the same thing as
+though they were different.
+
+It is the read-wider-than-write rule (§4.2) applied to *values* instead of
+keys: understand the old spelling, only ever write the new one. A file keeps
+its stored value until the field is actually edited, so there is no migration
+pass — the same bargain the `type` → `variant` key rename makes (§3.4).
+
+⟨built, differs⟩ **The `Camera Footage` normalisation did not work on files
+until the `Master` rename needed it to.** `config::normalize` was only ever
+called on the yt-dlp config's alias literals, so the dropdown said `Footage`
+while a file tagged `Camera Footage` kept showing the long name and joined the
+set beside it. This section claimed otherwise for the whole time. Two tests now
+pin both directions.
+
+⟨built, differs⟩ The map is **hard-coded in `config.rs`, not configurable** —
+there is no `config.toml` and so no `[enums.aliases]` table (§12). Two entries
+have been needed in the life of the project, which is not a case for a config
+file.
+
+Changing a yt-dlp alias literal itself is a separate one-line edit in another
+repository that only affects *new* downloads; the map is what makes the two
+agree either way.
 
 Hard-coding them would guarantee drift the first time an alias is added, so
 `tagform` **parses `~/.config/yt-dlp/config` at startup**: any
@@ -724,7 +751,7 @@ same height, so nothing below it reflows:
 
 ```
    Variant          Clip                       ← closed
-  ▶Variant           Clip  Master  Original    ← open, "Clip" lit
+  ▶Variant           Clip  Enhanced  Original  ← open, "Clip" lit
 ```
 
 `←`/`→` or `h`/`l` step and wrap, `⏎` accepts, `⇥` accepts and advances,

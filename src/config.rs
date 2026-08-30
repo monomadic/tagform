@@ -16,7 +16,7 @@
 use std::path::PathBuf;
 
 pub const DEFAULT_GENRES: &[&str] = &["Media", "Footage", "Karaoke", "VJ Clip"];
-pub const DEFAULT_VARIANTS: &[&str] = &["Clip", "Master", "Original"];
+pub const DEFAULT_VARIANTS: &[&str] = &["Clip", "Enhanced", "Original"];
 
 /// The `stik` media kind: a closed set the Apple ecosystem actually reads.
 pub const KINDS: &[(&str, &str)] = &[
@@ -98,14 +98,27 @@ fn parse_alias_values(text: &str, field: &str) -> Vec<String> {
     out
 }
 
-/// Canonical spelling for values stored under an older name. "Footage" reads
-/// better than "Camera Footage" and is what the form shows; files already
-/// tagged the long way round display and re-save as the short one, so no
-/// migration pass is needed.
+/// Canonical spelling for a value stored under an older name.
+///
+/// Applied in both directions: to the literals parsed out of the yt-dlp config,
+/// so the dropdown offers the current name, and to values read off files
+/// (`probe::normalize`), so a file tagged the old way displays as the new one.
+/// The second half is what makes this a rename rather than a second entry in
+/// the set -- without it an old value simply joins the list (§5.7) and the
+/// dropdown offers both spellings of the same thing.
+///
+/// This is the read-wider-than-write rule (DESIGN §4.2) applied to values
+/// rather than keys: understand the old spelling, only ever write the new one.
+/// A file keeps its old value until the field is actually edited, which is why
+/// no migration pass is needed.
 pub fn normalize(value: &str) -> String {
     let v = value.trim();
     match v.to_ascii_lowercase().as_str() {
         "camera footage" => "Footage".to_string(),
+        // "Master" was ambiguous: in this library a master is the good copy,
+        // but everywhere else it is the *source* -- the opposite of a
+        // remastered or upscaled derivative, which is what this value means.
+        "master" => "Enhanced".to_string(),
         _ => v.to_string(),
     }
 }
@@ -134,9 +147,10 @@ mod tests {
     }
 
     #[test]
-    fn types_come_from_the_aliases() {
+    fn variants_come_from_the_aliases() {
         let e = Enums::from_ytdlp_config(SAMPLE);
-        assert_eq!(e.variant, vec!["Clip", "Master", "Original"]);
+        // The alias literal is still "Master"; the form offers "Enhanced".
+        assert_eq!(e.variant, vec!["Clip", "Enhanced", "Original"]);
     }
 
     /// The alias literal is "Camera Footage"; the form says "Footage".
@@ -145,6 +159,11 @@ mod tests {
         assert_eq!(normalize("Camera Footage"), "Footage");
         assert_eq!(normalize("camera footage"), "Footage");
         assert_eq!(normalize(" Karaoke "), "Karaoke");
+        assert_eq!(normalize("Master"), "Enhanced");
+        assert_eq!(normalize("MASTER"), "Enhanced");
+        // Already current, and anything unknown, passes through untouched.
+        assert_eq!(normalize("Enhanced"), "Enhanced");
+        assert_eq!(normalize("Upscale"), "Upscale");
     }
 
     /// A missing or unreadable config must not empty the dropdowns.
