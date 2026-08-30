@@ -14,22 +14,28 @@ is the main way to waste a context window here. Budget them like this:
 | File | Lines | How to use it |
 |---|---|---|
 | `README.md` | 135 | **Read in full, once.** Status, keymap, and the three container facts the design rests on. |
-| `SPEC.md` | 1218 | **Never read whole.** Section-scoped: `grep -n '^## ' SPEC.md`, then `sed -n 'A,Bp'`. |
+| `SPEC.md` | 1498 | **Never read whole.** Section-scoped: `grep -n '^## ' SPEC.md`, then `sed -n 'A,Bp'`. |
 | `docs/CONTAINER.md` | 253 | Read §1 only, and only when touching the write path. Measured ffmpeg/exiftool behaviour. |
 
 `SPEC.md` section starts, so you can jump without grepping first:
 
 ```
-1 title · 55 §2 container problem · 145 §3 schema · 344 §4 keys · 421 §5 controls
-589 §6 tui choice · 676 §7 layout · 716 §8 thumbnails · 755 §9 write path
-955 §10 cli · 997 §11 keys · 1032 §12 config · 1072 §13 layout · 1118 §14 testing
-1157 §15 integration · 1173 §16 milestones · 1193 §17 open questions
+26 §1 what this is · 75 §2 container problem · 174 §3 schema · 435 §4 keys
+538 §5 controls · 724 §6 tui choice · 837 §7 layout · 893 §8 thumbnails
+941 §9 write path · 1159 §10 cli · 1216 §11 keys · 1260 §12 config
+1290 §13 crate layout · 1337 §14 testing · 1388 §15 integration
+1418 §16 milestones · 1462 §17 open questions
 ```
 
-**SPEC §13's crate layout is aspirational and does not match `src/`.** It lists
-`tags/ffmpeg.rs`, `tags/exiftool.rs`, `tags/xmp.rs`, `model/form.rs`, `seed/`
-and `ui/controls/`, none of which exist. Trust the tree, not §13. Use the map
-below instead of searching.
+**SPEC.md marks what is real.** It is a design document written ahead of the
+code, so it carries two markers: **`⟨designed⟩`** means not built — intent, not
+behaviour — and **`⟨built, differs⟩`** means built, but not the way that
+section first described it, with a note on how. Unmarked text describes the
+code. Do not implement against a `⟨designed⟩` block without checking whether
+the reason it is unbuilt is written next to it; several are deliberate
+rejections rather than a backlog. §16 has the current direction.
+
+Use the map below instead of searching the tree.
 
 ## Where things are
 

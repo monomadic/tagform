@@ -1,7 +1,25 @@
 # tagform — a form-based metadata tagger for MP4/MOV
 
-**Status:** milestones 0-5 built (see [README](README.md)); 6-8 outstanding.
-**Language:** Rust. **Install target:** `~/.local/bin/tagform` via `setup/install/install-tagform.sh`.
+**Status:** milestones 0–5 built, 6 largely built (see §16); 7–8 outstanding.
+**Language:** Rust. **Repository:** standalone —
+[monomadic/tagform](https://github.com/monomadic/tagform). **Install:**
+`cargo build --release`, binary to `~/.local/bin/tagform`.
+
+> **How to read this document.** It is a design spec written ahead of the code,
+> and the code has since answered some of it. Anything marked
+> **`⟨designed⟩`** is not built and describes intent, not behaviour; anything
+> marked **`⟨built, differs⟩`** is built but not the way this section first
+> described it, and the note says how. Everything else describes the code as it
+> stands. For what actually runs today, [README.md](README.md) is authoritative
+> and much shorter; for the measured container facts, so is
+> [docs/CONTAINER.md](docs/CONTAINER.md).
+>
+> This spec predates the split from the `~/config` dotfiles monorepo, where
+> `tagform` lived at `utils/tagform`. Sibling tools it refers to —
+> `mp4-tui-tagger`, `ytform`, `media-audit`, `rename-footage`, `mp4doctor`,
+> `media-embed`, `fd-media` — still live there and are named without links,
+> since they are no longer reachable by relative path. They remain the
+> behavioural references this design is measured against.
 
 ---
 
@@ -14,13 +32,14 @@ instead of a list of key/value strings.
 
 ```
 tagform ~/Movies/**/*.mp4              # multi-file, aggregated like an mp3 tagger
-tagform --fetch clip.mp4               # seed from yt-dlp using the embedded URL
-tagform --from-filename clip.mp4       # seed from the filename grammar
-tagform --set genre=Karaoke --apply *.mov   # headless
+tagform --print-json clip.mp4          # the model, as JSON
 ```
 
-It replaces [`config/zsh/bin/mp4-tui-tagger`](../../config/zsh/bin/mp4-tui-tagger),
-which has the right *staging model* (nothing hits disk until `w`, multi-file
+⟨designed⟩ Three more entry points are planned and not built: `--fetch`
+(seed from yt-dlp via the embedded URL), `--from-filename` (seed from the
+filename grammar), and `--set K=V --apply` (headless). See §10.
+
+It replaces `mp4-tui-tagger`, which has the right *staging model* (nothing hits disk until `w`, multi-file
 aggregation with `<multiple values>`) but the wrong *interface*: an fzf list
 where every edit shells out to `$EDITOR` and every value is an untyped string.
 A rating is not a string. A URL is not a string. A tag list is not a string.
@@ -30,8 +49,9 @@ Three existing things define its shape:
 | Existing | What `tagform` takes from it |
 |---|---|
 | `mp4-tui-tagger` | staging model, multi-file value aggregation, write-on-`w` |
-| [`utils/ytform`](../ytform) | the live form over title/actors/channel/origin/tags/rating, and the kitty-placeholder thumbnail |
-| [`media-audit`](../../config/zsh/bin/media-audit) | thumbnail cache + cover-fit crop, faststart handling, the yt-dlp metadata fetch |
+| `ytform` | the live form over title/actors/channel/origin/tags/rating, and the kitty-placeholder thumbnail |
+| `media-audit` | thumbnail cache + cover-fit crop, faststart handling, the yt-dlp metadata fetch |
+| `rename-footage` | the XMP field set, its exiftool argument order, and the field-precedence rule (§3.6) |
 
 The difference from `ytform` is the direction of travel: `ytform` edits metadata
 for a file being *downloaded*, and the output is a filename. `tagform` edits
@@ -44,11 +64,11 @@ container (with the filename as an optional secondary sink).
 - Not a library manager. It does not walk, index or organise; feed it paths
   (`fd-media`, `media-paths`, `fzf-media-select` already do that).
 - Not a container repair tool. Fragmentation and moov placement stay
-  [`mp4doctor`](../../config/zsh/bin/mp4doctor)'s job; `tagform` only rides the
-  faststart flag along on the remux it is already doing.
+  `mp4doctor`'s job; `tagform` only rides the faststart flag along on the remux
+  it is already doing.
 - No Matroska, no audio-only formats. If it grows, `.mkv` goes through a
   separate backend, not by pretending MKV tags are MP4 atoms.
-- Not a chapter or subtitle editor (see §14, deferred).
+- Not a chapter or subtitle editor. Deferred indefinitely.
 
 ---
 
@@ -75,7 +95,7 @@ ffmpeg picks between them:
 - **`-movflags use_metadata_tags`** — `mdta`, every key preserved verbatim,
   **and the iTunes atoms are not written**.
 
-The repo currently commits to `mdta` everywhere. `config/yt-dlp/config` says so
+This library commits to `mdta` everywhere. `~/.config/yt-dlp/config` says so
 explicitly:
 
 ```
@@ -90,12 +110,19 @@ ecosystem shows up in Plex with no title.
 
 ### 2.1 Compatibility modes
 
-`tagform` makes this an explicit setting rather than an accident, with three
-modes:
+**⟨designed⟩ — `--compat` is not built.** Every write today is `mdta`: the
+remux always passes `use_metadata_tags`, and there is no flag to ask for
+anything else. What *is* built is the diagnostic half — `--print-json` reports
+`ilst_lossy`, the fields on the given files that have no iTunes atom at all,
+which is exactly the set `--compat ilst` would drop. That measurement is the
+prerequisite for the modes below; the modes themselves are milestone 8.
+
+The intended surface makes this an explicit setting rather than an accident,
+with three modes:
 
 | `--compat` | What is written | Use |
 |---|---|---|
-| `mdta` *(default)* | one ffmpeg pass with `use_metadata_tags`; every field, custom keys included | the house style — matches everything else in this repo |
+| `mdta` *(default, and the only behaviour today)* | one ffmpeg pass with `use_metadata_tags`; every field, custom keys included | the house style — matches the rest of the media toolchain |
 | `ilst` | one ffmpeg pass without the flag; only fields with a real atom mapping (§4) | files headed for Plex/Infuse/Music |
 | `both` | the `mdta` pass, then a second in-place injection of the ilst atoms (§9.3) | archival masters; the only mode readable by everything |
 
@@ -116,8 +143,10 @@ custom vocabulary: `actors`, `type`, `channel`, `rating`, `origin`,
 The `.mov` default path is not merely lossy, it is *wrong*: ffmpeg invents
 unnamed atoms from the first three characters of keys it cannot map, so
 `description` becomes `UserData_des` and `keywords` becomes `UserData_key`, and
-nothing reads those back. **`--compat ilst` on a `.mov` input is a hard error**
-naming the fields that would be lost.
+nothing reads those back. ⟨designed⟩ **`--compat ilst` on a `.mov` input must be
+a hard error** naming the fields that would be lost — a constraint on the mode
+when it lands, not something that can be wrong today, since the mode does not
+exist.
 
 One more measured consequence: with `-map_metadata 0`, `use_metadata_tags`
 copies `major_brand`, `minor_version` and `compatible_brands` in as *real*
@@ -151,45 +180,70 @@ writes five keys — and that fan-out is the whole reason this tool exists.
 ### 3.1 The primary fields
 
 The ten the brief requires, plus the ones the yt-dlp config already produces and
-would otherwise be silently dropped on every rewrite.
+would otherwise be silently dropped on every rewrite. This table is now
+generated-from-life: it mirrors `FIELDS` in `src/model/schema.rs`, which is the
+authority.
 
-| # | Field | Control (§5) | Container keys (`mdta`) | ilst atom | Notes |
+| # | Field | Control (§5) | Container keys (`mdta`) | XMP | ilst atom |
 |---|---|---|---|---|---|
-| 1 | **Title** | Text | `title` | `©nam` | title-case helper on `⌃T`, matching `media-parse-filename-to-json` |
-| 2 | **Actors** | List (chips, `,`) | `actors`, `artist` | `©ART` + `iTunMOVI` cast | yt-dlp writes both from `%(cast,uploader)l` |
-| 3 | **Artist** | Text | `artist` | `©ART` | separate from Actors; when Actors is non-empty and Artist is untouched it mirrors the joined list (§3.4) |
-| 4 | **Rating** | Stars 0–5 | `rating`, `comment` JSON | freeform `com.apple.iTunes:rating` | see §3.3 — this is *not* `rtng` |
-| 5 | **Description** | TextArea | `description` | `desc` (+ `ldes` if >255 B) | |
-| 6 | **URL** | URL (validated) | `webpage_url`, `source_url`, `purl`, `comment`, `original_url` | `purl` | one field, five keys — §3.2 |
-| 7 | **Channel** | Text + completion | `album_artist`, `album`, `channel` | `aART`, `©alb`, `tvnn` | yt-dlp maps `%(channel,uploader)s` to both `album_artist` and `album` |
-| 8 | **Tags** | HashTag chips | `keywords` | `keyw` | comma-joined on disk, `#tag` in filenames |
-| 9 | **Genre** | Enum (open) | `genre` | `©gen` | enum seeded from the yt-dlp aliases — §3.5 |
-| 10 | **Type** | Enum (open) | `type` | — | `Clip` / `Master` / `Original`, from the yt-dlp aliases |
-| 11 | **Kind** | Enum (closed) | `media_type` | `stik` | the iTunes media kind — §3.3 |
+| 1 | **Title** | Text | `title` | `XMP-dc:Title` | `©nam` |
+| 2 | **Actors** | List (chips, `,`) | `actors`, `artist` | `XMP-iptcExt:PersonInImage` | `©ART` |
+| 3 | **Artist** | Text | `artist` | — | `©ART` |
+| 4 | **Rating** | Stars 0–5 | `rating` | `XMP-xmp:Rating` | — |
+| 5 | **Description** | TextArea | `description` | `XMP-dc:Description` | `desc` |
+| 6 | **URL** | URL (validated) | `webpage_url`, `source_url`, `purl`, `comment`, `original_url` | — | `purl` |
+| 7 | **Channel** | Text | `channel`, `album_artist`, `album` | `XMP-xmpDM:Album` | `aART` |
+| 8 | **Tags** | HashTag chips | `keywords` | `XMP-dc:Subject` | `keyw` |
+| 9 | **Genre** | Enum | `genre` | — | `©gen` |
+| 10 | **Type** | Enum | `type` | — | — |
+| 11 | **Kind** | Enum (closed) | `media_type` | — | `stik` |
+
+Read aliases are wider than the write set (§4.2): Actors also reads `cast`,
+Tags also reads `keyw`.
+
+⟨built, differs⟩ Four claims in the original table did not survive contact:
+
+- **Rating writes one key, not two.** There is no `comment` JSON blob and no
+  freeform `com.apple.iTunes:rating` atom. `rating` in `mdta`, `XMP-xmp:Rating`
+  where XMP is present, and nothing in `ilst` — the field is one of the five
+  `--print-json` reports as `ilst_lossy`.
+- **Actors does not write `iTunMOVI`.** The plist blob is still deferred
+  (§17.5), so Apple software does not see the cast list.
+- **Channel writes `aART` only**, not `©alb` and `tvnn` as well.
+- **Description does not overflow into `ldes`.** Synopsis owns `ldes`; the
+  >255-byte split (§5.2) is ⟨designed⟩.
+
+⟨designed⟩ The `⌃T` title-case helper (1) and Channel completion (7) are not
+built; see §5.1.
 
 ### 3.2 Secondary fields
 
-Shown under a collapsed **More ▸** section (`⇥` past field 11, or `m`), so the
-default screen stays the eleven above.
+⟨built, differs⟩ **There is no collapsed *More ▸* section.** The form is one
+flat list. Three of the fields below were promoted into it outright, and the
+rest are unbuilt.
 
-| Field | Control | Keys (`mdta`) | ilst |
-|---|---|---|---|
-| Date | Date (`YYYY-MM-DD`) | `date` | `©day` |
-| Comment | TextArea | `comment` | `©cmt` |
-| Synopsis | TextArea | `synopsis` | `ldes` |
-| Composer | Text | `composer` | `©wrt` |
-| Director | List | `director` | `iTunMOVI` |
-| Producer | List | `producer` | `iTunMOVI` |
-| Studio | Text | `studio` | `iTunMOVI` |
-| Copyright | Text | `copyright` | `cprt` |
-| Grouping | Text | `grouping` | `©grp` |
-| Language | Enum (ISO 639-2) | `language` | — |
-| Show | Text | `show` | `tvsh` |
-| Season / Episode | Number ×2 | `season_number`, `episode_sort` | `tvsn`, `tves` |
-| Episode ID | Text | `episode_id` | `tven` |
-| Advisory | Enum (closed) | `advisory` | `rtng` |
-| Content rating | Text | `content_rating` | `iTunEXTC` |
-| Origin | Text | `origin` | — | the `(fh_881)` bracket in the filename grammar |
+Built, sitting directly after Kind:
+
+| Field | Control | Keys (`mdta`) | Read also | XMP | ilst |
+|---|---|---|---|---|---|
+| Date | Date (`YYYY-MM-DD`) | `date` | `com.apple.quicktime.creationdate` | `XMP-xmp:CreateDate` | `©day` |
+| Synopsis | TextArea | `synopsis` | — | — | `ldes` |
+| Origin | Text | `origin` | — | — | — |
+
+Date deliberately does **not** read `creation_time`: that is muxer bookkeeping
+(§3.7), and treating it as authored would show every file carrying a date nobody
+set. `com.apple.quicktime.creationdate` is different — a phone writes it, and it
+is a real capture time. `date` is read first, so an edit written there wins on
+the next read.
+
+⟨designed⟩ Not built, and unlikely to be until something wants them: Comment,
+Composer, Director, Producer, Studio, Copyright, Grouping, Language, Show,
+Season / Episode, Episode ID, Advisory, Content rating. Their key mappings are
+recorded in git history; three of them (Director, Producer, Studio) are blocked
+on `iTunMOVI` (§17.5) for any Apple-visible result, and the rest are TV-library
+metadata this collection does not use. **The reason to add one is a file that
+carries it**, not completeness — every field added to the flat form costs a row
+on every screen.
 
 ### 3.3 Three different things called "rating"
 
@@ -199,23 +253,25 @@ This trips up every MP4 tagger and the schema must keep them apart:
    trailing ` ★★★☆☆` (`media-set-rating`, `media-parse-filename-to-json`) and in
    the `comment` JSON blob `media-write-tags` emits. **There is no standard atom
    for it** — iTunes keeps star ratings in its library database, not in the
-   file. `tagform` writes it to the `rating` key in `mdta` mode and to the
-   freeform `com.apple.iTunes:rating` atom in `ilst` mode, and keeps the
-   filename in sync when `sync_filename` is on (§8).
-2. **Advisory** (`rtng`): `0` none / `2` clean / `1` explicit. A closed enum in
-   **More**.
-3. **Content rating** (`iTunEXTC`): `mpaa|R|400|`, `us-tv|TV-MA|600|`. Free text
-   in **More**, format-validated with a warning only.
+   file. `tagform` writes it to the `rating` key, and to `XMP-xmp:Rating` on
+   files that carry XMP, which is a real standard 0–5 field. ⟨designed⟩ The
+   freeform `com.apple.iTunes:rating` atom is not written; it was a guess, and
+   §17.2 is where it stays until someone checks what Plex and Infuse read.
+   ⟨designed⟩ Filename sync (§9.4) is not built.
+2. **Advisory** (`rtng`): `0` none / `2` clean / `1` explicit. ⟨designed⟩.
+3. **Content rating** (`iTunEXTC`): `mpaa|R|400|`, `us-tv|TV-MA|600|`.
+   ⟨designed⟩.
 
-Field 4 is sense (1). The other two are never conflated with it.
+Field 4 is sense (1). The other two are never conflated with it — and are the
+easier discipline to keep now that neither is built.
 
 ### 3.4 Two different things called "type"
 
 Same discipline:
 
 - **Type** (field 10) is the user's own axis, and it already exists — the yt-dlp
-  config has `--alias clip/master/original` writing `meta_type`. Open enum,
-  free text allowed.
+  config has `--alias clip/master/original` writing `meta_type`. ⟨built,
+  differs⟩ Intended as an *open* enum; built closed, like Kind (§5.7).
 - **Kind** (field 11) is `stik`, a closed integer enum the Apple ecosystem
   actually reads:
 
@@ -254,12 +310,12 @@ The genre and type enums are not invented here. They are exactly the aliases in
 **`Footage`, not `Camera Footage`.** The yt-dlp alias literal is currently
 `Camera Footage`; `tagform` normalises it. A `[enums.aliases]` table maps stored
 values to canonical ones on read, so existing files tagged `Camera Footage`
-display and re-save as `Footage` without a migration pass:
+display and re-save as `Footage` without a migration pass.
 
-```toml
-[enums.aliases]
-"Camera Footage" = "Footage"
-```
+⟨built, differs⟩ The normalisation is real but it is **hard-coded in
+`config.rs`, not configurable** — there is no `config.toml` and so no
+`[enums.aliases]` table (§12). `Camera Footage` → `Footage` is the only alias
+that exists, which is the only one anything has needed.
 
 Changing the yt-dlp alias itself (`config/yt-dlp/config`, the `--alias footage`
 line) is a separate one-line edit that only affects *new* downloads; the alias
@@ -274,17 +330,41 @@ notes it in the status line.
 
 ### 3.6 The Footage profile: XMP fields from `rename-footage`
 
-When Genre is `Footage`, six more fields appear, and they live in XMP rather
-than in atoms because that is where `rename-footage` put them:
+**Built**, and it is the part of this document the code changed most.
 
-| Field | Control | XMP tag | Atom fallback on read |
+Actors, Channel, Tags and Rating are not separate footage fields at all — they
+are the §3.1 fields, which carry an XMP tag alongside their atoms and resolve
+XMP-first (§4.1). That was the intent all along ("the same fields, only their
+storage differs"), and it is what shipped.
+
+What is genuinely footage-specific is a group of five fields that appear only
+when the file actually carries them:
+
+| Field | Control | XMP tag | Note |
 |---|---|---|---|
-| **Actors** | List | `XMP-iptcExt:PersonInImage` (true list) | `Keys:Actors`, `Keys:Artist` |
-| **Channel** | Text | `XMP-xmpDM:Album` | `Keys:AlbumArtist`, `Keys:Album` |
-| **Tags** | HashTag | `XMP-dc:Subject` (true list) | `Keys:Keywords` |
-| **Location** | Text | `XMP-iptcExt:LocationCreatedCity` | — |
-| **Rating** | Stars | `XMP-xmp:Rating` (0–5) | `Keys:Rating` |
-| **Original name** | Text (read-only) | `XMP-xmpMM:PreservedFileName` | — |
+| **Location** | Text | `XMP-iptcExt:LocationCreatedCity` | a place name, and only that |
+| **State** | Text | `XMP-iptcExt:LocationCreatedProvinceState` | |
+| **Country** | Text | `XMP-iptcExt:LocationCreatedCountryName` | |
+| **Coordinates** | ReadOnly | — (atoms `location`, `location-eng`) | the ISO 6709 string the camera wrote |
+| **Original name** | ReadOnly | `XMP-xmpMM:PreservedFileName` | write-once |
+
+⟨built, differs⟩ Three corrections to the original design:
+
+- **The gate is the value, not the Genre.** A footage field is shown when it is
+  present in at least one file in the selection and hidden when it is `Absent`
+  — `footage_only` in `schema.rs`, checked in both `build_rows` and
+  `--print-json`. Keying it on `Genre == Footage` would have hidden the
+  location on every clip whose genre was never set, which is most of them.
+- **State and Country were added.** `rename-footage --geocode` writes the city
+  as one field of an IPTC block and fills the province and country in beside
+  it, deliberately, so that the plain-text place and the numbers it came from
+  live in one structure. Editing the city without those two visible is how they
+  drift apart.
+- **Coordinates is its own read-only field.** It deliberately does not feed
+  Location: ffmpeg maps QuickTime's `com.apple.quicktime.location.ISO6709` onto
+  the `location` key, so a shared field displayed
+  `+13.7165+100.5867+018.071/` as though it were a city — and an edit would
+  have written a place name over a coordinate.
 
 Notes that are not optional:
 
@@ -333,11 +413,22 @@ Notes that are not optional:
 `vendor_id`, `creation_time` — muxer bookkeeping, hidden from the form, and
 actively cleared on every write rather than merely ignored (§2.1).
 
-Everything else found on disk but absent from the schema appears in a
-**Custom** section at the bottom: an editable key/value list, so no existing tag
-is ever lost by being unrecognised. `yt_dlp_extractor`, `yt_dlp_id`,
-`yt_dlp_slug`, `yt_dlp_info_json` and their siblings land here, read-only by
-default (`--edit-custom` to unlock) since they are provenance, not user data.
+Everything else found on disk but absent from the schema appears as **Custom**
+rows at the bottom of the form, so no existing tag is ever lost by being
+unrecognised. `yt_dlp_extractor`, `yt_dlp_id`, `yt_dlp_slug`,
+`yt_dlp_info_json` and their siblings land here.
+
+⟨built, differs⟩ Two changes:
+
+- **Custom covers XMP as well as atoms.** Rows are keyed by origin —
+  `custom:<atom key>` or `xmp:<tag>` — because the write plan has to put an
+  edit back where it came from. This was added after `rename-footage` grew its
+  IPTC location block: an XMP tag no field claimed was *invisible*, preserved
+  on write but with nothing on screen saying it was there.
+- **They are plain editable text rows, not read-only.** There is no
+  `--edit-custom` flag. Making provenance read-only by default is still
+  defensible, but nothing has yet been damaged by its absence, and a flag that
+  gates an edit nobody makes is a flag that only ever gets in the way.
 
 ---
 
@@ -346,9 +437,11 @@ default (`--edit-custom` to unlock) since they are provenance, not user data.
 ### 4.1 Read
 
 **Two readers, always.** `ffprobe -v error -show_entries format_tags -of json`
-for the atoms, and one `exiftool -f -T -G1` call for the XMP that ffprobe is
+for the atoms, and `exiftool -j -G1 -n -XMP:all` for the XMP that ffprobe is
 blind to (§2.2). Keys are lower-cased for lookup; the original casing is
-retained for round-tripping unrecognised keys.
+retained for round-tripping unrecognised keys. exiftool exits non-zero on a
+file with no XMP at all — that is the common case for a plain download, not an
+error, and the reader treats it as such.
 
 Reading with ffprobe alone would report every footage file as having no people,
 no tags, no channel, no location and no rating — and the form would then offer
@@ -359,13 +452,19 @@ Precedence per field is XMP → atoms, matching `rename-footage`'s
 `first_present()`. A value seen in neither is `Unset`; a value seen in both that
 disagrees is surfaced in the inspector rather than silently resolved.
 
-A second `ffprobe -show_streams` call supplies the header line: resolution,
-duration, codecs, bitrate, and stream-level `tags` (which the form does not
-edit, but must not clobber — hence `-map_metadata 0` on write).
+A second `ffprobe` call on the stream list supplies the header line:
+resolution, duration, codecs, bitrate, and stream-level `tags` (which the form
+does not edit, but must not clobber — hence `-map_metadata 0` on write). The
+write path runs its own `-show_streams` to capture the shape it has to
+reproduce (§9.2.1).
 
-Both run on a worker thread pool; the UI opens immediately with a skeleton and
-fills in as probes land, because a 40-file selection on an SMB volume takes
-seconds.
+⟨built, differs⟩ **Tag probing is sequential and blocking**, not a worker pool:
+`main.rs` probes every file up front and the UI opens once they are all in.
+What *is* off-thread is the per-file media probe and the thumbnail extraction,
+each on its own thread reporting through an `mpsc::Sender<Msg>`, because those
+seek through multi-gigabyte files. The skeleton-then-fill design was written
+for a 40-file SMB selection; nothing has yet been slow enough to need it, and
+it is the obvious first move if that changes.
 
 ### 4.2 The mapping table is data, not code
 
@@ -383,11 +482,16 @@ struct KeyMap {
 the canonical set. That asymmetry is what makes the tool idempotent across files
 tagged by different generations of these scripts.
 
-The ilst column in §3 is now **measured** rather than asserted: `type`,
-`origin`, `channel`, `rating` and `actors` have no ilst mapping at all and exist
-only because `use_metadata_tags` allows arbitrary keys (§2.1). `keymap.json` is
-generated by `tests/container-experiment.sh` and checked in, so the table is
-regenerable rather than hand-maintained.
+The ilst column in §3 is **measured** rather than asserted: `rating`, `type`
+and `origin` have no ilst mapping at all and exist only because
+`use_metadata_tags` allows arbitrary keys (§2.1). `--print-json` reports that
+set per selection as `ilst_lossy`, computed from `FIELDS` rather than from a
+sidecar.
+
+⟨built, differs⟩ **There is no checked-in `keymap.json`.** The table lives in
+`FIELDS` and nowhere else, which is the right call for a table with one
+consumer — a generated file checked in beside the code it duplicates is a
+second source of truth waiting to drift.
 
 One measured trap for the read path: a value can be written by exiftool and read
 back by exiftool while ffprobe reports it as **empty** — observed on a large
@@ -400,44 +504,58 @@ disagreement — which is observable — rather than on a byte count, which is n
 
 Straight from `mp4-tui-tagger`, which got this right:
 
-| State | Meaning | Display |
+⟨built, differs⟩ The four-state enum was split in two, which is the better
+shape: `Agg` in `model/value.rs` describes **what is on disk**, and staged
+edits live separately in the app rather than as extra variants of it. A state
+that means "the user did something" has no business in a type produced by the
+reader.
+
+What the reader produces:
+
+| `Agg` | Meaning | Display |
 |---|---|---|
-| `Same(v)` | present and identical in every file | the value |
-| `Mixed` | differs, or present in only some | `‹multiple›`, dimmed italic |
-| `Set(v)` | user assigned a unified value | the value, marked changed |
-| `Unset` | user cleared it | struck through |
+| `Absent` | present in no file | `—` |
+| `Same { value }` | present and identical in every file | the value |
+| `Mixed { values }` | differs, or present in only some | `‹multiple›`, dimmed |
 
-`Mixed` is preserved on write: a field left alone keeps each file's own value.
-Only `Set`/`Unset` touch disk. A `Mixed` field shows its per-file values in the
-inspector pane (`⇥` to it, `p`), and typing into it promotes it to `Set` — with
-a confirmation the first time, since that overwrites N distinct values.
+`Agg::value()` returns `Some` only for `Same`: neither `Mixed` nor `Absent` has
+a single value an edit could be compared against, and collapsing them to one
+would be how a batch silently flattens.
 
-For list-valued fields (Actors, Tags) `Mixed` additionally offers **merge**
-(`M`): the union of all files' values, order-preserving. That is the operation
-you actually want when tagging a batch, and no existing tool here has it.
+On top of that, a staged edit marks its row `●` and is what `w` writes. `Mixed`
+is preserved: a field left alone keeps each file's own value, and only edited
+fields touch disk. A `Mixed` field shows its per-file values in the inspector
+(`p`), and setting it says how many distinct values it is about to flatten —
+in the confirmation, before it happens.
+
+For list-valued fields `Mixed` additionally offers **merge** — `m`, not `M` —
+the union of every file's values in first-seen order, folded
+case-insensitively. That is the operation you actually want when tagging a
+batch, and none of the scripts this replaces can do it.
 
 ---
 
 ## 5. Controls
 
-The heart of the app. Every control implements one trait; the form is a `Vec` of
-them plus a focus index.
+The heart of the app.
 
-```rust
-trait Control {
-    fn render(&self, f: &mut Frame, area: Rect, focused: bool, state: &ValueState);
-    fn handle(&mut self, key: KeyEvent) -> Reaction;   // Consumed | Pass | Commit | Cancel
-    fn value(&self) -> Value;                          // Text|List|Int|Bool|Enum|Null
-    fn set_value(&mut self, v: &ValueState);
-    fn validate(&self) -> Validation;                  // Ok | Warn(msg) | Error(msg)
-    fn height(&self, width: u16) -> u16;               // 1 for most; TextArea grows
-}
-```
+⟨built, differs⟩ **One `Editor` enum, not a `Control` trait.** The design called
+for a trait object per control and a `Vec<Box<dyn Control>>`; what shipped is a
+single enum in `ui/edit.rs` with a variant per control, because only one field
+is ever being edited at a time. The form holds `Vec<Row>` — key, label,
+`Control` discriminant, `Agg` — and materialises an `Editor` for the focused
+row on `enter`. Ten variants and no vtable, and the whole edit surface is one
+`match` you can read top to bottom.
 
-`Reaction::Pass` is what makes navigation work: a control that does not consume
-`↑`/`↓`/`⇥` hands it back to the form. A `TextArea` consumes `↑`/`↓` internally
-(cursor movement) and only passes `⇥`, which is exactly the behaviour a GUI form
-has.
+`Reaction` survived and is what makes navigation work: `Consumed | Pass |
+Commit | Cancel`. A control that does not consume a key hands it back to the
+form, so a `TextArea` keeps `↑`/`↓` for the cursor while a one-line field lets
+them move rows. `Control::ReadOnly` returns `Pass` for everything, which is the
+entire implementation of a non-editable field.
+
+Built: Text, TextArea, List, HashTags, Url, Stars, Enum, Date, ReadOnly.
+⟨designed⟩ Checkbox (§5.8) and Number (§5.9) are not built — nothing needs
+them until the write panel and the TV fields land.
 
 ### 5.1 Text
 
@@ -445,11 +563,11 @@ has.
 field, home/end/word-motion, and a masked variant that is unused here but free.
 Rendered as a single line inside a `▏ ▕` gutter that colours by validation state.
 
-Optional **completion**: `⌃Space` opens a dropdown of values seen in the current
-selection plus the frecency list from `~/.local/share/tagform/values.json`,
-filtered with `nucleo` (the matcher `grid`'s spec picks, and Helix's). Channel,
-Studio, Artist and Genre use it. This is the single highest-value ergonomic
-feature — 90% of tagging is retyping a channel name you have typed before.
+⟨designed⟩ **Completion is not built**, and it is the largest single piece of
+ergonomics still missing — 90% of tagging is retyping a channel name you have
+typed before. The plan stands: `⌃Space` opens a dropdown of values seen in the
+current selection plus a frecency list, filtered with `nucleo`. It is milestone
+7, and it wants the value history in §12 to exist first.
 
 ### 5.2 TextArea
 
@@ -458,23 +576,27 @@ feature — 90% of tagging is retyping a channel name you have typed before.
 file for anything longer, then reads it back — keeping `mp4-tui-tagger`'s escape
 hatch without making it the only path.
 
-Description validates: over 255 bytes emits `Warn("desc truncated by some
-readers; ⌃L moves overflow to Synopsis")`, and `⌃L` performs that split. Warnings
-never block a write.
+Description validates: over 255 bytes emits `Warn("N bytes; over 255 some
+readers truncate")`. Warnings never block a write.
+
+⟨designed⟩ `⌃E` (the `$EDITOR` escape hatch) and `⌃L` (move the overflow into
+Synopsis) are not built — the warning names the problem without yet offering
+the fix.
 
 ### 5.3 List (Actors, Director, Producer)
 
 Chips on one line: `Sasha Grey · Manuel Ferrara · +`.
 
-- typing appends to the pending chip; `,` or `⏎` commits it
-- `⌫` on an empty pending chip re-opens the previous chip for editing
-- `←`/`→` move between chips, `⌥←`/`⌥→` reorder, `⌦` deletes the focused chip
-- paste of `A, B, C` splits on commas (same rule as `ytform`'s `SplitList`)
-- overflow past the field width collapses to `… +3` with the full list in the
-  inspector
-
 Stored comma-joined (`Sasha Grey, Manuel Ferrara`), matching what yt-dlp's
-`%(cast)l` produces.
+`%(cast)l` produces, and split on commas on the way in (`ytform`'s `SplitList`
+rule).
+
+⟨built, differs⟩ **Editing is line-wise, not chip-wise.** A list field edits as
+its comma-joined text and re-splits on commit. Per-chip focus, `⌥←`/`⌥→`
+reordering, `⌫`-reopens-previous and the `… +3` overflow collapse are all
+⟨designed⟩. The chips are a *rendering*, which is most of the value for a
+fraction of the state machine — and `m` (merge, §4.3) turned out to matter far
+more for batch work than chip navigation would have.
 
 ### 5.4 HashTag (Tags)
 
@@ -488,7 +610,8 @@ A List with a different grammar, because tags round-trip through *filenames*:
   underscores become `-`, so a tag is always one filename token
 - **stored comma-joined without `#`** in `keywords` — `#` is presentation
 - `Warn` on a tag containing `/`, `\`, `:` or a leading `.` (filename-hostile)
-- `⌃Space` completes against the corpus of tags seen across the library index
+- ⟨designed⟩ `⌃Space` completes against the corpus of tags seen across the
+  library index
 
 ### 5.5 URL
 
@@ -502,12 +625,16 @@ Text plus a `url::Url` parse on every keystroke:
 | no scheme but looks like a host | `Warn` + `⌃F` fixes it by prefixing `https://` |
 | unparseable | `Error` — blocks write |
 
-`⌃O` opens it (`open(1)`), `⌃Y` yanks it, and `⌃F` — the one that matters —
-**fetches**: runs `yt-dlp --skip-download --dump-single-json` against it (via
-the shared cache `media-audit` and `ytq` already use) and offers to fill Title,
-Actors, Channel, Description, Tags, Date from the result, with a per-field diff
-so nothing is silently overwritten. This is `media-refresh-tags` as an
-interaction instead of a script.
+The table above is built exactly as written, down to the message text
+(`not a URL: …`).
+
+⟨designed⟩ `⌃O` (open), `⌃Y` (yank), `⌃F` (prefix `https://`) and — the one
+that matters — **fetch** are not built. Fetch runs `yt-dlp --skip-download
+--dump-single-json` against the URL, via the shared cache `media-audit` and
+`ytq` already use, and offers to fill Title, Actors, Channel, Description, Tags
+and Date from the result with a per-field diff, so nothing is silently
+overwritten. It is `media-refresh-tags` as an interaction instead of a script,
+and it is the headline feature of milestone 7.
 
 Recognising a URL is already embedded is why the URL field reads five aliases
 (§4.2): files in this library carry it as `comment` (old `media-write-tags`
@@ -522,9 +649,13 @@ The control from `media-set-rating`, made reusable:
   Rating      ★★★☆☆
 ```
 
-`0`–`5` set directly, `←`/`→` or `h`/`l` step, `j`/`k` clear/full. Renders five
-glyphs always (filled + hollow), which is the exact form the filename grammar
-parses back. `Mixed` renders `☆☆☆☆☆` dimmed with a `‹multiple›` suffix.
+`←`/`→` or `h`/`l` step, and `h`/`l` also step it from Select mode without
+entering an edit at all. Renders five glyphs always (filled + hollow), which is
+the exact form the filename grammar parses back.
+
+⟨designed⟩ `0`–`5` to set directly and `j`/`k` for clear/full are not bound:
+in the modal design (§11) those keys move between rows, and taking them back
+for one control would be exactly the inconsistency the mode split bought.
 
 ### 5.7 Enum
 
@@ -554,31 +685,35 @@ be typed. Free-text entry comes back later.
 
 ### 5.8 Checkbox
 
-```
-  [✓] MOV faststart      move moov to the front (recommended)
-  [ ] Sync filename      rename to the Actors - [Channel] Title #tag grammar
-  [ ] Back up originals  keep FILE.backup.ext next to each file
-```
+⟨designed⟩ **Not built, and mostly not needed.** The three options it was for
+resolved differently:
 
-`Space` / `x` toggles, `y`/`n` set directly. These live in the **Write** panel
-(§7), not among the metadata fields, because they describe the *operation* not
-the *file*. Faststart defaults **on** and its default is settable per-machine
-in config (`write.faststart = true`).
+- **MOV faststart** is real, defaults on, and toggles with `f` from Select mode
+  — a single key, no control and no panel.
+- **Sync filename** depends on §9.4, which is unbuilt.
+- **Back up originals** was dropped. The write path never modifies an original
+  until a verified replacement exists (§9.2.1), which is the guarantee a backup
+  was standing in for; keeping a second copy of a 6 GB file to insure against a
+  failure mode that leaves the original untouched is cost without cover.
+
+A Checkbox control arrives when a second toggle does.
 
 ### 5.9 Date, Number
 
-Date: `YYYY-MM-DD`, digit-only input with auto-inserted dashes, `↑`/`↓` on the
-segment under the cursor increments it, `t` = today. Accepts and normalises the
-`YYYYMMDD` form yt-dlp's `upload_date` uses. Number: digits only, `↑`/`↓`
-increment, optional min/max.
+Date: accepts `YYYY-MM-DD`, warns and normalises the `YYYYMMDD` form yt-dlp's
+`upload_date` uses, and warns on anything else. ⟨designed⟩ Auto-inserted
+dashes, `↑`/`↓` on the segment under the cursor, and `t` = today are not built.
+
+⟨designed⟩ Number is not built; nothing uses it until the Season/Episode fields
+land (§3.2).
 
 ### 5.10 Validation model
 
 `validate()` runs per keystroke; the form aggregates:
 
 - any `Error` → the write key is inert and the status bar names the first
-  offending field. Only two things produce `Error`: an unparseable URL and a
-  non-integer in a Number field.
+  offending field. Exactly one thing produces `Error` today: an unparseable
+  URL. (The non-integer Number case waits on the control.)
 - `Warn` → yellow gutter, listed in the confirmation dialog, never blocks.
 
 Errors are rare by design. A tagger that refuses to save because it dislikes
@@ -589,6 +724,10 @@ your description is a worse tool than one that saves it.
 ## 6. TUI library choice
 
 ### 6.1 Survey
+
+*Kept as the record of why the dependency set is what it is. The verdicts all
+held; nothing here has been revisited since, and the versions below are the
+ones in `Cargo.toml` today.*
 
 | Crate | Latest | Health | Verdict |
 |---|---|---|---|
@@ -622,31 +761,43 @@ would be more than that just to integrate.
 This also keeps the dependency profile in line with `leaf`, the repo's other
 ratatui program, so there is one ratatui version to track rather than two.
 
+What shipped, verbatim from `Cargo.toml`:
+
 ```toml
 [dependencies]
-ratatui           = "0.30"
-crossterm         = "0.29"
-tui-input         = "0.15"
-ratatui-textarea  = "0.9"
-ratatui-image     = "11"
-nucleo            = "0.5"     # completion + the file picker
-url               = "2"
-serde             = { version = "1", features = ["derive"] }
-serde_json        = "1"
-toml              = "0.8"
-anyhow            = "1"
-unicode-width     = "0.2"
+ratatui          = "0.30"
+crossterm        = "0.29"
+ratatui-image    = "11"
+tui-input        = "0.15"
+ratatui-textarea = "0.9"
+url              = "2"
+unicode-width    = "0.2"
+image            = "0.25"
+anyhow           = "1.0"
+serde            = { version = "1.0", features = ["derive"] }
+serde_json       = "1.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-crossterm         = { version = "0.29", features = ["use-dev-tty"] }
+crossterm        = { version = "0.29", features = ["use-dev-tty"] }
 ```
+
+Two differences from the plan: `image` was added (`ratatui-image` takes a
+decoded `DynamicImage`, so the thumbnail path decodes the JPEG itself), and
+`nucleo` and `toml` are absent because the features that wanted them —
+completion (§5.1) and the config file (§12) — are not built. Neither is a
+dependency worth carrying ahead of its feature.
 
 ### 6.3 Event loop and focus
 
-Single-threaded UI; probes, thumbnails, yt-dlp fetches and the write pass run on
-worker threads and report through an `mpsc::Sender<Msg>`. The loop selects over
-crossterm events and that channel, redrawing only on change plus a 250 ms tick
-for spinners.
+Single-threaded UI; the media probe and thumbnail extraction run on worker
+threads and report through an `mpsc::Sender<Msg>`. The loop selects over
+crossterm events and that channel.
+
+⟨built, differs⟩ Tag probing and the write pass are **not** off-thread — the
+first happens before the UI opens (§4.1), the second blocks behind a
+confirmation the user is already waiting on. A write that streams its progress
+back through `Msg` is worth doing when a batch gets large enough to want a
+progress bar; a 40-file batch has not yet been that.
 
 ```
 crossterm events ─┐
@@ -654,26 +805,43 @@ crossterm events ─┐
 worker msgs ──────┘
 ```
 
-Focus is an index into the visible control list, with `⇥`/`⇧⇥` and `↑`/`↓`
-moving it (`↑`/`↓` only when the focused control passes them back). Hidden
-sections (More, Custom) are excluded from the ring until expanded. Mouse click
-sets focus when `--mouse` is on; off by default so terminal text selection keeps
-working.
+Focus is an index into the row list, moved with `j`/`k` and the arrows in
+Select mode and by `tab`/`shift-tab` from either mode. There are no hidden
+sections to exclude: every row, Custom included, is in the ring (§3.2, §3.7).
 
-`/dev/tty` is opened read+write at startup for both input and rendering, so
-`tagform` composes inside `$(...)` and under `fzf --bind execute(...)` — the
-same rule `grid`'s spec sets out, and the reason `media-audit` opens fds 3 and 4.
+⟨designed⟩ Mouse support and `--mouse` are not built; terminal text selection
+keeps working by default, which was the point of the flag.
+
+⟨designed⟩ **`/dev/tty` is not opened explicitly** — the app uses crossterm's
+default stdout backend, with `use-dev-tty` on macOS for input only. Composing
+inside `$(...)` or under `fzf --bind execute(...)` therefore is not yet
+supported. It matters for the §15 integrations and nothing else, so it lands
+with them.
 
 ### 6.4 Undo
 
-The form model is a plain struct; undo is a bounded `Vec<FormState>` snapshot
-stack (200 entries), pushed on every committed edit rather than every keystroke.
-`u` undoes, `⌃R` redoes. Cheap at this data size and immune to the subtle bugs a
-per-control undo would have.
+Undo is a snapshot stack of the whole staged-edit map
+(`Vec<BTreeMap<String, Value>>`), pushed on every committed edit rather than
+every keystroke. `u` undoes, `ctrl-r` redoes, and `r` reverts every staged edit
+at once. Cheap at this data size and immune to the subtle bugs a per-control
+undo would have.
+
+⟨built, differs⟩ It snapshots the *staged edits*, not the form state, and it is
+**unbounded** rather than capped at 200 — a session's edits are a few hundred
+short strings, and a cap that never binds is a cap that only ever surprises
+someone. It is cleared on write, since undoing across a write would suggest a
+disk change could be taken back.
 
 ---
 
 ## 7. Layout
+
+The sketch below is the original design. It is still the right shape, and three
+things in it are ⟨designed⟩ rather than built: the collapsed **More** and
+**Custom** rows (both sections are flat now — §3.2, §3.7), the **write** panel
+of checkboxes (§5.8), and the `(auto)` Artist mirror (§17.4). What replaced the
+write panel is a single `f` toggle and a shortcut strip that lists only the
+keys live in the current mode.
 
 ```
 ┌─ tagform ──────────────────────────────── 3 files · 2 changed · mdta ─┐
@@ -703,9 +871,18 @@ per-control undo would have.
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-Two-column labels/controls at ≥100 columns; labels move above their controls
-below that. Below 60 columns or 20 rows the thumbnail band is dropped first,
-then the write panel collapses into the status line.
+What the form actually paints: a filled `tagform` badge heading the screen,
+every field showing a coloured editable region whether or not it is focused,
+`▍` on the focused row (`▶` while editing) and `●` on a staged one, and the
+shortcut strip along the bottom. Colours are true-colour in four schemes —
+`midnight`, `gruvbox`, `nord`, `rose-pine` — cycled with `c` or picked with
+`--theme=NAME`.
+
+A test computes WCAG contrast for every text colour in every scheme against
+that scheme's own background and fails below 3:1, and checks that a custom-key
+label is a different *hue* from an ordinary one rather than a dimmer shade.
+Both guards exist because both mistakes were made: 16-colour `DarkGray`
+labels, and a file path drawn in a divider colour at 1.4:1.
 
 The **inspector** (`p`) replaces the thumbnail band with a per-file value table
 for the focused field — the answer to "what does `‹multiple›` actually contain",
@@ -726,29 +903,38 @@ not tear the image. `utils/ytform/thumb.go` implements that protocol by hand and
 is the reference if `ratatui-image` ever has to be dropped — and the fallback
 ladder is kitty → sixel → halfblocks → nothing, never an error.
 
-**Extraction** — `media-audit`'s recipe verbatim:
+**Extraction** — `media-audit`'s recipe, with one deliberate reversal:
 
 ```
 ffmpeg -v error -y -ss 2 -i FILE -frames:v 1 \
-  -vf "scale=W:H:force_original_aspect_ratio=increase:flags=lanczos,crop=W:H" \
+  -vf "scale=w=W:h=H:force_original_aspect_ratio=decrease:flags=lanczos" \
   -q:v 3 -- OUT.jpg
 ```
 
-Seek 2 s in to clear black leader, fall back to frame 0 on failure. Cover-fit
-(scale-to-cover then crop) rather than fit-inside, so the band is always exactly
-filled whatever the source aspect ratio is.
+Seek 2 s in to clear black leader, fall back to frame 0 on failure.
 
-**Cache** — `${XDG_CACHE_HOME:-~/.cache}/tagform/thumbs/<md5>.jpg`, keyed on
+⟨built, differs⟩ **`decrease`, not `increase`, and no crop.** `media-audit`
+cover-fits because it fills a fixed band in a report. Here the frame is the
+only thing on screen telling you which file you are editing, and cropping it
+to fill the box made a vertical phone clip render as a 720×404 centre-cropped
+strip — the preview claimed the video was landscape. Fitting inside the box
+leaves letterboxing; asserting the aspect ratio it does not have is worse. A
+test pins `force_original_aspect_ratio=decrease` in place.
+
+**Cache** — `${XDG_CACHE_HOME:-~/.cache}/tagform/thumbs/<hash>.jpg`, keyed on
 `path:mtime:size:boxW×boxH`. Including the box dimensions means a terminal
 resize regenerates rather than stretching a stale crop; including mtime+size
 means a re-encoded file gets a new thumbnail. Straight from
-`media-audit:thumb_cache_path()`.
+`media-audit:thumb_cache_path()`, except that the hash is a plain
+non-cryptographic one — it names a cache entry, and md5 would be ceremony.
 
-Generation is off-thread and the UI never blocks on it. `⌃G`/`⌃⇧G` re-seeks
-±10 s to pick a better frame — which, since the star rating is often a judgement
-about *this specific clip*, matters more than it sounds.
+Generation is off-thread and the UI never blocks on it.
 
-Disable with `--no-thumbnail` or `thumbnail = false`.
+⟨designed⟩ `⌃G`/`⌃⇧G` re-seek ±10 s to pick a better frame. Not built, and
+still wanted: the star rating is often a judgement about *this specific clip*,
+so being stuck with whatever is 2 s in matters more than it sounds.
+
+Disable with `--no-thumbnail`.
 
 ---
 
@@ -766,14 +952,19 @@ Write 3 files
   Rating      →  ★★★★☆                (1 file; 2 unchanged)
   Description →  removed              (all 3)
 
-  faststart on · originals not backed up · mdta
-  2 warnings: description >255 B (2 files)
+  faststart on · mdta
 
-  ⏎ write   e edit plan   esc cancel
+  ⏎ write   esc cancel
 ```
 
 Nothing before this point touches disk. `mp4-tui-tagger`'s staging model,
-kept — it is the reason that script is trustworthy.
+kept — it is the reason that script is trustworthy. The plan also names the
+backend it chose per file (§9.2), since "remux" and "in place" have very
+different costs on a 6 GB file, and a plan that hides which one it picked is
+hiding the only number the user might want to act on.
+
+⟨designed⟩ `e` to edit the plan is not built; `esc` and re-editing the form is
+the whole of it.
 
 ### 9.2 Choosing a backend — from the file, not from a flag
 
@@ -807,10 +998,16 @@ The two-pass case is not exotic — it is what happens the first time you set
 Genre on a footage clip that has XMP but no `genre` atom. It works only because
 both readers always run, so the XMP snapshot exists before the remux eats it.
 
-`--writer ffmpeg|exiftool|auto` exists for debugging and defaults to `auto`.
-Forcing `ffmpeg` on a file carrying XMP prints what will be lost and requires
-`--force`. This is the one place `tagform` overrides the user, and it does so
-because the alternative is silent, unrecoverable data loss.
+All three branches are built — `Writer::Exiftool`, `Writer::Ffmpeg`,
+`Writer::TwoPass` in `tags/plan.rs`, chosen from the file and executed in
+`tags/write.rs`.
+
+⟨designed⟩ **`--writer` and `--force` do not exist**, and their absence is not
+a gap. The choice is a correctness decision, and every flag that lets a user
+override it is a flag that lets a user destroy XMP. If a debugging override is
+ever needed it should be spelled so that it cannot be typed by accident; until
+something actually needs to debug a backend choice, no flag at all is the
+stronger position.
 
 #### 9.2.1 The remux
 
@@ -848,9 +1045,10 @@ because this library is 200 MB–6 GB files often on network volumes:
    mapping table from an assumption into something the tool checks every run.
 4. **Verify faststart** if requested: parse the atom chain, `moov` before
    `mdat`. `mp4doctor`'s `atom_state()` in Rust, ~40 lines.
-5. Restore mtime and (macOS) creation date.
-6. `rename(2)` over the original. Optionally `cp -p` the original to
-   `FILE.backup.ext` first.
+5. Restore mtime. ⟨designed⟩ macOS creation date is not restored — it is
+   `setattrlist(2)` and nothing has yet missed it.
+6. `rename(2)` over the original. ⟨designed⟩ There is no `FILE.backup.ext`
+   option; see §5.8 for why it was dropped rather than deferred.
 
 Any failure leaves the original untouched and the temp removed. The run
 continues to the next file and the failure is reported in the summary — a bad
@@ -858,8 +1056,8 @@ file in a batch of 40 must not abort the other 39.
 
 ### 9.3 The exiftool in-place path (milestone 4, not 8)
 
-Originally scoped as a late speed optimisation using `mp4ameta`. Milestone 0
-overturned both halves of that:
+**Built.** Originally scoped as a late speed optimisation using `mp4ameta`.
+Milestone 0 overturned both halves of that:
 
 - **It is not a speed win on local storage.** Measured on a 475 MB fixture:
   ffmpeg remux **0.25 s**, exiftool in place **0.54 s**. On APFS the remux is
@@ -910,6 +1108,12 @@ not a fallback.
 
 ### 9.4 Filename sync
 
+⟨designed⟩ **Not built.** No filename is parsed or composed anywhere in the
+code today, which also means §3.6's field-precedence rule ("no edit, no
+metadata → parse it out of the filename") is inert: an empty field stays empty.
+This is the largest remaining piece of milestone 6, and the section below is
+the design it should be built to.
+
 When **Sync filename** is checked, the file is renamed — but to **one of two
 grammars**, selected by Genre, because this library has two and they are close
 to inverses of each other:
@@ -954,200 +1158,227 @@ is off by default and shown in the plan as an explicit line.
 
 ## 10. CLI surface
 
+**Built.** The whole of it:
+
 ```
 tagform [OPTIONS] FILE...
 
+  --print-json     dump the aggregated tag model and exit
+  --no-thumbnail   do not render a thumbnail
+  --theme=NAME     colour scheme; `c` cycles them at runtime
+  -h, --help       show this message
+```
+
+Exit codes: `0` success, `2` anything that went wrong. Argument parsing is a
+hand-rolled loop over `std::env::args()` — no `clap`, because four options do
+not need a parser and a dependency added early is one you never get to remove.
+
+⟨designed⟩ The rest of the surface, in the order it is worth building:
+
+```
 Input
-      --from-filename       seed empty fields from the filename grammar
-      --fetch               seed from yt-dlp using the embedded URL (implies --from-url)
+      --from-filename       seed empty fields from the filename grammar   (§9.4)
+      --fetch               seed from yt-dlp using the embedded URL       (§5.5)
       --from-json FILE      seed from a yt-dlp .info.json
   -R, --recurse             expand directory arguments via fd-media
 
 Output / mode
-      --compat MODE         mdta | ilst | both                      [mdta]
+      --compat MODE         mdta | ilst | both                    [mdta]   (§2.1)
       --set KEY=VALUE       set a field non-interactively (repeatable)
       --unset KEY           clear a field (repeatable)
       --apply               with --set/--unset: write and exit, no TUI
-      --print-json          dump the aggregated tag model and exit
       --dry-run             build and print the write plan, write nothing
 
 Write
-      --no-faststart        do not add +faststart to the remux      [on]
-      --backup              keep FILE.backup.ext
-      --sync-filename       rename to the filename grammar
-      --fast                allow the in-place ilst path (§9.3)
-      --edit-custom         make unrecognised keys editable
+      --no-faststart        do not add +faststart to the remux    [on]
+      --sync-filename       rename to the filename grammar                (§9.4)
 
 Presentation
-      --no-thumbnail
-      --mouse
-      --theme NAME
-      --config PATH
+      --config PATH                                                       (§12)
 ```
 
-Exit codes: `0` written or nothing to do, `1` one or more files failed, `2`
-usage/config error, `3` insufficient disk space, `130` aborted.
+Two of these have to be designed for rather than bolted on. `--dry-run` is
+nearly free — the plan already exists as a value before anything touches disk
+(§9.1), so it is a print instead of a confirm. `--apply` is not: a headless
+mode **must never open `/dev/tty`**, and it is what makes `tagform` usable from
+`.job` scripts and from `media-audit`'s fix path. It is a first-class surface,
+not an afterthought, and it should get exit codes of its own — `1` for one or
+more files failed, `3` for insufficient disk space — since a script that cannot
+tell "no space" from "bad arguments" will retry the one thing that can never
+work.
 
-`--apply` with no TUI is what makes `tagform` usable from `.job` scripts and
-from `media-audit`'s fix path — the headless mode is a first-class surface, not
-an afterthought, and it must never open `/dev/tty`.
+Dropped rather than deferred: `--mouse` (§6.3), `--edit-custom` (§3.7),
+`--backup` (§5.8), `--writer` / `--force` (§9.2), `--fast` (the in-place path
+is chosen for correctness, never for speed — §9.3).
 
 ---
 
 ## 11. Keys
 
-| Key | Action |
-|---|---|
-| `⇥` / `⇧⇥`, `↑` / `↓` | next / previous field |
-| `⏎` | commit field; on an enum, open the picker |
-| `⌃Space` | completion popup |
-| `⌃E` | edit the focused field in `$EDITOR` |
-| `⌃F` | URL field: fetch metadata · other fields: fix-up (title case, scheme) |
-| `⌃O` / `⌃Y` | open / yank the focused value |
-| `0`–`5`, `h` `l` | rating (on the Rating row) |
-| `Space` / `x` | toggle checkbox |
-| `M` | merge a `Mixed` list field across files |
-| `p` | inspector — per-file values for the focused field |
-| `]` / `[` | next / previous file (single-file view) |
-| `a` | show all files (aggregate view) |
-| `m` / `c` | expand More / Custom |
-| `⌃G` / `⌃⇧G` | thumbnail seek ±10 s |
-| `u` / `⌃R` | undo / redo |
-| `⌫` | clear the focused field (staged like any edit; `u` undoes it) |
-| `w` | write (plan → confirm) |
-| `q` / `esc` | quit (confirms if there are staged edits) |
-| `?` | key help |
+**Built, and modal.** The original design assumed one mode with every field
+live, which forced every command onto a modifier. A Select/Edit split is
+better: `j`/`k` move and `enter` opens a field, so single-letter commands are
+free — `w` can mean write precisely because nothing is listening for the letter
+`w` until you press `enter`.
 
-**Built modal instead.** The above assumed one mode with fields always live,
-which forced every command onto a modifier. In practice a Select/Edit split is
-better: `j`/`k` move and `enter` opens a field, so the single-letter commands in
-the table above work as written — `w` can mean write precisely because nothing
-is listening for the letter w until you press `enter`. In Edit mode `enter`
-saves, `tab` saves and advances, `esc` cancels the field, `⌃c` always quits.
-On a set — which has no text to type into — `j`/`k` also save and move a row,
-so vim navigation carries on working without leaving edit mode first.
+**Select** (default)
+
+| key | |
+|---|---|
+| `j` / `k`, arrows, `tab` | move between fields (`g` / `G` first / last) |
+| `h` / `l` | cycle a fixed-set field, or nudge a rating, without entering edit mode |
+| `enter` | edit the focused field |
+| `w` | write staged edits (shows a plan first) |
+| `m` | merge a list field across every file in the selection |
+| `p` | inspector — per-file values for the focused field |
+| `]` / `[` / `a` | next file / previous file / all files |
+| `u` / `ctrl-r` / `r` | undo / redo / revert every staged edit |
+| `backspace` | clear the focused field (staged like any edit; `u` undoes it) |
+| `c` | cycle the colour scheme |
+| `f` | toggle MOV faststart on the write (on by default) |
+| `q` / `esc` | quit (asks if edits are staged) |
+
+**Edit**
+
+| key | |
+|---|---|
+| (type) | edit the field |
+| `h` / `l`, `←` / `→` | step a fixed set, or adjust a rating |
+| `enter` | save and stop editing |
+| `tab` / `shift-tab` | save and move to the next / previous field |
+| `j` / `k`, `↑` / `↓` | save and move a row — on a set, where there is no text to type |
+| `esc` | cancel this field's edit |
+| `ctrl-c` | quit, from either mode |
+
+⟨designed⟩ Unbound, each waiting on its feature: `⌃Space` (completion, §5.1),
+`⌃E` (`$EDITOR`, §5.2), `⌃F` (fetch, §5.5), `⌃O` / `⌃Y` (open / yank),
+`⌃G` / `⌃⇧G` (thumbnail seek, §8), `?` (key help — the shortcut strip and
+`--help` cover it for now).
 
 ---
 
 ## 12. Config
 
-`~/.config/tagform/config.toml`, deployed from `config/tagform/` per the repo's
-usual recipe (`dotter/global.toml` entry, `local.toml.example` line).
+⟨designed⟩ **There is no config file.** `config.rs` reads exactly one thing:
+`~/.config/yt-dlp/config`, for the Genre and Type aliases (§3.5). Everything
+else — theme, faststart, enums, defaults, field order — is either a flag, a
+runtime toggle, or a constant.
+
+That is a better position than it looks, and it should be defended until
+something specific breaks it. Four of the seven proposed tables have no
+customer: `[fields].order` and `.hidden` matter only once the form is long
+enough to need curating, `[defaults]` writes values nobody asked for, and
+`[enums]` duplicates a file that is already the source of truth. A config key
+is a permanent compatibility obligation bought for a one-line default.
+
+The one table with a real customer is `[completion].history`, and it comes with
+the feature that needs it:
 
 ```toml
-compat        = "mdta"
-thumbnail     = true
-theme         = "gruvbox"
-sync_filename = false
-
-[write]
-faststart = true
-backup    = false
-fast      = false
-
-[enums]
-# extends what is parsed out of ~/.config/yt-dlp/config
-genre = ["Media", "Camera Footage", "Karaoke", "VJ Clip", "Concert"]
-type  = ["Clip", "Master", "Original"]
-
-[defaults]
-# applied only to fields that are empty on load, never overwriting
-kind  = "Movie"
-genre = "Media"
-
-[fields]
-# reorder, hide, or promote a Custom key into the main form
-order  = ["title", "actors", "rating", "url", "channel", "tags", "genre", "type"]
-hidden = ["composer", "grouping"]
-
 [completion]
 history = 500        # values remembered per field
 ```
 
-Value history lives separately in `~/.local/share/tagform/values.json` (data,
-not config, so it is not a candidate for the dotfiles repo).
+Value history is data, not config, and belongs in
+`~/.local/share/tagform/values.json`. When the config file does land, `--config
+PATH` lands with it, and the deployment recipe is this repository's own
+(`cargo build --release`) rather than the dotfiles monorepo's `dotter` entry
+that this section originally assumed.
 
 ---
 
 ## 13. Crate layout
 
+**Built.** The tree, as it stands:
+
 ```
-utils/tagform/
-├── SPEC.md
-├── README.md
+tagform/
+├── SPEC.md                       # this document
+├── README.md                     # what runs today
+├── AGENTS.md                     # orientation for coding agents (CLAUDE.md links here)
 ├── Cargo.toml
-├── docs/CONTAINER.md          # milestone 0's findings — measured, done
-├── assets/tagform.exiftool.cfg  # required runtime asset (§9.3.1)
-├── tests/container-experiment.sh # regenerates CONTAINER.md's numbers + keymap.json
+├── docs/CONTAINER.md             # milestone 0's findings — measured, done
+├── assets/tagform.exiftool.cfg   # required runtime asset (§9.3.1)
+├── tests/
+│   ├── container-experiment.sh   # regenerates CONTAINER.md's numbers
+│   └── write-paths.sh            # exercises the three write backends
 └── src/
-    ├── main.rs                # CLI, headless mode, exit codes
-    ├── config.rs              # config.toml + the yt-dlp alias parse (§3.5)
+    ├── main.rs                   # CLI, --print-json report, exit codes
+    ├── config.rs                 # the yt-dlp alias parse (§3.5)
+    ├── thumb.rs                  # extraction, cache, ratatui-image (§8)
     ├── model/
-    │   ├── schema.rs          # FieldId, the KeyMap table
-    │   ├── value.rs           # Value, ValueState (Same|Mixed|Set|Unset)
-    │   ├── form.rs            # the form model, dirty tracking, undo stack
-    │   └── filename/
-    │       ├── media.rs       # the ytform / media-parse-filename-to-json grammar
-    │       └── footage.rs     # the rename-footage grammar (§9.4)
+    │   ├── schema.rs             # FIELDS — the field/key table (§3)
+    │   └── value.rs              # Value, Agg (§4.3)
     ├── tags/
-    │   ├── probe.rs           # ffprobe → Value map
-    │   ├── plan.rs            # WritePlan construction and diffing
-    │   ├── ffmpeg.rs          # the remux (§9.2.1)
-    │   ├── exiftool.rs        # in-place writer + the shipped -config (§9.3)
-    │   ├── xmp.rs             # the rename-footage XMP field set (§3.6)
-    │   └── atoms.rs           # atom-chain parse: faststart verification
-    ├── seed/
-    │   ├── ytdlp.rs           # --fetch, the shared metadata cache
-    │   └── infojson.rs
-    ├── ui/
-    │   ├── app.rs             # event loop, focus ring, messages
-    │   ├── layout.rs
-    │   ├── inspector.rs
-    │   └── controls/
-    │       ├── mod.rs         # the Control trait
-    │       ├── text.rs  textarea.rs  list.rs  chips.rs
-    │       └── url.rs   stars.rs     enums.rs checkbox.rs  date.rs  number.rs
-    └── thumb.rs               # extraction, cache, ratatui-image
+    │   ├── probe.rs              # ffprobe + exiftool → FileTags (§4.1)
+    │   ├── atoms.rs              # atom-chain parse, faststart (§9.2.1)
+    │   ├── plan.rs               # what to write, and which backend (§9.1, §9.2)
+    │   └── write.rs              # executing a plan: remux, verify, rename (§9.2.1)
+    └── ui/
+        ├── app.rs                # event loop, modal state, focus, undo (§6.3, §6.4)
+        ├── edit.rs               # the Editor enum — every control (§5)
+        ├── render.rs             # painting (§7)
+        └── theme.rs              # four schemes + the contrast test (§7)
 ```
 
-Every module above the `ui/` line is pure enough to unit test without a
-terminal, which is the point of the split.
+⟨built, differs⟩ Flatter than planned, in three places. `tags/ffmpeg.rs`,
+`tags/exiftool.rs` and `tags/xmp.rs` are one `write.rs`, because the three
+backends share the verify-then-rename spine and splitting them would have
+duplicated it. `ui/controls/` — twelve files behind a trait — is one
+`edit.rs` holding one enum (§5). `model/form.rs`, `model/filename/` and
+`seed/` do not exist: the first became state on `App`, the other two are
+unbuilt features (§9.4, §10).
+
+Everything outside `ui/` is pure enough to unit test without a terminal, which
+is the point of the split and the one structural rule worth keeping.
 
 ---
 
 ## 14. Testing
 
-No CI in this repo, so tests have to be worth running by hand.
+No CI, so tests have to be worth running by hand.
 
-**Unit** (`cargo test`, no fixtures):
-- filename grammar round-trip: `compose(parse(s)) == s` over a corpus of real
-  names pulled from the library, including the pathological ones (parentheses
-  inside titles, `#` in a title, unicode actors, 240-byte stems)
-- list/tag splitting against `ytform`'s `SplitList`/`SplitTags` cases
-- aggregation: `Same`/`Mixed`/`Set`/`Unset` transitions, merge
-- validation: URL table in §5.5, date normalisation
+**Built** — `cargo test`, no fixtures, tests live in-file under `#[cfg(test)]`:
 
-**Container** (`tests/container-experiment.sh`): regenerates every number in
-[docs/CONTAINER.md](docs/CONTAINER.md) and rewrites `keymap.json`. Run it after
-any ffmpeg or exiftool upgrade — the findings are version-specific.
+- `ui/edit.rs` — the largest suite: control behaviour, the URL validation table
+  in §5.5, date normalisation, list and hashtag splitting
+- `ui/theme.rs` — WCAG contrast for every colour in every scheme, and the
+  custom-label hue check (§7)
+- `ui/app.rs` — aggregation, staging, merge
+- `tags/probe.rs`, `tags/atoms.rs` — parsing, faststart detection
+- `config.rs` — the yt-dlp alias parse
+- `thumb.rs` — the cache key, and the `decrease`-not-`increase` assertion (§8)
 
-**Fixture** (`cargo test --features fixtures`, generates with ffmpeg):
+**Container** — `tests/container-experiment.sh` regenerates every number in
+[docs/CONTAINER.md](docs/CONTAINER.md). Run it after any ffmpeg or exiftool
+upgrade; the findings are version-specific.
+
+**Write paths** — `tests/write-paths.sh` exercises the three backends against
+real files. Both scripts mutate real media, which is why neither runs from
+`cargo test`.
+
+⟨designed⟩ **The gap that matters is a fixture suite.** There is no
+`tests/fixtures/`, no generated tiny.mp4, and so no test that a write
+round-trips without touching real media:
+
 ```bash
 ffmpeg -f lavfi -i testsrc=d=2:s=320x240 -f lavfi -i sine=d=2 \
   -c:v h264 -c:a aac tests/fixtures/tiny.mp4
 ```
-- write every field, re-probe, assert every key round-trips — **this is the test
-  that validates §3's mapping table**, and it must run in both compat modes and
-  against both `.mp4` and `.mov`
-- faststart verification: a deliberately moov-at-end fixture, fixed and detected
-- delete semantics: `-metadata key=` actually removes rather than emptying
-- stream tags and a second audio track survive the remux
-- failure paths: read-only file, no space (temp dir on a small ramdisk), a
-  truncated input
-- **the XMP regression**: write XMP with exiftool, run a `tagform` write, assert
-  every XMP field survives. This is the test that would have caught the §2.2
-  data loss, and it must run in CI-by-hand before every release.
-- backend selection: assert a file carrying XMP never routes to the remux
+
+In rough order of what they would have caught:
+
+- **the XMP regression** — write XMP with exiftool, run a `tagform` write,
+  assert every XMP field survives. This is the test for the §2.2 data loss, and
+  the one the whole write path's design rests on being true.
+- **backend selection** — assert a file carrying XMP never routes to a bare
+  remux.
+- **round-trip every field** — write, re-probe, assert every key comes back.
+  This is what turns §3's table from an assumption into something checked.
+- delete semantics: `-metadata key=` removes rather than empties.
+- stream tags and a second audio track survive the remux.
+- faststart: a deliberately moov-at-end fixture, fixed and detected.
+- failure paths: read-only file, no space, a truncated input.
 
 **Manual**: kitty / Ghostty / iTerm2 / tmux / plain xterm-256color for the
 thumbnail ladder, and one run over SMB for the timing story in §9.3.
@@ -1156,37 +1387,75 @@ thumbnail ladder, and one run over SMB for the timing story in §9.3.
 
 ## 15. Integration
 
-- `setup/install/install-tagform.sh` — `cargo build --release`, install to
-  `~/.local/bin/tagform`, following the repo's installer naming rule.
-- `config/tagform/config.toml` + a `[tagform.files]` section in
-  `dotter/global.toml` + a line in `dotter/local.toml.example`.
+`tagform` is now its own repository
+([monomadic/tagform](https://github.com/monomadic/tagform)), built with
+`cargo build --release` and installed to `~/.local/bin/tagform`. That is a
+change of direction from this document's original assumption, which was a
+directory inside the `~/config` dotfiles monorepo with a `setup/install/`
+script, a `config/tagform/` deployment and a `dotter/global.toml` entry.
+
+The split is worth stating as an intent rather than an accident: `tagform` has
+two hard runtime dependencies (`ffmpeg`, `exiftool`) and one soft one (the
+yt-dlp config it reads its enums from). Nothing else ties it to that monorepo,
+and the tool is more useful to anyone else as a repository than as a
+subdirectory of someone's dotfiles.
+
+⟨designed⟩ The integrations back into the monorepo's media toolchain are
+unbuilt, and each needs something first:
+
 - `media-audit` gains `t` on the metadata issue screen → `tagform --fetch FILE`,
-  replacing the current fetch-or-skip prompt with an editable form.
-- `fzf-media-select` / `ls-media` bind a key to `tagform {+}` (multi-select
-  passes straight through as multiple file arguments).
-- `mp4-tui-tagger` stays in place until `tagform` covers the custom-key editing
-  it does, then gets a deprecation banner pointing at `tagform --edit-custom`.
+  replacing the current fetch-or-skip prompt with an editable form. Needs
+  `--fetch` (§5.5).
+- `fzf-media-select` / `ls-media` bind a key to `tagform {+}` — multi-select
+  passes straight through as file arguments. Needs the `/dev/tty` handling in
+  §6.3, or it cannot run inside fzf at all.
+- `mp4-tui-tagger` keeps a deprecation banner pointing at `tagform` once
+  `tagform` covers the custom-key editing it does — which it now does (§3.7).
   It is not deleted in the same change that lands the replacement.
 
 ---
 
 ## 16. Milestones
 
-| # | Deliverable |
-|---|---|
-| **0** | ✅ **done** — [docs/CONTAINER.md](docs/CONTAINER.md). Settled open question 1, killed `mp4ameta`, and promoted the exiftool writer from an optimisation to a correctness requirement. |
-| **1** | ✅ Probe (ffprobe **+ exiftool**) → model → aggregate → `--print-json`. No UI. |
-| **2** | ✅ Read-only TUI: layout, focus ring, thumbnails, inspector. |
-| **3** | ✅ The controls + validation + undo. Still no writes. |
-| **4** | ✅ Both writers, backend selection (§9.2), verification, atomic swap, faststart. Feature-complete for one file. |
-| **5** | ✅ Multi-file: merge, per-file inspector, batch summary, partial-failure reporting. |
-| 6 | The Footage profile: XMP fields, the second filename grammar, `PreservedFileName`. |
-| 7 | Seeding: `--from-filename`, `--fetch`, completion history. |
-| 8 | Headless `--set`/`--apply`, More/Custom sections, config file, `--compat both`. |
+| # | Deliverable | |
+|---|---|---|
+| **0** | [docs/CONTAINER.md](docs/CONTAINER.md). Settled open question 1, killed `mp4ameta`, promoted the exiftool writer from an optimisation to a correctness requirement. | ✅ |
+| **1** | Probe (ffprobe **+ exiftool**) → model → aggregate → `--print-json`. No UI. | ✅ |
+| **2** | Read-only TUI: layout, focus ring, thumbnails, inspector. | ✅ |
+| **3** | The controls + validation + undo. Still no writes. | ✅ |
+| **4** | Both writers, backend selection (§9.2), verification, atomic swap, faststart. Feature-complete for one file. | ✅ |
+| **5** | Multi-file: merge, per-file inspector, batch summary, partial-failure reporting. | ✅ |
+| **6** | The Footage profile: XMP fields ✅, `PreservedFileName` ✅, the second filename grammar ⬜ (§9.4). | ◐ |
+| **7** | Seeding: `--from-filename`, `--fetch`, completion history. | ⬜ |
+| **8** | Headless `--set`/`--apply`, the remaining §3.2 fields, config file, `--compat both`. | ⬜ |
 
-Milestones 1–4 are the useful tool; 5–8 are what make it replace the scripts.
-Milestone 6 is what makes it safe to point at `~/Movies` — until it lands,
-`tagform` must **refuse** any file carrying XMP rather than risk the remux.
+**Where this actually stands.** Milestone 6 turned out to be two independent
+halves, and the important one is done: XMP is read, written, and restored
+across a remux, so the data loss this whole design was built to prevent cannot
+happen. Which means the note this section used to carry — *"until milestone 6
+lands, `tagform` must refuse any file carrying XMP"* — is **discharged**. It
+does not refuse them; it routes them to the writer that preserves them (§9.2),
+and verifies the XMP read back afterwards.
+
+**The direction from here** is narrower than the original 8-milestone plan, and
+deliberately so. What is left divides into three:
+
+1. **Filename work** (the rest of 6) — the two grammars, parsing as well as
+   composing. This is the last piece that unlocks something the old scripts
+   could do and `tagform` cannot.
+2. **Seeding** (7) — `--fetch` and completion. The largest ergonomic wins
+   available, and both are additive: nothing about the existing form changes.
+3. **A fixture suite** (§14) — not a milestone in the original plan, and it
+   should have been. It is the cheapest remaining risk reduction in the
+   project, and it gates being comfortable with any of the above.
+
+Milestone 8's contents have thinned. Headless `--apply` is real work with a
+real customer (§10). The remaining §3.2 fields, the config file and
+`--compat both` are all speculative, and each has a note above explaining why
+building it now would be cost without a customer. **The default answer to
+"should this be added" is no until a file, a script, or a person needs it** —
+which is the discipline that kept the form to nineteen rows and the CLI to four
+flags.
 
 ---
 
@@ -1194,25 +1463,36 @@ Milestone 6 is what makes it safe to point at `~/Movies` — until it lands,
 
 1. ~~Does ffmpeg write `mdir` and `mdta` together?~~ **Settled: no.** One box or
    the other (§2.1). `--compat both` needs the exiftool second pass.
-2. **Where should the star rating live?** Partly settled: on Footage files
-   `XMP-xmp:Rating` is a real standard 0–5 field and is the answer. Elsewhere,
-   `com.apple.iTunes:rating` remains a guess — worth checking what Infuse and
-   Plex actually read before committing, with "stars are a filename-and-XMP
-   concept, not an ilst one" as the fallback position.
-3. **Is the exiftool path actually faster over SMB?** Unmeasured. Locally it
-   *loses* (0.54 s vs 0.25 s on 475 MB). It is being built for XMP/inode
-   preservation regardless, so this only affects whether it is also preferred
-   for large local-network files. One measurement on the Tower volume settles it.
-4. **Should Artist auto-mirror Actors?** Unchanged. The yt-dlp config writes the
-   same value to both; the sketch in §7 shows Artist dimmed with `(auto)`,
-   breaking the link on first edit. May be more magic than it is worth.
-5. **`iTunMOVI`** — the plist blob holding cast/directors/producers/studio — is
-   the only way Apple software sees an actor list. Deferred to milestone 8.
-6. **What actually triggers the ffprobe blind spot?** Not value size — that
-   first guess was disproved on re-run. The one reproducible case is a 475 MB
-   `.mov` whose `wide` padding atom was consumed by an 8 KB write
-   (docs/CONTAINER.md §4). Worth isolating before the writer lands, because a
-   file with consumed padding is exactly what the in-place writer meets next.
-7. **Should `config/yt-dlp/config` change `Camera Footage` to `Footage`?** The
-   alias table (§3.5) makes `tagform` correct either way, so this is the user's
-   call and affects only new downloads. One line, not made as part of this work.
+2. ~~Where should the star rating live?~~ **Settled in practice.**
+   `XMP-xmp:Rating` is a real standard 0–5 field and is used wherever XMP is
+   present; elsewhere the `rating` key holds it. The `com.apple.iTunes:rating`
+   freeform atom was never built, and the fallback position — "stars are a
+   filename-and-XMP concept, not an ilst one" — is now simply the design. It
+   reopens only if `--compat ilst` is ever built and something needs Plex to
+   see a rating.
+3. **Is the exiftool path actually faster over SMB?** Still unmeasured, and
+   still does not matter: it is chosen for XMP, inode and xattr preservation,
+   never for speed (§9.3), and there is no `--fast` flag for it to inform. One
+   measurement on the Tower volume would settle it; nothing is blocked on it.
+4. **Should Artist auto-mirror Actors?** Unbuilt, and looking less likely.
+   The yt-dlp config writes the same value to both, so the sketch in §7 showed
+   Artist dimmed with `(auto)`, breaking the link on first edit. In a form
+   where every other field means exactly what it shows, one field that quietly
+   follows another is the kind of magic that costs more in surprise than it
+   saves in typing.
+5. **`iTunMOVI`** — the plist blob holding cast, directors, producers and
+   studio — is the only way Apple software sees an actor list. Still deferred,
+   and it is the thing to build if `--compat ilst` ever gets a customer:
+   without it, an ilst write produces a file whose cast Apple cannot read,
+   which is most of the reason to have written ilst at all.
+6. **What actually triggers the ffprobe blind spot?** Unresolved. Not value
+   size — that first guess was disproved on re-run. The one reproducible case
+   is a 475 MB `.mov` whose `wide` padding atom was consumed by an 8 KB write
+   (docs/CONTAINER.md §4). The writer now guards the *symptom* — it never
+   writes an empty value over a field whose two readers disagree about
+   emptiness (§4.2) — so this is no longer urgent, but the cause is still
+   unknown and the in-place writer meets consumed padding routinely.
+7. **Should `~/.config/yt-dlp/config` change `Camera Footage` to `Footage`?**
+   The normalisation in `config.rs` (§3.5) makes `tagform` correct either way,
+   so this is the user's call and affects only new downloads. One line, in
+   another repository, not made as part of this work.
