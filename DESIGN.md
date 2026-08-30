@@ -256,7 +256,8 @@ This trips up every MP4 tagger and the schema must keep them apart:
    file. `tagform` writes it to the `rating` key, and to `XMP-xmp:Rating` on
    files that carry XMP, which is a real standard 0–5 field. ⟨designed⟩ The
    freeform `com.apple.iTunes:rating` atom is not written; it was a guess, and
-   §17.2 is where it stays until someone checks what Plex and Infuse read.
+   it stays unwritten until someone checks what Plex and Infuse actually read
+   — which only matters if `--compat ilst` (§2.1) ever gets a customer.
    ⟨designed⟩ Filename sync (§9.4) is not built.
 2. **Advisory** (`rtng`): `0` none / `2` clean / `1` explicit. ⟨designed⟩.
 3. **Content rating** (`iTunEXTC`): `mpaa|R|400|`, `us-tv|TV-MA|600|`.
@@ -1455,34 +1456,45 @@ flags.
 
 ## 17. Open questions
 
-*Two are settled and have moved into the design: ffmpeg writes one metadata box
-or the other, never both (§2.1), and the star rating lives in `XMP-xmp:Rating`
-where XMP is present and the `rating` key otherwise (§3.3). Numbering is kept
-so the citations elsewhere still resolve.*
+*17.1 and 17.2 are settled and have moved into the design: ffmpeg writes one
+metadata box or the other, never both (§2.1), and the star rating lives in
+`XMP-xmp:Rating` where XMP is present and the `rating` key otherwise (§3.3).
+The numbering below is held rather than closed up, so citations still resolve —
+which `tests/citations.rs` checks.*
 
-3. **Is the exiftool path actually faster over SMB?** Still unmeasured, and
-   still does not matter: it is chosen for XMP, inode and xattr preservation,
-   never for speed (§9.3), and there is no `--fast` flag for it to inform. One
-   measurement on the Tower volume would settle it; nothing is blocked on it.
-4. **Should Artist auto-mirror Actors?** Unbuilt, and looking less likely.
-   The yt-dlp config writes the same value to both, so the sketch in §7 showed
-   Artist dimmed with `(auto)`, breaking the link on first edit. In a form
-   where every other field means exactly what it shows, one field that quietly
-   follows another is the kind of magic that costs more in surprise than it
-   saves in typing.
-5. **`iTunMOVI`** — the plist blob holding cast, directors, producers and
-   studio — is the only way Apple software sees an actor list. Still deferred,
-   and it is the thing to build if `--compat ilst` ever gets a customer:
-   without it, an ilst write produces a file whose cast Apple cannot read,
-   which is most of the reason to have written ilst at all.
-6. **What actually triggers the ffprobe blind spot?** Unresolved. Not value
-   size — that first guess was disproved on re-run. The one reproducible case
-   is a 475 MB `.mov` whose `wide` padding atom was consumed by an 8 KB write
-   (docs/CONTAINER.md §4). The writer now guards the *symptom* — it never
-   writes an empty value over a field whose two readers disagree about
-   emptiness (§4.2) — so this is no longer urgent, but the cause is still
-   unknown and the in-place writer meets consumed padding routinely.
-7. **Should `~/.config/yt-dlp/config` change `Camera Footage` to `Footage`?**
-   The normalisation in `config.rs` (§3.5) makes `tagform` correct either way,
-   so this is the user's call and affects only new downloads. One line, in
-   another repository, not made as part of this work.
+### 17.3 Is the exiftool path actually faster over SMB?
+
+ Still unmeasured, and
+still does not matter: it is chosen for XMP, inode and xattr preservation,
+never for speed (§9.3), and there is no `--fast` flag for it to inform. One
+measurement on the Tower volume would settle it; nothing is blocked on it.
+### 17.4 Should Artist auto-mirror Actors?
+
+ Unbuilt, and looking less likely.
+The yt-dlp config writes the same value to both, so the sketch in §7 showed
+Artist dimmed with `(auto)`, breaking the link on first edit. In a form
+where every other field means exactly what it shows, one field that quietly
+follows another is the kind of magic that costs more in surprise than it
+saves in typing.
+### 17.5 `iTunMOVI`
+
+ — the plist blob holding cast, directors, producers and
+studio — is the only way Apple software sees an actor list. Still deferred,
+and it is the thing to build if `--compat ilst` ever gets a customer:
+without it, an ilst write produces a file whose cast Apple cannot read,
+which is most of the reason to have written ilst at all.
+### 17.6 What actually triggers the ffprobe blind spot?
+
+ Unresolved. Not value
+size — that first guess was disproved on re-run. The one reproducible case
+is a 475 MB `.mov` whose `wide` padding atom was consumed by an 8 KB write
+(docs/CONTAINER.md §4). The writer now guards the *symptom* — it never
+writes an empty value over a field whose two readers disagree about
+emptiness (§4.2) — so this is no longer urgent, but the cause is still
+unknown and the in-place writer meets consumed padding routinely.
+### 17.7 Should the yt-dlp config change `Camera Footage` to `Footage`?
+
+
+The normalisation in `config.rs` (§3.5) makes `tagform` correct either way,
+so this is the user's call and affects only new downloads. One line, in
+another repository, not made as part of this work.

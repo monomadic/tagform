@@ -128,8 +128,11 @@ debugging. Changing code that violates one is a regression, not a refactor.
 
 ## Conventions
 
-- Module-level `//!` docs carry the *why* and cite the DESIGN section. Match that
-  when adding a module; comments here explain decisions, not mechanics.
+- Module-level `//!` docs carry the *why* and cite the DESIGN section. Match
+  that when adding a module; comments here explain decisions, not mechanics.
+  `tests/citations.rs` fails if a `§N` citation does not resolve to a heading,
+  so renumbering a section is a safe mechanical edit — `cargo test` tells you
+  what you broke.
 - Everything outside `ui/` is testable without a terminal. Keep that split —
   it is the reason the test suite exists at all.
 - `anyhow` throughout; errors print as `tagform: {e:#}` and exit 2.
