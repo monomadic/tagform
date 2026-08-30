@@ -1,4 +1,4 @@
-//! The field schema (SPEC §3): what the user sees, and where it lands.
+//! The field schema (DESIGN §3): what the user sees, and where it lands.
 //!
 //! A *field* is one label and one control. A *key* is what is stored in the
 //! container. The relation is one-to-many — the URL field writes five keys —
@@ -10,7 +10,7 @@
 //! (media-embed) or `original_url` (media-audit). Read accepts any alias; write
 //! emits the canonical set. That asymmetry is what makes tagform idempotent.
 
-/// The control a field is edited with (SPEC §5).
+/// The control a field is edited with (DESIGN §5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Control {
@@ -35,7 +35,7 @@ pub struct FieldDef {
     /// Atom keys accepted on read, first match wins.
     pub read: &'static [&'static str],
     /// XMP tags, first match wins. Authoritative over atoms when present,
-    /// because that is where rename-footage puts authored data (SPEC §3.6).
+    /// because that is where rename-footage puts authored data (DESIGN §3.6).
     pub xmp: &'static [&'static str],
     /// The iTunes atom, where one exists at all. Measured, not assumed —
     /// see docs/CONTAINER.md.
@@ -68,7 +68,7 @@ pub static FIELDS: &[FieldDef] = &[
     field!("artist", "Artist", Control::Text,
         mdta: ["artist"], read: ["artist"], xmp: [], ilst: Some("\u{a9}ART")),
 
-    // Stars, 0-5. Not rtng, not iTunEXTC (SPEC §3.3). XMP-xmp:Rating is a real
+    // Stars, 0-5. Not rtng, not iTunEXTC (DESIGN §3.3). XMP-xmp:Rating is a real
     // standard 0-5 field and is authoritative wherever it is present.
     field!("rating", "Rating", Control::Stars,
         mdta: ["rating"], read: ["rating"], xmp: ["XMP-xmp:Rating"], ilst: None),

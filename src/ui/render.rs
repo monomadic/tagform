@@ -1,4 +1,4 @@
-//! Drawing (SPEC §7).
+//! Drawing (DESIGN §7).
 //!
 //! The shape of a screen: a badge bar that reads as a title, a band of facts
 //! about the file, the form itself, a shortcut strip for the current mode, and

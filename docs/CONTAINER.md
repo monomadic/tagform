@@ -1,6 +1,6 @@
 # What ffmpeg and exiftool actually write
 
-Milestone 0 of [SPEC.md](../SPEC.md). Every claim here was measured, not read off
+Milestone 0 of [DESIGN.md](../DESIGN.md). Every claim here was measured, not read off
 a wiki. Reproduce with `tests/container-experiment.sh`.
 
 Environment: ffmpeg 8.1.2, exiftool 13.55, macOS 25.5 / APFS.
@@ -183,7 +183,7 @@ The remux wins, because on APFS a 475 MB copy is memory-bandwidth work while
 exiftool pays ~0.2 s of Perl startup. Extrapolated, a 6 GB local file remuxes in
 about 3 s — perfectly acceptable.
 
-**So the in-place path is not justified as a speed optimisation, and SPEC.md's
+**So the in-place path is not justified as a speed optimisation, and DESIGN.md's
 original milestone 8 framing was wrong.** It earns its place for two other
 reasons: it is the only way to preserve XMP (§2), and the only way to preserve
 inode and xattrs. Whether it also wins over SMB is unmeasured and should not be

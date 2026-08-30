@@ -1,4 +1,4 @@
-//! Executing a plan (SPEC §9.2, §9.3).
+//! Executing a plan (DESIGN §9.2, §9.3).
 //!
 //! The rule the whole module is built around: the original file is never
 //! modified until a verified replacement exists. A remux writes to a sibling

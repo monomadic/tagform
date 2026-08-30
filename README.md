@@ -4,7 +4,7 @@ A form-based metadata tagger for MP4/MOV — labelled fields with typed editors,
 validation, enums, star rows and tag chips, instead of a list of key/value
 strings. Replaces `mp4-tui-tagger`.
 
-- **[SPEC.md](SPEC.md)** — the design. Written ahead of the code, so it marks
+- **[DESIGN.md](DESIGN.md)** — the design. Written ahead of the code, so it marks
   what is not built (`⟨designed⟩`) and what shipped differently
   (`⟨built, differs⟩`). §16 has the current direction.
 - **[docs/CONTAINER.md](docs/CONTAINER.md)** — what ffmpeg and exiftool
@@ -25,7 +25,7 @@ from the file's contents and verifies the result before replacing anything.
 
 Not built: the two filename grammars (the rest of milestone 6), seeding
 (`--fetch`, `--from-filename`, completion), headless `--set`/`--apply`, and a
-config file. SPEC §16 says what is next and why the list is shorter than the
+config file. DESIGN §16 says what is next and why the list is shorter than the
 original plan.
 
 Aggregation works like an mp3 tagger: a field that differs between files reads
@@ -146,7 +146,7 @@ and atoms together, so a `rename-footage` clip shows its people, location and
 rating; and `--print-json` reports `ilst_lossy` — the fields on these files that
 have no iTunes atom at all, i.e. exactly what an iTunes-compatible write would
 drop. (That write mode is not built. The measurement is the prerequisite for
-it — SPEC §2.1.)
+it — DESIGN §2.1.)
 
 Milestone 0 (the container experiment) is done and reshaped the design; its
 findings are in `docs/CONTAINER.md` and reproducible with

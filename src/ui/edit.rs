@@ -1,4 +1,4 @@
-//! The editable controls (SPEC §5).
+//! The editable controls (DESIGN §5).
 //!
 //! Every control answers the same four questions: what does a key do, what is
 //! the value now, is that value sound, and how should it be drawn. `Reaction`

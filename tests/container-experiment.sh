@@ -4,7 +4,7 @@
 # The findings are version-specific: re-run after any ffmpeg or exiftool
 # upgrade, because the whole design rests on them. In particular, if ffmpeg ever
 # starts writing mdir and mdta together, or ever learns to carry XMP across a
-# remux, several sections of SPEC.md collapse.
+# remux, several sections of DESIGN.md collapse.
 set -euo pipefail
 
 WORK="${1:-$(mktemp -d)}"

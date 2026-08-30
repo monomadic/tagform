@@ -14,20 +14,22 @@ is the main way to waste a context window here. Budget them like this:
 | File | Lines | How to use it |
 |---|---|---|
 | `README.md` | 135 | **Read in full, once.** Status, keymap, and the three container facts the design rests on. |
-| `SPEC.md` | 1498 | **Never read whole.** Section-scoped: `grep -n '^## ' SPEC.md`, then `sed -n 'A,Bp'`. |
+| `DESIGN.md` | 1488 | **Never read whole.** Section-scoped: `grep -n '^## ' DESIGN.md`, then `sed -n 'A,Bp'`. |
 | `docs/CONTAINER.md` | 253 | Read §1 only, and only when touching the write path. Measured ffmpeg/exiftool behaviour. |
 
-`SPEC.md` section starts, so you can jump without grepping first:
+`DESIGN.md` section starts, so you can jump without grepping first:
 
 ```
 26 §1 what this is · 75 §2 container problem · 174 §3 schema · 435 §4 keys
-538 §5 controls · 724 §6 tui choice · 837 §7 layout · 893 §8 thumbnails
-941 §9 write path · 1159 §10 cli · 1216 §11 keys · 1260 §12 config
-1290 §13 crate layout · 1337 §14 testing · 1388 §15 integration
-1418 §16 milestones · 1462 §17 open questions
+538 §5 controls · 754 §6 tui choice · 849 §7 layout · 901 §8 thumbnails
+949 §9 write path · 1161 §10 cli · 1218 §11 keys · 1255 §12 config
+1285 §13 crate layout · 1332 §14 testing · 1383 §15 integration
+1413 §16 milestones · 1456 §17 open questions
 ```
 
-**SPEC.md marks what is real.** It is a design document written ahead of the
+Regenerate with `grep -n '^## ' DESIGN.md` if an edit shifts them.
+
+**DESIGN.md marks what is real.** It is a design document written ahead of the
 code, so it carries two markers: **`⟨designed⟩`** means not built — intent, not
 behaviour — and **`⟨built, differs⟩`** means built, but not the way that
 section first described it, with a note on how. Unmarked text describes the
@@ -89,7 +91,7 @@ debugging. Changing code that violates one is a regression, not a refactor.
    drops 9 of 20 keys. The two layouts are mutually exclusive.
 2. **An ffmpeg remux destroys XMP, silently, with no flag to prevent it.** The
    writer therefore picks its backend from *file contents*, not user
-   preference — never from a flag. (SPEC's `--writer ffmpeg` / `--force`
+   preference — never from a flag. (DESIGN's `--writer ffmpeg` / `--force`
    escape hatch is designed but not implemented; `main.rs` accepts only
    `--print-json`, `--theme`, `--no-thumbnail`, `--help`.)
 3. **The original is never modified until a verified replacement exists.**
@@ -111,7 +113,7 @@ debugging. Changing code that violates one is a regression, not a refactor.
 
 ## Conventions
 
-- Module-level `//!` docs carry the *why* and cite the SPEC section. Match that
+- Module-level `//!` docs carry the *why* and cite the DESIGN section. Match that
   when adding a module; comments here explain decisions, not mechanics.
 - Everything outside `ui/` is testable without a terminal. Keep that split —
   it is the reason the test suite exists at all.
@@ -125,7 +127,7 @@ debugging. Changing code that violates one is a regression, not a refactor.
   actually do to X", it is answered in `docs/CONTAINER.md`. Ask the doc, not a
   test file.
 - **Don't grep the repo for a field.** `FIELDS` in `schema.rs` is the index.
-- **Don't read `SPEC.md` to learn the current state** — it describes the
+- **Don't read `DESIGN.md` to learn the current state** — it describes the
   intended design across all 8 milestones; the README's Status section says
   where the code actually is (milestone 5 of 8: multi-file).
 - **Don't spawn a subagent to explore this tree.** It is 16 files and mapped

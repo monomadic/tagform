@@ -1,4 +1,4 @@
-//! Enum sources (SPEC §3.5).
+//! Enum sources (DESIGN §3.5).
 //!
 //! Genre and Type are not invented here. They are exactly the aliases in
 //! `config/yt-dlp/config`, which write `meta_genre` and `meta_type`:

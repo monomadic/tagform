@@ -2,7 +2,7 @@
 //!
 //! Milestone 3: probe -> model -> aggregate -> editable form with validation
 //! and undo. Edits are staged in memory; nothing is written to disk yet.
-//! See SPEC.md for the design and docs/CONTAINER.md for the measured container
+//! See DESIGN.md for the design and docs/CONTAINER.md for the measured container
 //! behaviour the design rests on.
 
 mod config;

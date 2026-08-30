@@ -1,4 +1,4 @@
-//! Reading tags. Two readers, always (SPEC §4.1).
+//! Reading tags. Two readers, always (DESIGN §4.1).
 //!
 //! ffprobe cannot see XMP — measured, docs/CONTAINER.md §2. A file carrying all
 //! six of rename-footage's XMP fields reports exactly the same format_tags as
@@ -25,7 +25,7 @@ pub struct FileTags {
 }
 
 impl FileTags {
-    /// Resolve one field, XMP first (SPEC §4.1) — that is where rename-footage
+    /// Resolve one field, XMP first (DESIGN §4.1) — that is where rename-footage
     /// puts authored data, and a remux-written atom may be staler.
     ///
     /// The result is normalised to the shape the field's control expects. XMP

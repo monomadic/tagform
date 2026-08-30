@@ -1,4 +1,4 @@
-//! Container structure: where `moov` sits relative to `mdat` (SPEC §9.2).
+//! Container structure: where `moov` sits relative to `mdat` (DESIGN §9.2).
 //!
 //! A Rust port of mp4doctor's `atom_state()`. tagform does not repair
 //! containers -- that stays mp4doctor's job -- but it must be able to *verify*

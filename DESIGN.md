@@ -5,7 +5,7 @@
 [monomadic/tagform](https://github.com/monomadic/tagform). **Install:**
 `cargo build --release`, binary to `~/.local/bin/tagform`.
 
-> **How to read this document.** It is a design spec written ahead of the code,
+> **How to read this document.** It is a design document written ahead of the code,
 > and the code has since answered some of it. Anything marked
 > **`⟨designed⟩`** is not built and describes intent, not behaviour; anything
 > marked **`⟨built, differs⟩`** is built but not the way this section first
@@ -753,43 +753,23 @@ your description is a worse tool than one that saves it.
 
 ## 6. TUI library choice
 
-### 6.1 Survey
+**`ratatui` + `crossterm`, with a hand-written control layer** — `tui-input`
+for line editing, `ratatui-image` for thumbnails.
 
-*Kept as the record of why the dependency set is what it is. The verdicts all
-held; nothing here has been revisited since, and the versions below are the
-ones in `Cargo.toml` today.*
+The reasoning, which is the part worth keeping: of the eleven controls in §5,
+exactly two (Text, TextArea) are generic. The other nine — a star row, hashtag
+chips with filename-safe sanitisation, a URL field that fetches yt-dlp
+metadata, an enum sourced from a yt-dlp config file — are domain controls no
+widget library will ever ship. A form framework would be adopted for two
+controls and fought for nine.
 
-| Crate | Latest | Health | Verdict |
-|---|---|---|---|
-| [`ratatui`](https://crates.io/crates/ratatui) | 0.30 | the ecosystem standard; split into `ratatui-core`/`ratatui-widgets` at 0.30 | **base** — already what `leaf` uses |
-| [`crossterm`](https://crates.io/crates/crossterm) | 0.29 | standard backend | **base**, with `use-dev-tty` on macOS as `leaf` does |
-| [`tui-input`](https://crates.io/crates/tui-input) | 0.15.4 (Aug 2026) | ~494k recent downloads, actively maintained | **yes** — single-line editing, backend-agnostic, tiny |
-| [`ratatui-textarea`](https://crates.io/crates/ratatui-textarea) | 0.9.2 (Jun 2026) | the ratatui-org fork of `tui-textarea`, tracks 0.30 | **yes** — multi-line fields |
-| [`tui-textarea`](https://crates.io/crates/tui-textarea) | 0.7.0 (Oct 2024) | 725k downloads but stalled on ratatui 0.29 | no — the fork above supersedes it |
-| [`ratatui-image`](https://crates.io/crates/ratatui-image) | 11.0.6 (Jun 2026) | ~301k recent downloads; kitty (incl. unicode placeholders), sixel, iterm2, halfblocks | **yes** — §8 |
-| [`rat-widget`](https://crates.io/crates/rat-widget) | 3.2.1 | complete (checkbox, choice, focus, forms) but ~2.9k recent downloads and its own event/focus framework | no — adopting its framework costs more than writing eight controls |
-| [`ratatui-interact`](https://crates.io/crates/ratatui-interact) | young | checkbox/input/button/select + focus + mouse | no — right idea, too new to depend on; revisit at v2 |
-| `ratatui-form`, `ratatui-select` | young / placeholder | | no |
-| [`tui-realm`](https://crates.io/crates/tuirealm) | mature | Elm-ish component framework over ratatui | no — the message indirection buys nothing at this size |
-| `cursive` | mature | retained-mode, its own backend | no — will not compose with `ratatui-image` |
-| `iocraft` | growing | React-like, hooks | no — different paradigm, weaker image story |
-
-### 6.2 Recommendation
-
-**`ratatui` + `crossterm`, with a hand-written control layer**, borrowing
-`tui-input` for line editing, `ratatui-textarea` for multi-line, and
-`ratatui-image` for thumbnails.
-
-The reasoning: of the eleven controls in §5, exactly two (Text, TextArea) are
-generic. The other nine — star row, hashtag chips with filename-safe
-sanitisation, a URL field that fetches yt-dlp metadata, an enum sourced from a
-yt-dlp config file — are domain controls that no widget library will ever ship.
-A form framework would be adopted for two controls and fought for nine. The
-`Control` trait in §5 is roughly 150 lines; the framework's focus/event model
-would be more than that just to integrate.
-
-This also keeps the dependency profile in line with `leaf`, the repo's other
-ratatui program, so there is one ratatui version to track rather than two.
+Surveyed and rejected in Aug 2026, with the reason rather than the download
+count, since that is what stays true: `rat-widget` (complete, but adopting its
+event/focus framework costs more than writing the controls), `ratatui-interact`
+(right idea, too young to depend on), `tui-realm` (Elm-ish indirection buys
+nothing at this size), `cursive` (retained-mode, own backend, will not compose
+with `ratatui-image`), `iocraft` (weaker image story), `tui-textarea`
+(superseded by the ratatui-org fork).
 
 What shipped, verbatim from `Cargo.toml`:
 
@@ -811,11 +791,13 @@ serde_json       = "1.0"
 crossterm        = { version = "0.29", features = ["use-dev-tty"] }
 ```
 
-Two differences from the plan: `image` was added (`ratatui-image` takes a
-decoded `DynamicImage`, so the thumbnail path decodes the JPEG itself), and
-`nucleo` and `toml` are absent because the features that wanted them —
-completion (§5.1) and the config file (§12) — are not built. Neither is a
-dependency worth carrying ahead of its feature.
+Three notes. `image` was added — `ratatui-image` takes a decoded
+`DynamicImage`, so the thumbnail path decodes the JPEG itself. `nucleo` and
+`toml` are absent because the features that wanted them, completion (§5.1) and
+the config file (§12), are not built; neither is worth carrying ahead of its
+feature. And **`ratatui-textarea` is declared but never used** — TextArea edits
+as one line through `tui-input` (§5.2), so multi-line was designed for and then
+not built. It should come out of `Cargo.toml` until it is.
 
 ### 6.3 Event loop and focus
 
@@ -901,18 +883,14 @@ keys live in the current mode.
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-What the form actually paints: a filled `tagform` badge heading the screen,
-every field showing a coloured editable region whether or not it is focused,
-`▍` on the focused row (`▶` while editing) and `●` on a staged one, and the
-shortcut strip along the bottom. Colours are true-colour in four schemes —
-`midnight`, `gruvbox`, `nord`, `rose-pine` — cycled with `c` or picked with
-`--theme=NAME`.
-
-A test computes WCAG contrast for every text colour in every scheme against
-that scheme's own background and fails below 3:1, and checks that a custom-key
-label is a different *hue* from an ordinary one rather than a dimmer shade.
-Both guards exist because both mistakes were made: 16-colour `DarkGray`
-labels, and a file path drawn in a divider colour at 1.4:1.
+The chrome as built — badge, focus and staged markers, the four colour
+schemes — is described in [README.md](README.md). The one part that is a design
+decision rather than a description: a test computes WCAG contrast for every
+text colour in every scheme against that scheme's own background and fails
+below 3:1, and checks that a custom-key label differs in *hue* from an ordinary
+one rather than being a dimmer shade. Both guards exist because both mistakes
+were made — 16-colour `DarkGray` labels, and a file path drawn in a divider
+colour at 1.4:1.
 
 The **inspector** (`p`) replaces the thumbnail band with a per-file value table
 for the focused field — the answer to "what does `‹multiple›` actually contain",
@@ -1084,21 +1062,15 @@ Any failure leaves the original untouched and the temp removed. The run
 continues to the next file and the failure is reported in the summary — a bad
 file in a batch of 40 must not abort the other 39.
 
-### 9.3 The exiftool in-place path (milestone 4, not 8)
+### 9.3 The exiftool in-place path
 
-**Built.** Originally scoped as a late speed optimisation using `mp4ameta`.
-Milestone 0 overturned both halves of that:
-
-- **It is not a speed win on local storage.** Measured on a 475 MB fixture:
-  ffmpeg remux **0.25 s**, exiftool in place **0.54 s**. On APFS the remux is
-  memory-bandwidth work while exiftool pays ~0.2 s of Perl startup. A 6 GB local
-  file remuxes in about 3 s. Whether it wins over SMB is *unmeasured*, and this
-  document does not claim it does.
-- **It is mandatory for correctness anyway**, because it is the only writer that
-  preserves XMP (§2.2), the inode, and xattrs. That moves it from milestone 8 to
-  milestone 4, and demotes speed to a side effect.
-
-`mp4ameta` is dropped entirely — it covers only ilst, and the library is `mdta`.
+**Built.** It exists for correctness, not speed: it is the only writer that
+preserves XMP (§2.2), the inode and xattrs. It was originally scoped as a late
+optimisation via `mp4ameta`, and milestone 0 killed both halves of that —
+`mp4ameta` covers only ilst and this library is `mdta`, and in-place is
+*slower* locally anyway (475 MB fixture: remux 0.25 s, exiftool 0.54 s, the
+difference being ~0.2 s of Perl startup). Whether it wins over SMB is
+unmeasured (§17.3); nothing depends on the answer.
 
 Measured properties of `exiftool -overwrite_original_in_place`:
 
@@ -1251,34 +1223,17 @@ better: `j`/`k` move and `enter` opens a field, so single-letter commands are
 free — `w` can mean write precisely because nothing is listening for the letter
 `w` until you press `enter`.
 
-**Select** (default)
+**The full keymap lives in [README.md](README.md) and in `--help`**, which is
+generated from the same source the program dispatches on. A third copy here
+would be a third thing to forget to update; what belongs in this document is
+why the map has the shape it does.
 
-| key | |
-|---|---|
-| `j` / `k`, arrows, `tab` | move between fields (`g` / `G` first / last) |
-| `h` / `l` | cycle a fixed-set field, or nudge a rating, without entering edit mode |
-| `enter` | edit the focused field |
-| `w` | write staged edits (shows a plan first) |
-| `m` | merge a list field across every file in the selection |
-| `p` | inspector — per-file values for the focused field |
-| `]` / `[` / `a` | next file / previous file / all files |
-| `u` / `ctrl-r` / `r` | undo / redo / revert every staged edit |
-| `backspace` | clear the focused field (staged like any edit; `u` undoes it) |
-| `c` | cycle the colour scheme |
-| `f` | toggle MOV faststart on the write (on by default) |
-| `q` / `esc` | quit (asks if edits are staged) |
-
-**Edit**
-
-| key | |
-|---|---|
-| (type) | edit the field |
-| `h` / `l`, `←` / `→` | step a fixed set, or adjust a rating |
-| `enter` | save and stop editing |
-| `tab` / `shift-tab` | save and move to the next / previous field |
-| `j` / `k`, `↑` / `↓` | save and move a row — on a set, where there is no text to type |
-| `esc` | cancel this field's edit |
-| `ctrl-c` | quit, from either mode |
+Two rules do the work. `enter` opens a field and `esc` or `enter` closes it, so
+Select mode's letters are never ambiguous — `w` write, `m` merge, `p`
+inspector, `f` faststart, `c` theme, `r` revert, `]`/`[`/`a` for the selection.
+And a control that does not want a key hands it back (§5), so `tab` moves focus
+from inside a field, `j`/`k` move a row on a control with no text to type, and
+`h`/`l` step a set or a rating from either mode.
 
 On a text field, the emacs/macOS editing keys as well — `⌃A` `⌃E` `⌃B` `⌃F`
 `⌃D` `⌃H` `⌃W` `⌃K` `⌃U`, table in §5.1. They bind only while a field is open,
@@ -1333,7 +1288,7 @@ that this section originally assumed.
 
 ```
 tagform/
-├── SPEC.md                       # this document
+├── DESIGN.md                     # this document
 ├── README.md                     # what runs today
 ├── AGENTS.md                     # orientation for coding agents (CLAUDE.md links here)
 ├── Cargo.toml
@@ -1457,25 +1412,24 @@ unbuilt, and each needs something first:
 
 ## 16. Milestones
 
-| # | Deliverable | |
+**0–5 are done** — the container experiment, the two readers, the TUI, the
+controls, both writers with backend selection, and multi-file aggregation.
+Each is described in its own section above; there is nothing left in the
+sequence worth restating here.
+
+| # | Remaining | |
 |---|---|---|
-| **0** | [docs/CONTAINER.md](docs/CONTAINER.md). Settled open question 1, killed `mp4ameta`, promoted the exiftool writer from an optimisation to a correctness requirement. | ✅ |
-| **1** | Probe (ffprobe **+ exiftool**) → model → aggregate → `--print-json`. No UI. | ✅ |
-| **2** | Read-only TUI: layout, focus ring, thumbnails, inspector. | ✅ |
-| **3** | The controls + validation + undo. Still no writes. | ✅ |
-| **4** | Both writers, backend selection (§9.2), verification, atomic swap, faststart. Feature-complete for one file. | ✅ |
-| **5** | Multi-file: merge, per-file inspector, batch summary, partial-failure reporting. | ✅ |
 | **6** | The Footage profile: XMP fields ✅, `PreservedFileName` ✅, the second filename grammar ⬜ (§9.4). | ◐ |
 | **7** | Seeding: `--from-filename`, `--fetch`, completion history. | ⬜ |
 | **8** | Headless `--set`/`--apply`, the remaining §3.2 fields, config file, `--compat both`. | ⬜ |
 
-**Where this actually stands.** Milestone 6 turned out to be two independent
-halves, and the important one is done: XMP is read, written, and restored
-across a remux, so the data loss this whole design was built to prevent cannot
-happen. Which means the note this section used to carry — *"until milestone 6
-lands, `tagform` must refuse any file carrying XMP"* — is **discharged**. It
-does not refuse them; it routes them to the writer that preserves them (§9.2),
-and verifies the XMP read back afterwards.
+Milestone 6 turned out to be two independent halves, and the important one is
+done: XMP is read, written and restored across a remux, so the data loss this
+whole design was built to prevent cannot happen. The standing note this section
+used to carry — *"until milestone 6 lands, `tagform` must refuse any file
+carrying XMP"* — is **discharged**. It does not refuse them; it routes them to
+the writer that preserves them (§9.2) and verifies the XMP read back
+afterwards.
 
 **The direction from here** is narrower than the original 8-milestone plan, and
 deliberately so. What is left divides into three:
@@ -1501,15 +1455,11 @@ flags.
 
 ## 17. Open questions
 
-1. ~~Does ffmpeg write `mdir` and `mdta` together?~~ **Settled: no.** One box or
-   the other (§2.1). `--compat both` needs the exiftool second pass.
-2. ~~Where should the star rating live?~~ **Settled in practice.**
-   `XMP-xmp:Rating` is a real standard 0–5 field and is used wherever XMP is
-   present; elsewhere the `rating` key holds it. The `com.apple.iTunes:rating`
-   freeform atom was never built, and the fallback position — "stars are a
-   filename-and-XMP concept, not an ilst one" — is now simply the design. It
-   reopens only if `--compat ilst` is ever built and something needs Plex to
-   see a rating.
+*Two are settled and have moved into the design: ffmpeg writes one metadata box
+or the other, never both (§2.1), and the star rating lives in `XMP-xmp:Rating`
+where XMP is present and the `rating` key otherwise (§3.3). Numbering is kept
+so the citations elsewhere still resolve.*
+
 3. **Is the exiftool path actually faster over SMB?** Still unmeasured, and
    still does not matter: it is chosen for XMP, inode and xattr preservation,
    never for speed (§9.3), and there is no `--fast` flag for it to inform. One

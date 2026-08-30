@@ -1,4 +1,4 @@
-//! Video thumbnails, following media-audit's extraction recipe (SPEC §8).
+//! Video thumbnails, following media-audit's extraction recipe (DESIGN §8).
 //!
 //! Extraction seeks 2 s in to clear black leader and falls back to frame 0.
 //!

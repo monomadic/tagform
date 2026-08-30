@@ -1,4 +1,4 @@
-//! Values and the multi-file aggregation model (SPEC §4.3).
+//! Values and the multi-file aggregation model (DESIGN §4.3).
 
 use serde::Serialize;
 

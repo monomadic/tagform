@@ -1,4 +1,4 @@
-//! Application state and the event loop (SPEC §6.3).
+//! Application state and the event loop (DESIGN §6.3).
 //!
 //! Milestone 2 is read-only: the form displays and navigates, nothing is
 //! edited and nothing is written. The focus ring, the aggregate/single-file

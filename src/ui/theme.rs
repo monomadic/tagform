@@ -1,4 +1,4 @@
-//! One place for every colour (SPEC §7).
+//! One place for every colour (DESIGN §7).
 //!
 //! True colour throughout rather than the 16-colour palette. The old rendering
 //! leaned on `DarkGray` for anything secondary, which on a dark terminal is

@@ -1,4 +1,4 @@
-//! Deciding what to write, and which tool should write it (SPEC §9.1, §9.2).
+//! Deciding what to write, and which tool should write it (DESIGN §9.1, §9.2).
 //!
 //! Nothing here touches disk. The plan is built, shown for confirmation, and
 //! only then executed -- mp4-tui-tagger's staging model, which is the reason
