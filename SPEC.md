@@ -563,6 +563,32 @@ them until the write panel and the TV fields land.
 field, home/end/word-motion, and a masked variant that is unused here but free.
 Rendered as a single line inside a `▏ ▕` gutter that colours by validation state.
 
+**The emacs/macOS control keys are bound**, because a text field on this
+machine is expected to answer to them and they are not this program's to
+invent:
+
+| key | |
+|---|---|
+| `⌃A` / `⌃E` | start / end of line |
+| `⌃B` / `⌃F` | back / forward one character |
+| `⌃D` / `⌃H` | delete the character right / left |
+| `⌃W` | delete the word behind the cursor |
+| `⌃K` | delete to end of line |
+| `⌃U` | clear the line |
+
+⌃U is the macOS reading — the whole line, not readline's discard-to-the-left.
+⌃W and ⌃K already cover the partial kills between them, so the one that clears
+outright is the useful third. ⌃H arrives as either the letter or `Backspace`
+carrying the modifier, depending on the terminal; both spellings are bound.
+
+They live on `line_key`, so every text-backed control gets them — Text,
+TextArea, URL, Date and the list/hashtag chips, which are one joined line
+underneath (§5.3). Stars and Enum have no text and pass them straight through.
+
+This is what the mode split (§11) bought. Taking eight control keys costs
+nothing here because they bind **only while a field is open**; Select mode's
+single-letter commands are untouched.
+
 ⟨designed⟩ **Completion is not built**, and it is the largest single piece of
 ergonomics still missing — 90% of tagging is retyping a channel name you have
 typed before. The plan stands: `⌃Space` opens a dropdown of values seen in the
@@ -579,9 +605,11 @@ hatch without making it the only path.
 Description validates: over 255 bytes emits `Warn("N bytes; over 255 some
 readers truncate")`. Warnings never block a write.
 
-⟨designed⟩ `⌃E` (the `$EDITOR` escape hatch) and `⌃L` (move the overflow into
+⟨designed⟩ The `$EDITOR` escape hatch and `⌃L` (move the overflow into
 Synopsis) are not built — the warning names the problem without yet offering
-the fix.
+the fix. **The escape hatch needs a new key**: `⌃E` is end-of-line (§5.1), and
+a text field that answers to the emacs keys everywhere except one letter is
+worse than one that has no escape hatch at all.
 
 ### 5.3 List (Actors, Director, Producer)
 
@@ -628,8 +656,10 @@ Text plus a `url::Url` parse on every keystroke:
 The table above is built exactly as written, down to the message text
 (`not a URL: …`).
 
-⟨designed⟩ `⌃O` (open), `⌃Y` (yank), `⌃F` (prefix `https://`) and — the one
-that matters — **fetch** are not built. Fetch runs `yt-dlp --skip-download
+⟨designed⟩ `⌃O` (open), `⌃Y` (yank), the `https://` prefix fix-up and — the one
+that matters — **fetch** are not built. Fetch and the fix-up both need keys
+that are not `⌃F`, which is forward-one-character (§5.1). Fetch runs
+`yt-dlp --skip-download
 --dump-single-json` against the URL, via the shared cache `media-audit` and
 `ytq` already use, and offers to fill Title, Actors, Channel, Description, Tags
 and Date from the result with a per-field diff, so nothing is silently
@@ -1250,10 +1280,20 @@ free — `w` can mean write precisely because nothing is listening for the lette
 | `esc` | cancel this field's edit |
 | `ctrl-c` | quit, from either mode |
 
+On a text field, the emacs/macOS editing keys as well — `⌃A` `⌃E` `⌃B` `⌃F`
+`⌃D` `⌃H` `⌃W` `⌃K` `⌃U`, table in §5.1. They bind only while a field is open,
+which is exactly why the mode split makes them affordable.
+
 ⟨designed⟩ Unbound, each waiting on its feature: `⌃Space` (completion, §5.1),
-`⌃E` (`$EDITOR`, §5.2), `⌃F` (fetch, §5.5), `⌃O` / `⌃Y` (open / yank),
-`⌃G` / `⌃⇧G` (thumbnail seek, §8), `?` (key help — the shortcut strip and
-`--help` cover it for now).
+`⌃O` / `⌃Y` (open / yank), `⌃G` / `⌃⇧G` (thumbnail seek, §8), `?` (key help —
+the shortcut strip and `--help` cover it for now).
+
+⟨designed⟩ Two features have **lost the key they were reserved for**, since
+the editing bindings have the stronger claim on a text field: the `$EDITOR`
+escape hatch wanted `⌃E` (§5.2) and fetch wanted `⌃F` (§5.5). Both need a new
+one before they are built. `⌃X` is free and unclaimed by anything in §5.1,
+which makes an `⌃X`-prefixed pair the obvious answer if a third feature ever
+wants a key too.
 
 ---
 

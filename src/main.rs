@@ -214,5 +214,13 @@ Keys — the form is modal.
     esc               cancel this field's edit
     ctrl-c            quit from anywhere
 
+  EDIT, on a text field — the usual emacs/macOS keys
+    ctrl-a / ctrl-e   start / end of line
+    ctrl-b / ctrl-f   back / forward one character
+    ctrl-d / ctrl-h   delete the character right / left
+    ctrl-w            delete the word behind the cursor
+    ctrl-k            delete to end of line
+    ctrl-u            clear the line
+
 Edits are staged until `w`; the original is only replaced by a
 result that has been read back and verified.";

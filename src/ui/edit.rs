@@ -249,6 +249,14 @@ fn is_iso_date(v: &str) -> bool {
 /// Only the editing chords are claimed. Everything else passes back so the app
 /// can use it as a command -- otherwise a control would swallow ⌃P and the
 /// inspector would stop working whenever a text field had focus.
+/// Text editing, with the emacs/macOS control keys every other text field on
+/// the machine answers to. They are worth having exactly because they are not
+/// this program's invention: a reader who knows `⌃A` from the shell should not
+/// have to learn it again here.
+///
+/// These bind only while a text field is open. Select mode is untouched, so
+/// the single-letter commands (§11) keep working -- which is the whole point
+/// of the mode split, and the reason taking eight control keys costs nothing.
 fn line_key(input: &mut Input, key: KeyEvent) -> Reaction {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let req = match (key.code, ctrl) {
@@ -261,8 +269,25 @@ fn line_key(input: &mut Input, key: KeyEvent) -> Reaction {
         (KeyCode::End, _) => InputRequest::GoToEnd,
         (KeyCode::Left, true) => InputRequest::GoToPrevWord,
         (KeyCode::Right, true) => InputRequest::GoToNextWord,
+
+        // Motion.
+        (KeyCode::Char('b'), true) => InputRequest::GoToPrevChar,
+        (KeyCode::Char('f'), true) => InputRequest::GoToNextChar,
+        (KeyCode::Char('a'), true) => InputRequest::GoToStart,
+        (KeyCode::Char('e'), true) => InputRequest::GoToEnd,
+
+        // Deletion.
+        (KeyCode::Char('d'), true) => InputRequest::DeleteNextChar,
+        // ⌃H is 0x08, which a terminal may report either as the letter or as
+        // Backspace carrying the modifier. Both spellings mean the same key.
+        (KeyCode::Char('h'), true) | (KeyCode::Backspace, true) => InputRequest::DeletePrevChar,
         (KeyCode::Char('w'), true) => InputRequest::DeletePrevWord,
         (KeyCode::Char('k'), true) => InputRequest::DeleteTillEnd,
+        // The macOS reading of ⌃U -- the whole line, not readline's
+        // discard-to-the-left. ⌃W and ⌃K between them already cover the
+        // partial kills, so the one that clears outright is the useful third.
+        (KeyCode::Char('u'), true) => InputRequest::DeleteLine,
+
         _ => return Reaction::Pass,
     };
     input.handle(req);
@@ -343,6 +368,115 @@ mod tests {
     }
     fn opts(v: &[(&str, &str)]) -> Vec<Opt> {
         v.iter().map(|(c, l)| Opt { code: c.to_string(), label: l.to_string() }).collect()
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    /// Seed a text field and put the cursor where the test wants it, by
+    /// walking left from the end -- `Input::new` leaves it at the end.
+    fn text_at(value: &str, from_end: usize) -> Editor {
+        let mut e = Editor::new(Control::Text, Some(&Value::Text(value.into())), vec![]);
+        for _ in 0..from_end {
+            e.handle(code(KeyCode::Left));
+        }
+        e
+    }
+
+    fn text_of(e: &Editor) -> String {
+        match e.value() {
+            Value::Text(s) => s,
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ctrl_a_and_e_reach_the_ends_of_the_line() {
+        let mut e = text_at("abc", 0);
+        e.handle(ctrl('a'));
+        e.handle(key('!'));
+        assert_eq!(text_of(&e), "!abc");
+        e.handle(ctrl('e'));
+        e.handle(key('?'));
+        assert_eq!(text_of(&e), "!abc?");
+    }
+
+    #[test]
+    fn ctrl_b_and_f_step_one_character() {
+        let mut e = text_at("ac", 0);
+        e.handle(ctrl('b')); // between a and c
+        e.handle(key('b'));
+        assert_eq!(text_of(&e), "abc");
+        e.handle(ctrl('f')); // past the c, at the end
+        e.handle(key('d'));
+        assert_eq!(text_of(&e), "abcd");
+    }
+
+    #[test]
+    fn ctrl_d_deletes_rightwards_and_ctrl_h_leftwards() {
+        let mut e = text_at("abcd", 2); // cursor between b and c
+        e.handle(ctrl('d'));
+        assert_eq!(text_of(&e), "abd");
+        e.handle(ctrl('h'));
+        assert_eq!(text_of(&e), "ad");
+    }
+
+    /// A terminal may deliver ⌃H as Backspace carrying the modifier rather
+    /// than as the letter. Both have to mean delete-left.
+    #[test]
+    fn ctrl_backspace_is_the_other_spelling_of_ctrl_h() {
+        let mut e = text_at("ab", 0);
+        e.handle(KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL));
+        assert_eq!(text_of(&e), "a");
+    }
+
+    #[test]
+    fn ctrl_w_deletes_the_word_behind_the_cursor() {
+        let mut e = text_at("Sasha Grey", 0);
+        e.handle(ctrl('w'));
+        assert_eq!(text_of(&e), "Sasha");
+    }
+
+    /// The macOS reading: the whole line goes, not just what is left of the
+    /// cursor. A ⌃U that cleared only half a value would be the worse
+    /// surprise, since the half left behind is the half you cannot see.
+    #[test]
+    fn ctrl_u_clears_the_whole_line_from_anywhere_in_it() {
+        let mut e = text_at("Sasha Grey", 4);
+        e.handle(ctrl('u'));
+        assert_eq!(text_of(&e), "");
+    }
+
+    #[test]
+    fn ctrl_k_kills_to_the_end_only() {
+        let mut e = text_at("abcd", 2);
+        e.handle(ctrl('k'));
+        assert_eq!(text_of(&e), "ab");
+    }
+
+    /// The bindings are a property of a text input, not of one field, so a
+    /// list edits the same way -- it is the same joined line underneath.
+    #[test]
+    fn the_bindings_reach_list_fields_too() {
+        let mut e = Editor::new(
+            Control::List,
+            Some(&Value::List(vec!["Sasha Grey".into(), "Manuel Ferrara".into()])),
+            vec![],
+        );
+        e.handle(ctrl('w'));
+        assert_eq!(e.value(), Value::List(vec!["Sasha Grey".into(), "Manuel".into()]));
+        e.handle(ctrl('u'));
+        assert_eq!(e.value(), Value::List(vec![]));
+    }
+
+    /// Select mode's commands must stay reachable: a control key the text
+    /// field does not claim is still a command, and `⌃R` is redo.
+    #[test]
+    fn unclaimed_control_keys_still_pass_through() {
+        let mut e = text_at("abc", 0);
+        assert_eq!(e.handle(ctrl('r')), Reaction::Pass);
+        assert_eq!(text_of(&e), "abc");
     }
 
     #[test]

@@ -78,6 +78,21 @@ nothing is listening for the letter w.
 | `esc` | cancel this field's edit |
 | `ctrl-c` | quit, from either mode |
 
+On a text field, the emacs/macOS editing keys work as they do everywhere else:
+
+| key | |
+|---|---|
+| `ctrl-a` / `ctrl-e` | start / end of line |
+| `ctrl-b` / `ctrl-f` | back / forward one character |
+| `ctrl-d` / `ctrl-h` | delete the character right / left |
+| `ctrl-w` | delete the word behind the cursor |
+| `ctrl-k` | delete to end of line |
+| `ctrl-u` | clear the line |
+
+They bind only while a field is open, so Select mode's single-letter commands
+are untouched — which is what the mode split is for. Every text-backed control
+gets them, chips included, since a list is one joined line underneath.
+
 The form paints its own chrome: a filled `tagform` badge heads the screen, every
 field shows a coloured editable region whether or not it is focused, the focused
 field is marked `▍` (`▶` while editing) and a staged one `●`, and a shortcut
