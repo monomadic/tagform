@@ -137,7 +137,7 @@ with three modes:
 
 ffmpeg writes one box **or** the other, never both — so `both` genuinely needs a
 second tool (§9.3). The default `.mp4` path silently drops exactly this repo's
-custom vocabulary: `actors`, `type`, `channel`, `rating`, `origin`,
+custom vocabulary: `actors`, `type` (now written `variant`, §3.4), `channel`, `rating`, `origin`,
 `source_url`, `webpage_url`, `purl`, `yt_dlp_id`.
 
 The `.mov` default path is not merely lossy, it is *wrong*: ffmpeg invents
@@ -181,7 +181,7 @@ writes five keys — and that fan-out is the whole reason this tool exists.
 
 The ten the brief requires, plus the ones the yt-dlp config already produces
 and would otherwise be silently dropped on every rewrite: **Title, Actors,
-Artist, Rating, Description, URL, Channel, Tags, Genre, Type, Kind.**
+Artist, Rating, Description, URL, Channel, Tags, Genre, Variant, Kind.**
 
 **The table is not reproduced here.** `FIELDS` in `src/model/schema.rs` is the
 authority, and `tagform --print-schema` emits it as JSON — every field with its
@@ -270,13 +270,35 @@ This trips up every MP4 tagger and the schema must keep them apart:
 Field 4 is sense (1). The other two are never conflated with it — and are the
 easier discipline to keep now that neither is built.
 
-### 3.4 Two different things called "type"
+### 3.4 Variant, and the two things once called "type"
 
-Same discipline:
+**Variant** is the user's own axis: which version of the work this file is —
+the `Original`, a `Clip` of it, or a `Master` that has been remastered or
+upscaled. It already existed as the yt-dlp config's
+`--alias clip/master/original`, writing `meta_type`.
 
-- **Type** (field 10) is the user's own axis, and it already exists — the yt-dlp
-  config has `--alias clip/master/original` writing `meta_type`. ⟨built,
-  differs⟩ Intended as an *open* enum; built closed, like Kind (§5.7).
+⟨built, differs⟩ **It was called Type, and the key on disk was `type`.**
+Renamed for two reasons that reinforced each other: `type` says nothing about
+what it holds, and it is a reserved word in most languages that touch this data
+— the cost was already visible as `Enums.type_`, carrying a trailing
+underscore for no reason a reader could see.
+
+The rename follows the schema's own read-wider-than-write rule (§4.2) rather
+than needing a migration: it **writes `variant` and reads `variant, type`**, so
+every file tagged before the change still displays, and an edit leaves the new
+key behind. Where a file somehow carries both, `variant` wins — it is first in
+the read list. `type` stays in `EXIFTOOL_KEY_NAMES` and in the shipped exiftool
+config, because an in-place update of an old file still has to be able to name
+it. yt-dlp's own variable is untouched and still `meta_type`; that config lives
+in another repository, and §3.5 parses it either way.
+
+⟨built, differs⟩ Intended as an *open* enum; built closed, like Kind (§5.7).
+Adding `Remaster` or `Upscale` as distinct values is a one-line `--alias` in
+the yt-dlp config, not a change here — and a value already on a file that the
+list does not know joins the set for that field anyway.
+
+- **Kind** (field 11) is `stik`, a closed integer enum the Apple ecosystem
+  actually reads:
 - **Kind** (field 11) is `stik`, a closed integer enum the Apple ecosystem
   actually reads:
 
@@ -310,7 +332,7 @@ The genre and type enums are not invented here. They are exactly the aliases in
 ```
 
 → Genre: `Media`, `Footage`, `Karaoke`, `VJ Clip`
-→ Type: `Clip`, `Master`, `Original`
+→ Variant: `Clip`, `Master`, `Original`
 
 **`Footage`, not `Camera Footage`.** The yt-dlp alias literal is currently
 `Camera Footage`; `tagform` normalises it. A `[enums.aliases]` table maps stored
@@ -701,8 +723,8 @@ along the same row it already occupied, with the current one lit — same row,
 same height, so nothing below it reflows:
 
 ```
-   Type             Clip                       ← closed
-  ▶Type              Clip  Master  Original    ← open, "Clip" lit
+   Variant          Clip                       ← closed
+  ▶Variant           Clip  Master  Original    ← open, "Clip" lit
 ```
 
 `←`/`→` or `h`/`l` step and wrap, `⏎` accepts, `⇥` accepts and advances,
@@ -714,7 +736,7 @@ something lit to step away from — and an unset field still reads as `—` whil
 you are merely moving past it.
 
 **No free text, for now.** The open/closed split the plan called for is not
-built: typing into a set is rejected outright, and Genre and Type are picked
+built: typing into a set is rejected outright, and Genre and Variant are picked
 from the list like Kind is. What keeps that from losing data is that a value
 already on the file which the list does not know **joins the set for that
 field** — an unfamiliar Genre is lit, selectable and steppable, it just cannot
@@ -879,7 +901,7 @@ keys live in the current mode.
 │  Channel      ▏Brazzers                                            ▕  │
 │  Tags         ▏#pov #hd #anal +                                    ▕  │
 │  Genre        ▏‹ Media ›                                           ▕  │
-│  Type         ▏‹ Clip ›                                            ▕  │
+│  Variant      ▏‹ Clip ›                                            ▕  │
 │  Kind         ▏‹ Movie ›                                           ▕  │
 │                                                                       │
 │  ▸ More (16)                        ▸ Custom (7)                      │
@@ -1262,7 +1284,7 @@ wants a key too.
 ## 12. Config
 
 ⟨designed⟩ **There is no config file.** `config.rs` reads exactly one thing:
-`~/.config/yt-dlp/config`, for the Genre and Type aliases (§3.5). Everything
+`~/.config/yt-dlp/config`, for the Genre and Variant aliases (§3.5). Everything
 else — theme, faststart, enums, defaults, field order — is either a flag, a
 runtime toggle, or a constant.
 

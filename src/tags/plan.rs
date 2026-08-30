@@ -31,6 +31,9 @@ pub const EXIFTOOL_KEY_NAMES: &[(&str, &str)] = &[
     ("album", "Album"),
     ("keywords", "Keywords"),
     ("genre", "Genre"),
+    ("variant", "Variant"),
+    // Kept: files tagged before the rename carry `type`, and an in-place
+    // update of one has to be able to name it (DESIGN §3.4).
     ("type", "Type"),
     ("media_type", "MediaTypeK"),
     ("date", "DateK"),
@@ -307,6 +310,29 @@ mod tests {
         let without = file(&[("actors", "a")], &[]);
         let p2 = build(&without, &staged(&[("actors", Value::List(vec!["Bob".into()]))]), false);
         assert!(p2.xmp.is_empty());
+    }
+
+    /// The field was called `type` on disk until it was renamed to `variant`
+    /// (DESIGN §3.4). Every file tagged before that carries the old key, so it
+    /// has to keep reading -- and an edit has to leave behind the new one.
+    #[test]
+    fn a_file_carrying_the_old_type_key_still_reads_as_variant() {
+        let def = crate::model::schema::field_by_id("variant").expect("variant field");
+        let old = file(&[("type", "Master")], &[]);
+        assert_eq!(old.lookup(def), Some(Value::text("Master")));
+
+        // And the new key wins where a file somehow carries both.
+        let both = file(&[("type", "Clip"), ("variant", "Master")], &[]);
+        assert_eq!(both.lookup(def), Some(Value::text("Master")));
+    }
+
+    #[test]
+    fn editing_variant_writes_the_new_key_only() {
+        let f = file(&[("type", "Clip")], &[]);
+        let p = build(&f, &staged(&[("variant", Value::text("Master"))]), false);
+        assert_eq!(p.atoms, vec![("variant".to_string(), "Master".to_string())]);
+        // A new key on this file, so it cannot go in place.
+        assert_eq!(p.writer, Writer::Ffmpeg);
     }
 
     /// One field, five keys -- the fan-out that is the reason for the tool.

@@ -98,9 +98,14 @@ pub static FIELDS: &[FieldDef] = &[
     field!("genre", "Genre", Control::Enum,
         mdta: ["genre"], read: ["genre"], xmp: [], ilst: Some("\u{a9}gen")),
 
-    // The user's own axis (Clip/Master/Original) — no ilst atom exists.
-    field!("type", "Type", Control::Enum,
-        mdta: ["type"], read: ["type"], xmp: [], ilst: None),
+    // Which version of the work this file is: the original, an excerpt, or a
+    // remastered/upscaled pass over it. Called `type` on disk until now, which
+    // was both too generic to read and a reserved word in every language that
+    // touches it -- `Enums.type_` was carrying the trailing underscore. Writes
+    // `variant`; still reads `type`, because every file tagged before the
+    // rename has one (DESIGN §3.4).
+    field!("variant", "Variant", Control::Enum,
+        mdta: ["variant"], read: ["variant", "type"], xmp: [], ilst: None),
 
     // The iTunes media kind (stik).
     field!("kind", "Kind", Control::Enum,

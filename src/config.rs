@@ -16,7 +16,7 @@
 use std::path::PathBuf;
 
 pub const DEFAULT_GENRES: &[&str] = &["Media", "Footage", "Karaoke", "VJ Clip"];
-pub const DEFAULT_TYPES: &[&str] = &["Clip", "Master", "Original"];
+pub const DEFAULT_VARIANTS: &[&str] = &["Clip", "Master", "Original"];
 
 /// The `stik` media kind: a closed set the Apple ecosystem actually reads.
 pub const KINDS: &[(&str, &str)] = &[
@@ -31,14 +31,14 @@ pub const KINDS: &[(&str, &str)] = &[
 
 pub struct Enums {
     pub genre: Vec<String>,
-    pub type_: Vec<String>,
+    pub variant: Vec<String>,
 }
 
 impl Default for Enums {
     fn default() -> Self {
         Self {
             genre: DEFAULT_GENRES.iter().map(|s| s.to_string()).collect(),
-            type_: DEFAULT_TYPES.iter().map(|s| s.to_string()).collect(),
+            variant: DEFAULT_VARIANTS.iter().map(|s| s.to_string()).collect(),
         }
     }
 }
@@ -54,13 +54,15 @@ impl Enums {
     pub fn from_ytdlp_config(text: &str) -> Self {
         let mut me = Self {
             genre: parse_alias_values(text, "meta_genre"),
-            type_: parse_alias_values(text, "meta_type"),
+            // yt-dlp's own variable is still `meta_type`; only our field
+            // changed name, and that config lives in another repository.
+            variant: parse_alias_values(text, "meta_type"),
         };
         if me.genre.is_empty() {
             me.genre = DEFAULT_GENRES.iter().map(|s| s.to_string()).collect();
         }
-        if me.type_.is_empty() {
-            me.type_ = DEFAULT_TYPES.iter().map(|s| s.to_string()).collect();
+        if me.variant.is_empty() {
+            me.variant = DEFAULT_VARIANTS.iter().map(|s| s.to_string()).collect();
         }
         me
     }
@@ -134,7 +136,7 @@ mod tests {
     #[test]
     fn types_come_from_the_aliases() {
         let e = Enums::from_ytdlp_config(SAMPLE);
-        assert_eq!(e.type_, vec!["Clip", "Master", "Original"]);
+        assert_eq!(e.variant, vec!["Clip", "Master", "Original"]);
     }
 
     /// The alias literal is "Camera Footage"; the form says "Footage".
@@ -150,7 +152,7 @@ mod tests {
     fn empty_config_falls_back_to_defaults() {
         let e = Enums::from_ytdlp_config("");
         assert_eq!(e.genre, DEFAULT_GENRES);
-        assert_eq!(e.type_, DEFAULT_TYPES);
+        assert_eq!(e.variant, DEFAULT_VARIANTS);
     }
 
     #[test]

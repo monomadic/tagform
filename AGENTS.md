@@ -58,7 +58,7 @@ Use the map below instead of searching the tree.
 
 ```
 src/main.rs         CLI, --print-json / --print-schema, exit codes
-src/config.rs       config.toml + the yt-dlp --alias parse (Genre/Type sets)
+src/config.rs       the yt-dlp --alias parse (Genre/Variant sets)
 src/thumb.rs        thumbnail extraction, cache, ratatui-image
 src/model/
   schema.rs         FIELDS table — field → mdta/read/xmp/ilst keys. Start here.

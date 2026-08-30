@@ -114,7 +114,7 @@ guards exist because both mistakes were made: 16-colour `DarkGray` labels, and
 a file path drawn in a divider colour at 1.4:1.
 
 Controls: text, multi-line text, lists drawn as chips, `#hashtags`, URL
-(validated, `not a URL: …`), dates, a 0–5 star row, fixed sets (Genre, Type and
+(validated, `not a URL: …`), dates, a 0–5 star row, fixed sets (Genre, Variant and
 Kind — the last stored as the `stik` integer but shown as "Movie"), and
 read-only fields for things a camera wrote. Chips are a *rendering*: a list
 edits as its comma-joined text and re-splits on commit, so there is no per-chip
@@ -131,8 +131,8 @@ with the current value lit — so you can see the whole set without cycling
 blind, and opening one never changes the shape of the form:
 
 ```
-   Type             Clip
-  ▶Type              Clip  Master  Original
+   Variant          Clip
+  ▶Variant           Clip  Master  Original
 ```
 
 `enter` opens, `h`/`l` step and wrap, `enter` accepts, `tab` accepts and
@@ -140,12 +140,12 @@ advances, `j`/`k` accept and move a row, `esc` reverts. Nothing is staged until
 you accept, which is what makes `esc` clean. Opening an empty field lands on
 the first option; until it is opened, it still reads as `—`.
 
-Typing into a set is not supported yet — Genre and Type are picked from the
+Typing into a set is not supported yet — Genre and Variant are picked from the
 list, like Kind. A value already on the file that the list does not know
 **joins the set for that field**, so an unfamiliar Genre stays selectable
 instead of being lost the first time the field is stepped.
 
-Genre and Type are **not hardcoded** — they are parsed out of
+Genre and Variant are **not hardcoded** — they are parsed out of
 `~/.config/yt-dlp/config`'s `--alias` lines, so adding an alias there adds a
 dropdown value here. `Camera Footage` normalizes to `Footage`.
 
@@ -165,7 +165,7 @@ findings are in `docs/CONTAINER.md` and reproducible with
 **1. This library is `mdta`, not iTunes.** `~/.config/yt-dlp/config` sets
 `-movflags use_metadata_tags` globally, so tags live in `moov/udta/meta` under
 the `mdta` handler with arbitrary key names. The default ffmpeg path writes
-iTunes `ilst` atoms instead and **silently drops** `actors`, `type`, `channel`,
+iTunes `ilst` atoms instead and **silently drops** `actors`, `type` (now `variant`), `channel`,
 `rating`, `origin`, `source_url`, `webpage_url`, `purl` and `yt_dlp_id` — 9 of
 20 keys. The two boxes are mutually exclusive.
 

@@ -578,7 +578,7 @@ impl App {
         };
         match row.key.as_str() {
             "genre" => same(&self.enums.genre),
-            "type" => same(&self.enums.type_),
+            "variant" => same(&self.enums.variant),
             "kind" => KINDS
                 .iter()
                 .map(|(c, l)| Opt { code: (*c).into(), label: (*l).into() })
