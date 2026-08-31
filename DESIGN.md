@@ -334,20 +334,22 @@ neither needed to:
 --alias original '… --parse-metadata "Original:%(meta_type)s"'
 ```
 
-→ Category: `Media`, `Footage`, `Karaoke`, `Live Visual` (stored `VJ Clip`,
-  §3.5.1)
+→ Category: `Adult` (stored `Media`, §3.5.1), `Footage`, `Karaoke`,
+  `Live Visual` (stored `VJ Clip`, §3.5.1), `Music Video`, `Tutorial`, `Meme`,
+  `Texture`
 → Variant: `Clip`, `Enhanced` (stored `Master`, §3.5.1), `Original`
 
 #### 3.5.1 Renaming a value
 
 `config::normalize` maps a value stored under an older name to its current one.
-Three exist:
+Four exist:
 
 | stored | shown and written |
 |---|---|
 | `Camera Footage` | `Footage` |
 | `Master` | `Enhanced` |
 | `VJ Clip` | `Live Visual` |
+| `Media` | `Adult` |
 
 It runs in **both directions**, and both halves are load-bearing: on the
 literals parsed out of the yt-dlp config, so the dropdown offers the current
@@ -372,9 +374,9 @@ set beside it. This section claimed otherwise for the whole time. Two tests now
 pin both directions.
 
 ⟨built, differs⟩ The map is **hard-coded in `config.rs`, not configurable** —
-there is no `config.toml` and so no `[enums.aliases]` table (§12). Two entries
-have been needed in the life of the project, which is not a case for a config
-file.
+there is no `config.toml` and so no `[enums.aliases]` table (§12). Four
+entries have been needed in the life of the project, which is not a case for a
+config file.
 
 Changing a yt-dlp alias literal itself is a separate one-line edit in another
 repository that only affects *new* downloads; the map is what makes the two
@@ -409,6 +411,11 @@ key Kind already writes.
 `category` reads only `category`, and `genre` reads only `genre`. The two are
 independent from the first write.
 
+**`Media` became `Adult`.** `Media` failed the same test `Visual` and `Motion`
+fail below: every file in this library is media, so the value divided nothing
+while sitting in the position that should say what the file is. It has always
+meant one thing in practice, and the label now says it.
+
 **`VJ Clip` became `Live Visual` at the same time.** `VJ` named the operator,
 which is the part of a name that dates — and the shorter words all failed for a
 reason worth recording, because they will suggest themselves again. `Loop` and
@@ -418,10 +425,30 @@ apart. `Visual` and `Motion` fail the test that every category value has to
 pass — *every* video is visual and every video is motion, so neither one
 divides anything. `Texture` and `Plate` pass every test and were the last two
 standing; both lost to legibility, which is the property that matters most in a
-label read off a form row daily. `Live Visual` costs a second word and buys
+label read off a form row daily. (`Texture` was later added as a category of
+its own, and the two are neighbours rather than synonyms — which is why losing
+the naming contest did not disqualify it. A Live Visual is a *complete work*,
+usually a scene or a video, ready to play live as it stands. A Texture is an
+*asset*: a part of a composition, usually incomplete on its own and not
+generally interesting on its own, cut for projection mapping and the like.) `Live Visual` costs a second word and buys
 back all of it: it names what the file is for — image material played behind or
 over a performance, with no narrative and no runtime that matters — without
 naming who plays it.
+
+**Four values were added after the rename**: `Music Video`, `Tutorial`, `Meme`
+and `Texture`. Each divides something the existing four did not — a published
+musical form, instructional material, a short circulated joke, and composition
+assets — which is the only test a category value has to pass. `Texture` sits
+next to `Live Visual` and the line between them is completeness: a Live Visual
+plays as it stands, a Texture is a part of something else.
+
+They live in `DEFAULT_CATEGORIES` today, and that is the caveat: the fallback
+is *replaced* wholesale when `~/.config/yt-dlp/config` parses, so a value only
+reaches the dropdown on a machine with that config once a matching
+`--alias … "<VALUE>:%(meta_genre)s"` line exists there too. Until then the four
+appear only when the config is missing or unreadable. Editing that file is a
+one-line change in another repository, as §3.5.1 already notes for the rename
+map.
 
 `category` has **no ilst atom**. `catg` exists in the iTunes set, but
 docs/CONTAINER.md never measured it, and `FIELDS` only claims atoms that were

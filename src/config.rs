@@ -16,7 +16,16 @@
 
 use std::path::PathBuf;
 
-pub const DEFAULT_CATEGORIES: &[&str] = &["Media", "Footage", "Karaoke", "Live Visual"];
+pub const DEFAULT_CATEGORIES: &[&str] = &[
+    "Adult",
+    "Footage",
+    "Karaoke",
+    "Live Visual",
+    "Music Video",
+    "Tutorial",
+    "Meme",
+    "Texture",
+];
 pub const DEFAULT_VARIANTS: &[&str] = &["Clip", "Enhanced", "Original"];
 
 /// The `stik` media kind: a closed set the Apple ecosystem actually reads.
@@ -118,6 +127,10 @@ pub fn normalize(value: &str) -> String {
     let v = value.trim();
     match v.to_ascii_lowercase().as_str() {
         "camera footage" => "Footage".to_string(),
+        // "Media" said nothing: every file here is media. The value has always
+        // meant the adult material this library was built around, so the label
+        // now says it.
+        "media" => "Adult".to_string(),
         // "VJ Clip" named the operator, not the thing -- and half of these do
         // not loop, so none of the shorter words fit either. A live visual is
         // image material played behind or over a performance: no narrative, no
@@ -151,8 +164,9 @@ mod tests {
     #[test]
     fn categories_come_from_the_aliases() {
         let e = Enums::from_ytdlp_config(SAMPLE);
-        // The alias literal is still "VJ Clip"; the form offers "Live Visual".
-        assert_eq!(e.category, vec!["Media", "Footage", "Karaoke", "Live Visual"]);
+        // The alias literals are still "Media" and "VJ Clip"; the form offers
+        // "Adult" and "Live Visual".
+        assert_eq!(e.category, vec!["Adult", "Footage", "Karaoke", "Live Visual"]);
     }
 
     #[test]
@@ -171,6 +185,8 @@ mod tests {
         assert_eq!(normalize("Master"), "Enhanced");
         assert_eq!(normalize("MASTER"), "Enhanced");
         assert_eq!(normalize("VJ Clip"), "Live Visual");
+        assert_eq!(normalize("Media"), "Adult");
+        assert_eq!(normalize("media"), "Adult");
         assert_eq!(normalize("vj clip"), "Live Visual");
         // Already current, and anything unknown, passes through untouched.
         assert_eq!(normalize("Enhanced"), "Enhanced");

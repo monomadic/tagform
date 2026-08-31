@@ -96,10 +96,10 @@ pub static FIELDS: &[FieldDef] = &[
         mdta: ["keywords"], read: ["keywords", "keyw"],
         xmp: ["XMP-dc:Subject"], ilst: Some("keyw")),
 
-    // What kind of thing the file is: Media, Footage, Karaoke, Live Visual. This
-    // used to be Genre, which was wrong in both directions -- it is not a
-    // style, and it spent the one name every other player already displays as
-    // one (DESIGN §3.5). No `read` alias for `genre`: nothing in this library
+    // What kind of thing the file is: Adult, Footage, Karaoke, Live Visual,
+    // Music Video, Tutorial, Meme, Texture. This used to be Genre, which was
+    // wrong in both directions -- it is not a style, and it spent the one name
+    // every other player already displays as one (DESIGN §3.5). No `read` alias for `genre`: nothing in this library
     // ever carried these values there, so there is nothing to migrate.
     //
     // ilst is None because it has not been measured. `catg` exists in the

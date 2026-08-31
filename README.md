@@ -151,17 +151,18 @@ Category and Variant are **not hardcoded** — they are parsed out of
 `~/.config/yt-dlp/config`'s `--alias` lines, so adding an alias there adds a
 dropdown value here.
 
-**Category is what used to be called Genre**: `Media`, `Footage`, `Karaoke`,
-`Live Visual` — what kind of thing the file is, which was never a style and was
-sitting on the one key Plex, Jellyfin and Music.app read as one. Genre is still
-there, on `genre`/`©gen`, now an ordinary text field holding the style those
-players expect. Nothing migrates: the two keys are independent.
+**Category is what used to be called Genre**: `Adult`, `Footage`, `Karaoke`,
+`Live Visual`, `Music Video`, `Tutorial`, `Meme`, `Texture` — what kind of
+thing the file is, which was never a style and was sitting on the one key Plex,
+Jellyfin and Music.app read as one. Genre is still there, on `genre`/`©gen`,
+now an ordinary text field holding the style those players expect. Nothing
+migrates: the two keys are independent.
 
 A value stored under an older name reads as its current one — `Camera Footage`
-shows as `Footage`, `Master` as `Enhanced`, `VJ Clip` as `Live Visual` — on
-files as well as in the dropdown, so a renamed option replaces the old spelling
-instead of sitting beside it. Old files keep their stored value until the
-field is edited.
+shows as `Footage`, `Media` as `Adult`, `Master` as `Enhanced`, `VJ Clip` as
+`Live Visual` — on files as well as in the dropdown, so a renamed option
+replaces the old spelling instead of sitting beside it. Old files keep their
+stored value until the field is edited.
 
 Two things it already does that the scripts it replaces could not: it reads XMP
 and atoms together, so a `rename-footage` clip shows its people, location and
