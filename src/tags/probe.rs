@@ -187,8 +187,15 @@ mod rename_tests {
     /// *file* tagged the long way round kept showing the long name.
     #[test]
     fn camera_footage_on_a_file_reads_as_footage() {
-        let def = field_by_id("genre").expect("genre field");
-        assert_eq!(tagged("genre", "Camera Footage").lookup(def), Some(Value::text("Footage")));
+        let def = field_by_id("category").expect("category field");
+        assert_eq!(
+            tagged("category", "Camera Footage").lookup(def),
+            Some(Value::text("Footage"))
+        );
+        assert_eq!(
+            tagged("category", "VJ Clip").lookup(def),
+            Some(Value::text("Live Visual"))
+        );
     }
 
     /// Kind is an enum too, but its values are `stik` integers. Normalising

@@ -1,7 +1,8 @@
 //! Enum sources (DESIGN §3.5).
 //!
-//! Genre and Type are not invented here. They are exactly the aliases in
-//! `config/yt-dlp/config`, which write `meta_genre` and `meta_type`:
+//! Category and Variant are not invented here. They are exactly the aliases in
+//! `config/yt-dlp/config`, which write `meta_genre` and `meta_type` -- yt-dlp's
+//! own variable names, unchanged by either of this repo's field renames:
 //!
 //! ```text
 //! --alias footage '--embed-metadata --parse-metadata "Camera Footage:%(meta_genre)s"'
@@ -15,7 +16,7 @@
 
 use std::path::PathBuf;
 
-pub const DEFAULT_GENRES: &[&str] = &["Media", "Footage", "Karaoke", "VJ Clip"];
+pub const DEFAULT_CATEGORIES: &[&str] = &["Media", "Footage", "Karaoke", "Live Visual"];
 pub const DEFAULT_VARIANTS: &[&str] = &["Clip", "Enhanced", "Original"];
 
 /// The `stik` media kind: a closed set the Apple ecosystem actually reads.
@@ -30,14 +31,14 @@ pub const KINDS: &[(&str, &str)] = &[
 ];
 
 pub struct Enums {
-    pub genre: Vec<String>,
+    pub category: Vec<String>,
     pub variant: Vec<String>,
 }
 
 impl Default for Enums {
     fn default() -> Self {
         Self {
-            genre: DEFAULT_GENRES.iter().map(|s| s.to_string()).collect(),
+            category: DEFAULT_CATEGORIES.iter().map(|s| s.to_string()).collect(),
             variant: DEFAULT_VARIANTS.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -53,13 +54,15 @@ impl Enums {
 
     pub fn from_ytdlp_config(text: &str) -> Self {
         let mut me = Self {
-            genre: parse_alias_values(text, "meta_genre"),
-            // yt-dlp's own variable is still `meta_type`; only our field
-            // changed name, and that config lives in another repository.
+            // yt-dlp's own variables are still `meta_genre` and `meta_type`;
+            // only our fields changed name, and that config lives in another
+            // repository. `meta_genre` feeds Category, not Genre -- these
+            // literals were never styles.
+            category: parse_alias_values(text, "meta_genre"),
             variant: parse_alias_values(text, "meta_type"),
         };
-        if me.genre.is_empty() {
-            me.genre = DEFAULT_GENRES.iter().map(|s| s.to_string()).collect();
+        if me.category.is_empty() {
+            me.category = DEFAULT_CATEGORIES.iter().map(|s| s.to_string()).collect();
         }
         if me.variant.is_empty() {
             me.variant = DEFAULT_VARIANTS.iter().map(|s| s.to_string()).collect();
@@ -115,6 +118,11 @@ pub fn normalize(value: &str) -> String {
     let v = value.trim();
     match v.to_ascii_lowercase().as_str() {
         "camera footage" => "Footage".to_string(),
+        // "VJ Clip" named the operator, not the thing -- and half of these do
+        // not loop, so none of the shorter words fit either. A live visual is
+        // image material played behind or over a performance: no narrative, no
+        // runtime that matters, not a work you sit and watch.
+        "vj clip" => "Live Visual".to_string(),
         // "Master" was ambiguous: in this library a master is the good copy,
         // but everywhere else it is the *source* -- the opposite of a
         // remastered or upscaled derivative, which is what this value means.
@@ -128,7 +136,7 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str = r#"
-# genre
+# category (yt-dlp still calls the variable meta_genre)
 --alias media '--embed-metadata --parse-metadata "Media:%(meta_genre)s"'
 --alias footage '--embed-metadata --parse-metadata "Camera Footage:%(meta_genre)s"'
 --alias karaoke '--embed-metadata --parse-metadata "Karaoke:%(meta_genre)s"'
@@ -141,9 +149,10 @@ mod tests {
 "#;
 
     #[test]
-    fn genres_come_from_the_aliases() {
+    fn categories_come_from_the_aliases() {
         let e = Enums::from_ytdlp_config(SAMPLE);
-        assert_eq!(e.genre, vec!["Media", "Footage", "Karaoke", "VJ Clip"]);
+        // The alias literal is still "VJ Clip"; the form offers "Live Visual".
+        assert_eq!(e.category, vec!["Media", "Footage", "Karaoke", "Live Visual"]);
     }
 
     #[test]
@@ -161,6 +170,8 @@ mod tests {
         assert_eq!(normalize(" Karaoke "), "Karaoke");
         assert_eq!(normalize("Master"), "Enhanced");
         assert_eq!(normalize("MASTER"), "Enhanced");
+        assert_eq!(normalize("VJ Clip"), "Live Visual");
+        assert_eq!(normalize("vj clip"), "Live Visual");
         // Already current, and anything unknown, passes through untouched.
         assert_eq!(normalize("Enhanced"), "Enhanced");
         assert_eq!(normalize("Upscale"), "Upscale");
@@ -170,13 +181,13 @@ mod tests {
     #[test]
     fn empty_config_falls_back_to_defaults() {
         let e = Enums::from_ytdlp_config("");
-        assert_eq!(e.genre, DEFAULT_GENRES);
+        assert_eq!(e.category, DEFAULT_CATEGORIES);
         assert_eq!(e.variant, DEFAULT_VARIANTS);
     }
 
     #[test]
     fn non_alias_lines_are_ignored() {
         let e = Enums::from_ytdlp_config("--parse-metadata \"Bogus:%(meta_genre)s\"");
-        assert_eq!(e.genre, DEFAULT_GENRES);
+        assert_eq!(e.category, DEFAULT_CATEGORIES);
     }
 }

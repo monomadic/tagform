@@ -43,7 +43,8 @@ pub struct FieldDef {
     /// The iTunes atom, where one exists at all. Measured, not assumed —
     /// see docs/CONTAINER.md.
     pub ilst: Option<&'static str>,
-    /// Shown only when Genre is Footage.
+    /// Part of the footage profile: shown only when the value is actually
+    /// present in the selection, not gated on any other field (DESIGN §3.6).
     pub footage_only: bool,
 }
 
@@ -95,7 +96,23 @@ pub static FIELDS: &[FieldDef] = &[
         mdta: ["keywords"], read: ["keywords", "keyw"],
         xmp: ["XMP-dc:Subject"], ilst: Some("keyw")),
 
-    field!("genre", "Genre", Control::Enum,
+    // What kind of thing the file is: Media, Footage, Karaoke, Live Visual. This
+    // used to be Genre, which was wrong in both directions -- it is not a
+    // style, and it spent the one name every other player already displays as
+    // one (DESIGN §3.5). No `read` alias for `genre`: nothing in this library
+    // ever carried these values there, so there is nothing to migrate.
+    //
+    // ilst is None because it has not been measured. `catg` exists in the
+    // iTunes set, but docs/CONTAINER.md never tested it, and this table only
+    // claims atoms that were (invariant 1).
+    field!("category", "Category", Control::Enum,
+        mdta: ["category"], read: ["category"], xmp: [], ilst: None),
+
+    // The real one now: an open text field for the musical or cinematic style,
+    // which is what `genre`/`©gen` means to Plex, Jellyfin, Music.app and
+    // Finder. No enum -- a style list is not a closed set, and the closed set
+    // that used to live here moved to Category above.
+    field!("genre", "Genre", Control::Text,
         mdta: ["genre"], read: ["genre"], xmp: [], ilst: Some("\u{a9}gen")),
 
     // Which version of the work this file is: the original, an excerpt, or a
@@ -208,6 +225,21 @@ pub fn claimed_atom_keys() -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The split Category made: the closed set is Category's, and `genre` is
+    /// free text on the key every other player reads as a style. Neither reads
+    /// the other -- there was never a file carrying a category under `genre`.
+    #[test]
+    fn category_holds_the_set_and_genre_is_free_text() {
+        let cat = field_by_id("category").expect("category field");
+        let genre = field_by_id("genre").expect("genre field");
+        assert_eq!(cat.control, Control::Enum);
+        assert_eq!(genre.control, Control::Text);
+        assert_eq!(cat.mdta, ["category"]);
+        assert_eq!(genre.mdta, ["genre"]);
+        assert!(!cat.read.contains(&"genre"));
+        assert!(!genre.read.contains(&"category"));
+    }
 
     #[test]
     fn ids_are_unique() {

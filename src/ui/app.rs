@@ -516,7 +516,7 @@ impl App {
         let current = match self.shown_value(row) {
             Some(Value::Text(code)) if !code.trim().is_empty() => {
                 // Same rule as the editor: a value the set does not know joins
-                // it for this field, so stepping off a custom Genre can step
+                // it for this field, so stepping off a custom Category can step
                 // back onto it.
                 match opts.iter().position(|o| o.code == code) {
                     Some(i) => Some(i),
@@ -577,7 +577,7 @@ impl App {
             v.iter().map(|s| Opt { code: s.clone(), label: s.clone() }).collect::<Vec<_>>()
         };
         match row.key.as_str() {
-            "genre" => same(&self.enums.genre),
+            "category" => same(&self.enums.category),
             "variant" => same(&self.enums.variant),
             "kind" => KINDS
                 .iter()

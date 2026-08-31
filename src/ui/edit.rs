@@ -49,7 +49,7 @@ pub struct Opt {
 
 /// Every enum is a fixed set for now: the value is chosen from the list and
 /// nothing is typed. A value already on the file that the list does not know
-/// joins the set for that field, so an unfamiliar Genre is still selectable
+/// joins the set for that field, so an unfamiliar Category is still selectable
 /// -- and still survives being tabbed past -- without a free-text mode.
 pub struct EnumEdit {
     pub input: Input,
@@ -635,7 +635,7 @@ mod tests {
     #[test]
     fn seeding_a_control_from_its_own_value_is_a_fixed_point() {
         let kinds = opts(&[("9", "Movie"), ("10", "TV Show")]);
-        let genres = opts(&[("Media", "Media"), ("Footage", "Footage")]);
+        let categories = opts(&[("Media", "Media"), ("Footage", "Footage")]);
         let cases: Vec<(Control, Option<Value>, Vec<Opt>)> = vec![
             (Control::Text, None, vec![]),
             (Control::Text, Some(Value::Text("hi".into())), vec![]),
@@ -648,8 +648,8 @@ mod tests {
             (Control::Url, None, vec![]),
             (Control::Date, None, vec![]),
             (Control::TextArea, None, vec![]),
-            (Control::Enum, None, genres.clone()),
-            (Control::Enum, Some(Value::Text("Media".into())), genres),
+            (Control::Enum, None, categories.clone()),
+            (Control::Enum, Some(Value::Text("Media".into())), categories),
             (Control::Enum, None, kinds.clone()),
             (Control::Enum, Some(Value::Text("9".into())), kinds),
         ];

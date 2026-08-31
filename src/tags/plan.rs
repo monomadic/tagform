@@ -30,6 +30,7 @@ pub const EXIFTOOL_KEY_NAMES: &[(&str, &str)] = &[
     ("album_artist", "AlbumArtistK"),
     ("album", "Album"),
     ("keywords", "Keywords"),
+    ("category", "Category"),
     ("genre", "Genre"),
     ("variant", "Variant"),
     // Kept: files tagged before the rename carry `type`, and an in-place

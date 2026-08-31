@@ -114,13 +114,13 @@ guards exist because both mistakes were made: 16-colour `DarkGray` labels, and
 a file path drawn in a divider colour at 1.4:1.
 
 Controls: text, multi-line text, lists drawn as chips, `#hashtags`, URL
-(validated, `not a URL: …`), dates, a 0–5 star row, fixed sets (Genre, Variant and
-Kind — the last stored as the `stik` integer but shown as "Movie"), and
-read-only fields for things a camera wrote. Chips are a *rendering*: a list
+(validated, `not a URL: …`), dates, a 0–5 star row, fixed sets (Category,
+Variant and Kind — the last stored as the `stik` integer but shown as "Movie"),
+and read-only fields for things a camera wrote. Chips are a *rendering*: a list
 edits as its comma-joined text and re-splits on commit, so there is no per-chip
 cursor.
 
-Nineteen fields, in one flat list — no collapsed sections. The five footage
+Twenty fields, in one flat list — no collapsed sections. The five footage
 fields (Location, State, Country, Coordinates, Original name) appear only when
 a file in the selection actually carries them. Anything on disk that no field
 claims gets a row of its own at the bottom, atoms and XMP alike, so nothing is
@@ -140,19 +140,26 @@ advances, `j`/`k` accept and move a row, `esc` reverts. Nothing is staged until
 you accept, which is what makes `esc` clean. Opening an empty field lands on
 the first option; until it is opened, it still reads as `—`.
 
-Typing into a set is not supported yet — Genre and Variant are picked from the
-list, like Kind. A value already on the file that the list does not know
-**joins the set for that field**, so an unfamiliar Genre stays selectable
+Typing into a set is not supported yet — Category and Variant are picked from
+the list, like Kind. A value already on the file that the list does not know
+**joins the set for that field**, so an unfamiliar Category stays selectable
 instead of being lost the first time the field is stepped.
 
-Genre and Variant are **not hardcoded** — they are parsed out of
+Category and Variant are **not hardcoded** — they are parsed out of
 `~/.config/yt-dlp/config`'s `--alias` lines, so adding an alias there adds a
 dropdown value here.
 
+**Category is what used to be called Genre**: `Media`, `Footage`, `Karaoke`,
+`Live Visual` — what kind of thing the file is, which was never a style and was
+sitting on the one key Plex, Jellyfin and Music.app read as one. Genre is still
+there, on `genre`/`©gen`, now an ordinary text field holding the style those
+players expect. Nothing migrates: the two keys are independent.
+
 A value stored under an older name reads as its current one — `Camera Footage`
-shows as `Footage`, `Master` as `Enhanced` — on files as well as in the
-dropdown, so a renamed option replaces the old spelling instead of sitting
-beside it. Old files keep their stored value until the field is edited.
+shows as `Footage`, `Master` as `Enhanced`, `VJ Clip` as `Live Visual` — on
+files as well as in the dropdown, so a renamed option replaces the old spelling
+instead of sitting beside it. Old files keep their stored value until the
+field is edited.
 
 Two things it already does that the scripts it replaces could not: it reads XMP
 and atoms together, so a `rename-footage` clip shows its people, location and

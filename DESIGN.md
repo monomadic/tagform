@@ -181,7 +181,8 @@ writes five keys — and that fan-out is the whole reason this tool exists.
 
 The ten the brief requires, plus the ones the yt-dlp config already produces
 and would otherwise be silently dropped on every rewrite: **Title, Actors,
-Artist, Rating, Description, URL, Channel, Tags, Genre, Variant, Kind.**
+Artist, Rating, Description, URL, Channel, Tags, Category, Genre, Variant,
+Kind.**
 
 **The table is not reproduced here.** `FIELDS` in `src/model/schema.rs` is the
 authority, and `tagform --print-schema` emits it as JSON — every field with its
@@ -317,8 +318,10 @@ list does not know joins the set for that field anyway.
 
 ### 3.5 Enum sources — the yt-dlp config is the schema
 
-The genre and type enums are not invented here. They are exactly the aliases in
-`config/yt-dlp/config`:
+The category and variant enums are not invented here. They are exactly the
+aliases in `config/yt-dlp/config`. yt-dlp's own variables are still
+`meta_genre` and `meta_type`; neither field rename reached that repository, and
+neither needed to:
 
 ```
 --alias media    '… --parse-metadata "Media:%(meta_genre)s"'
@@ -331,18 +334,20 @@ The genre and type enums are not invented here. They are exactly the aliases in
 --alias original '… --parse-metadata "Original:%(meta_type)s"'
 ```
 
-→ Genre: `Media`, `Footage`, `Karaoke`, `VJ Clip`
+→ Category: `Media`, `Footage`, `Karaoke`, `Live Visual` (stored `VJ Clip`,
+  §3.5.1)
 → Variant: `Clip`, `Enhanced` (stored `Master`, §3.5.1), `Original`
 
 #### 3.5.1 Renaming a value
 
 `config::normalize` maps a value stored under an older name to its current one.
-Two exist:
+Three exist:
 
 | stored | shown and written |
 |---|---|
 | `Camera Footage` | `Footage` |
 | `Master` | `Enhanced` |
+| `VJ Clip` | `Live Visual` |
 
 It runs in **both directions**, and both halves are load-bearing: on the
 literals parsed out of the yt-dlp config, so the dropdown offers the current
@@ -378,9 +383,50 @@ agree either way.
 Hard-coding them would guarantee drift the first time an alias is added, so
 `tagform` **parses `~/.config/yt-dlp/config` at startup**: any
 `--alias NAME '...meta_genre...'` or `...meta_type...` line contributes its
-literal to the enum. Config `enums.genre` / `enums.type` (§10) extend or
+literal to the enum. Config `enums.category` / `enums.variant` (§10) extend or
 override. Parse failure is not fatal — it falls back to the four/three above and
 notes it in the status line.
+
+#### 3.5.2 Category and Genre are two fields
+
+⟨built⟩ This set used to be called **Genre**, and that was wrong twice over.
+None of these values is a style — they say what kind of thing the file is, and
+Footage and Live Visual say what it is *for*. Worse, they occupied the one key
+that Plex, Jellyfin, Music.app and Finder all display as a genre, so a library
+of music videos and karaoke could never have a real one.
+
+So the set moved to **Category**, on its own `category` key, and **Genre**
+stayed on `genre`/`©gen` as a free-text field for the style those players
+expect to find there. Category is the honest word rather than the sharp one:
+the values span two axes — Footage and Live Visual are a role in a workflow,
+Movie and Music Video a published form — and it is broad enough to cover both
+without lying. `Kind` is more precise and is taken by `stik`; `Type` was vacated by
+§3.4 and is not being re-inherited; `Media Type` collides with the `media_type`
+key Kind already writes.
+
+**No migration, and no read alias.** Unlike the `type` → `variant` rename
+(§3.4), nothing in this library ever stored a category under `genre` — so
+`category` reads only `category`, and `genre` reads only `genre`. The two are
+independent from the first write.
+
+**`VJ Clip` became `Live Visual` at the same time.** `VJ` named the operator,
+which is the part of a name that dates — and the shorter words all failed for a
+reason worth recording, because they will suggest themselves again. `Loop` and
+`Clip` are wrong on the facts: many of these do not loop, and `Clip` is already
+a Variant value, so a file would read Category: Clip / Variant: Clip one row
+apart. `Visual` and `Motion` fail the test that every category value has to
+pass — *every* video is visual and every video is motion, so neither one
+divides anything. `Texture` and `Plate` pass every test and were the last two
+standing; both lost to legibility, which is the property that matters most in a
+label read off a form row daily. `Live Visual` costs a second word and buys
+back all of it: it names what the file is for — image material played behind or
+over a performance, with no narrative and no runtime that matters — without
+naming who plays it.
+
+`category` has **no ilst atom**. `catg` exists in the iTunes set, but
+docs/CONTAINER.md never measured it, and `FIELDS` only claims atoms that were
+(§2). Setting Category on a file written through the ilst path therefore
+reports as lossy, which is the correct answer until someone measures it.
 
 ### 3.6 The Footage profile: XMP fields from `rename-footage`
 
@@ -404,11 +450,11 @@ when the file actually carries them:
 
 ⟨built, differs⟩ Three corrections to the original design:
 
-- **The gate is the value, not the Genre.** A footage field is shown when it is
-  present in at least one file in the selection and hidden when it is `Absent`
-  — `footage_only` in `schema.rs`, checked in both `build_rows` and
-  `--print-json`. Keying it on `Genre == Footage` would have hidden the
-  location on every clip whose genre was never set, which is most of them.
+- **The gate is the value, not the Category.** A footage field is shown when it
+  is present in at least one file in the selection and hidden when it is
+  `Absent` — `footage_only` in `schema.rs`, checked in both `build_rows` and
+  `--print-json`. Keying it on `Category == Footage` would have hidden the
+  location on every clip whose category was never set, which is most of them.
 - **State and Country were added.** `rename-footage --geocode` writes the city
   as one field of an IPTC block and fills the province and country in beside
   it, deliberately, so that the plain-text place and the numbers it came from
@@ -457,7 +503,7 @@ Notes that are not optional:
 - **A camera's own name is not a title.** `IMG_4855`, `GX010042`, `C0001` and
   friends are recognised and refused for the Title field under rule 3;
   `PreservedFileName` already holds them verbatim.
-- Kind (`stik`) defaults to `0` (Home Video) when Genre is `Footage`.
+- Kind (`stik`) defaults to `0` (Home Video) when Category is `Footage`.
 - Device (`com.apple.quicktime.model`) and the `[RES FPS LENGTH …]` spec block
   are **probed, never authored** — shown in the header line, never editable.
 
@@ -763,11 +809,12 @@ something lit to step away from — and an unset field still reads as `—` whil
 you are merely moving past it.
 
 **No free text, for now.** The open/closed split the plan called for is not
-built: typing into a set is rejected outright, and Genre and Variant are picked
-from the list like Kind is. What keeps that from losing data is that a value
-already on the file which the list does not know **joins the set for that
-field** — an unfamiliar Genre is lit, selectable and steppable, it just cannot
-be typed. Free-text entry comes back later.
+built: typing into a set is rejected outright, and Category and Variant are
+picked from the list like Kind is. What keeps that from losing data is that a
+value already on the file which the list does not know **joins the set for that
+field** — an unfamiliar Category is lit, selectable and steppable, it just
+cannot be typed. Free-text entry comes back later. (Genre is not an example of
+it: it is an ordinary text field, not an open set — see §3.5.2.)
 
 ### 5.8 Checkbox
 
@@ -927,7 +974,8 @@ keys live in the current mode.
 │  URL          ▏https://faphouse.com/videos/881          ✓ faphouse ▕  │
 │  Channel      ▏Brazzers                                            ▕  │
 │  Tags         ▏#pov #hd #anal +                                    ▕  │
-│  Genre        ▏‹ Media ›                                           ▕  │
+│  Category     ▏‹ Media ›                                           ▕  │
+│  Genre        ▏Trance                                              ▕  │
 │  Variant      ▏‹ Clip ›                                            ▕  │
 │  Kind         ▏‹ Movie ›                                           ▕  │
 │                                                                       │
@@ -1011,7 +1059,7 @@ Disable with `--no-thumbnail`.
 ```
 Write 3 files
 
-  Genre       →  Karaoke              (all 3)
+  Category    →  Karaoke              (all 3)
   Tags        →  #pov #hd #anal       (all 3)
   Rating      →  ★★★★☆                (1 file; 2 unchanged)
   Description →  removed              (all 3)
@@ -1059,7 +1107,8 @@ back, and ffprobe cannot see it (docs/CONTAINER.md §3.2). Updating a key that i
 already present is safe in place; adding one is not.
 
 The two-pass case is not exotic — it is what happens the first time you set
-Genre on a footage clip that has XMP but no `genre` atom. It works only because
+Category on a footage clip that has XMP but no `category` atom. It works only
+because
 both readers always run, so the XMP snapshot exists before the remux eats it.
 
 All three branches are built — `Writer::Exiftool`, `Writer::Ffmpeg`,
@@ -1173,17 +1222,17 @@ This is the largest remaining piece of milestone 6, and the section below is
 the design it should be built to.
 
 When **Sync filename** is checked, the file is renamed — but to **one of two
-grammars**, selected by Genre, because this library has two and they are close
-to inverses of each other:
+grammars**, selected by Category, because this library has two and they are
+close to inverses of each other:
 
-**Media** (`ytform`, `media-parse-filename-to-json`) — Genre is anything but
+**Media** (`ytform`, `media-parse-filename-to-json`) — Category is anything but
 `Footage`:
 
 ```
 Actor A, Actor B - [Channel] Title #tag1 #tag2 (Origin) ★★★☆☆.ext
 ```
 
-**Footage** (`rename-footage`) — Genre is `Footage`:
+**Footage** (`rename-footage`) — Category is `Footage`:
 
 ```
 YYYY-MM-DD--HH-MM-SS People (Channel) - Title Location #tags [1080p 30fps 4min h264 iPhone15Pro H].ext
@@ -1193,7 +1242,7 @@ Note how they invert: media puts Channel in `[...]` and Origin in `(...)`;
 footage puts Channel in `(...)` and the probed spec block in `[...]`. Composing
 one file with the other's grammar produces a name that the other parser reads
 back **wrongly rather than not at all**, which is the worst possible failure. So
-the grammar is chosen explicitly from Genre, the choice is shown in the write
+the grammar is chosen explicitly from Category, the choice is shown in the write
 plan, and `--grammar media|footage|auto` overrides it.
 
 Rules shared by both, taken from `ytform`'s `compose.go` and `rename-footage` so
@@ -1311,7 +1360,8 @@ wants a key too.
 ## 12. Config
 
 ⟨designed⟩ **There is no config file.** `config.rs` reads exactly one thing:
-`~/.config/yt-dlp/config`, for the Genre and Variant aliases (§3.5). Everything
+`~/.config/yt-dlp/config`, for the Category and Variant aliases (§3.5).
+Everything
 else — theme, faststart, enums, defaults, field order — is either a flag, a
 runtime toggle, or a constant.
 
@@ -1504,7 +1554,7 @@ real customer (§10). The remaining §3.2 fields, the config file and
 `--compat both` are all speculative, and each has a note above explaining why
 building it now would be cost without a customer. **The default answer to
 "should this be added" is no until a file, a script, or a person needs it** —
-which is the discipline that kept the form to nineteen rows and the CLI to four
+which is the discipline that kept the form to twenty rows and the CLI to four
 flags.
 
 ---
