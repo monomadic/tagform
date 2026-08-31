@@ -104,12 +104,13 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App) {
     if !app.staged.is_empty() {
         right.push_str(&format!("{} staged · ", app.staged.len()));
     }
+    // The mode lives in the shortcut strip now, next to the keys it governs;
+    // saying it twice, in two vocabularies, was worse than saying it once.
     right.push_str(&format!(
-        "faststart {} · ",
+        "faststart {}",
         if app.faststart { "on" } else { "off" }
     ));
-    let mode = if app.mode == Mode::Edit { "EDIT" } else { "SELECT" };
-    let tail = format!("{mode}  ");
+    let tail = "  ".to_string();
 
     let badge = " tagform ";
     let used = badge.width() + left.width() + right.width() + tail.width();
@@ -128,14 +129,7 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App) {
                 right,
                 bar.fg(if app.staged.is_empty() { t::muted() } else { t::staged() }),
             ),
-            Span::styled(
-                tail,
-                if app.mode == Mode::Edit {
-                    bar.fg(t::accent()).add_modifier(Modifier::BOLD)
-                } else {
-                    bar.fg(t::muted())
-                },
-            ),
+            Span::styled(tail, bar),
         ]))
         .style(bar),
         area,
@@ -431,10 +425,42 @@ fn display_row(app: &App, row: &Row) -> Option<String> {
 
 /// The keys that matter right now, and only those. Which keys are live depends
 /// on the mode, so a fixed strip would be wrong half the time.
+///
+/// The strip opens with a vim-style mode indicator, and the bar is always
+/// painted -- dark in Select, lit while a field is open or the case menu is
+/// armed. The keymap alone changing under you is easy to miss, and typing into
+/// a field you thought was closed is the mistake worth pricing a colour
+/// against; a permanent ground is what makes the lit states read as a change
+/// rather than as the bar simply appearing.
 fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
     let on_a_set = app.mode == Mode::Edit
         && app.editor.as_ref().and_then(|e| e.choices()).is_some();
-    let pairs: &[(&str, &str)] = if on_a_set {
+    // A fixed set is still Edit mode internally; it reads as its own mode
+    // because its keys are its own.
+    let (mode_name, mode_fg, bar_bg) = if on_a_set {
+        ("SELECT", t::star(), Some(t::input_bg_focus()))
+    } else if app.mode == Mode::Edit {
+        ("EDIT", t::staged(), Some(t::input_bg_edit()))
+    } else {
+        ("NORMAL", t::accent(), Some(t::bar_bg()))
+    };
+    // The case menu is modal for exactly one keystroke, and the strip is the
+    // only place that says so -- so it replaces the strip outright rather than
+    // appending to it.
+    let (mode_name, mode_fg, bar_bg) = if app.case_pending {
+        ("CASE", t::star(), Some(t::input_bg_focus()))
+    } else {
+        (mode_name, mode_fg, bar_bg)
+    };
+    let pairs: &[(&str, &str)] = if app.case_pending {
+        &[
+            ("c", "capitalize"),
+            ("t", "title case"),
+            ("l", "lower case"),
+            ("u", "upper case"),
+            ("esc", "cancel"),
+        ]
+    } else if on_a_set {
         &[
             ("hl", "change"),
             ("⏎", "accept"),
@@ -456,20 +482,30 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
             ("⏎", "edit"),
             ("w", "write"),
             ("m", "merge"),
-            ("p", "inspect"),
+            ("i", "inspect"),
             ("][", "file"),
             ("a", "all"),
             ("u", "undo"),
             ("⌫", "clear"),
-            ("c", "theme"),
+            ("c", "case"),
+            ("y", "yank"),
+            ("p", "paste"),
+            ("t", "theme"),
             ("f", "fast"),
             ("q", "quit"),
         ]
     };
     // Drop hints that do not fit rather than letting the strip run off the
     // edge: a half-rendered key name is worse than one fewer hint.
-    let mut spans = vec![Span::raw(" ")];
-    let mut used = 1usize;
+    let badge = format!(" {mode_name} ");
+    let mut used = badge.width() + 1;
+    let mut spans = vec![
+        Span::styled(
+            badge,
+            Style::default().bg(mode_fg).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ];
     let mut dropped = 0usize;
     for (k, d) in pairs {
         let key = format!(" {k} ");
@@ -489,7 +525,14 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
     if dropped > 0 {
         spans.push(Span::styled("…", Style::default().fg(t::rule())));
     }
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    let strip = Paragraph::new(Line::from(spans));
+    f.render_widget(
+        match bar_bg {
+            Some(bg) => strip.style(Style::default().bg(bg)),
+            None => strip,
+        },
+        area,
+    );
 }
 
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {

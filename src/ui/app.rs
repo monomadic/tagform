@@ -61,6 +61,68 @@ pub enum Mode {
     Edit,
 }
 
+/// The four case transforms the `c` menu offers, in menu order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Case {
+    Capitalize,
+    Title,
+    Lower,
+    Upper,
+}
+
+impl Case {
+    pub fn name(self) -> &'static str {
+        match self {
+            Case::Capitalize => "capitalize",
+            Case::Title => "title case",
+            Case::Lower => "lower case",
+            Case::Upper => "upper case",
+        }
+    }
+
+    /// Capitalize is sentence case -- one leading capital, the rest lowered --
+    /// and Title capitalizes every word. Both lower first, so a SHOUTED value
+    /// comes back readable instead of staying shouted.
+    pub fn apply(self, s: &str) -> String {
+        match self {
+            Case::Lower => s.to_lowercase(),
+            Case::Upper => s.to_uppercase(),
+            Case::Capitalize => upper_first(&s.to_lowercase()),
+            Case::Title => {
+                let lower = s.to_lowercase();
+                let mut out = String::with_capacity(lower.len());
+                for word in lower.split_inclusive(char::is_whitespace) {
+                    out.push_str(&upper_first(word));
+                }
+                out
+            }
+        }
+    }
+}
+
+/// Uppercase the first alphabetic character and leave the rest alone, so
+/// quotes and brackets do not swallow the capital: `"foo"` → `"Foo"`.
+fn upper_first(s: &str) -> String {
+    let mut done = false;
+    s.chars()
+        .map(|c| {
+            if !done && c.is_alphabetic() {
+                done = true;
+                return c.to_uppercase().collect::<String>();
+            }
+            c.to_string()
+        })
+        .collect()
+}
+
+/// Which controls hold prose a case transform can mean something for.
+fn is_textual(control: Control) -> bool {
+    matches!(
+        control,
+        Control::Text | Control::TextArea | Control::List | Control::HashTags
+    )
+}
+
 pub struct WriteResults {
     pub ok: Vec<PathBuf>,
     pub failed: Vec<(PathBuf, String)>,
@@ -109,6 +171,13 @@ pub struct App {
     pub quit: bool,
     /// Esc with staged edits asks once before discarding them.
     confirm_quit: bool,
+    /// `c` in Select mode arms a one-shot case menu: the next key is a case
+    /// transform rather than a command. A sub-menu rather than four top-level
+    /// letters because the letters worth using are already commands.
+    pub case_pending: bool,
+    /// The yank register. One slot, `y` fills it and `p` pastes it -- there is
+    /// no need for named registers in a form of twenty fields.
+    pub clipboard: Option<Value>,
     pub thumb_image: Option<image::DynamicImage>,
     pub thumb_for: Option<usize>,
     /// width/height of the current thumbnail, so the band can be shaped to the
@@ -146,6 +215,8 @@ impl App {
             redo: Vec::new(),
             quit: false,
             confirm_quit: false,
+            case_pending: false,
+            clipboard: None,
             thumb_image: None,
             thumb_for: None,
             thumb_aspect: None,
@@ -414,6 +485,20 @@ impl App {
         if key.code != KeyCode::Esc && key.code != KeyCode::Char('q') {
             self.confirm_quit = false;
         }
+        // The case menu owns the next key entirely: `t` there means title
+        // case, not theme, and an unknown key cancels rather than falling
+        // through to a command the user did not mean to reach.
+        if self.case_pending {
+            self.case_pending = false;
+            match key.code {
+                KeyCode::Char('c') if !ctrl => self.apply_case(Case::Capitalize),
+                KeyCode::Char('t') if !ctrl => self.apply_case(Case::Title),
+                KeyCode::Char('l') if !ctrl => self.apply_case(Case::Lower),
+                KeyCode::Char('u') if !ctrl => self.apply_case(Case::Upper),
+                _ => self.status = "case cancelled".into(),
+            }
+            return;
+        }
         match (key.code, ctrl) {
             (KeyCode::Char('j'), false) | (KeyCode::Down, _) | (KeyCode::Tab, _) => {
                 self.move_focus(1)
@@ -426,10 +511,12 @@ impl App {
             (KeyCode::Char('g'), false) => self.jump(0),
             (KeyCode::Char('G'), false) => self.jump(self.rows.len().saturating_sub(1)),
             (KeyCode::Enter, _) => self.begin_edit(),
-            (KeyCode::Char('p'), false) => {
+            (KeyCode::Char('i'), false) => {
                 self.inspector = !self.inspector;
                 self.status.clear();
             }
+            (KeyCode::Char('y'), false) => self.yank(),
+            (KeyCode::Char('p'), false) => self.paste(),
             (KeyCode::Char(']'), false) => self.cycle_file(1),
             (KeyCode::Char('['), false) => self.cycle_file(-1),
             (KeyCode::Char('a'), false) => {
@@ -442,9 +529,10 @@ impl App {
             (KeyCode::Char('r'), true) => self.redo(),
             (KeyCode::Backspace, _) => self.clear_focused(),
             (KeyCode::Char('w'), false) => self.prepare_write(),
-            (KeyCode::Char('c'), false) => {
+            (KeyCode::Char('t'), false) => {
                 self.status = format!("theme: {}", theme::cycle());
             }
+            (KeyCode::Char('c'), false) => self.begin_case(),
             (KeyCode::Char('f'), false) => {
                 self.faststart = !self.faststart;
                 self.status = format!("faststart {}", if self.faststart { "on" } else { "off" });
@@ -668,6 +756,77 @@ impl App {
     /// Clearing a field that is already empty stages nothing: `stage` compares
     /// against the disk value through the same control, and an empty value is
     /// what an absent one produces.
+    /// Arm the case menu, but only over a field whose value is prose. A case
+    /// transform on a rating or an enum code would be a no-op at best, so the
+    /// menu refuses to open rather than offering four keys that do nothing.
+    fn begin_case(&mut self) {
+        let Some(row) = self.rows.get(self.focus) else { return };
+        if !row.editable() {
+            self.status = format!("{} is read-only", row.label);
+            return;
+        }
+        if !is_textual(row.control) {
+            self.status = format!("{} takes no case transform", row.label);
+            return;
+        }
+        self.case_pending = true;
+        self.status = format!("case: {}", row.label);
+    }
+
+    fn apply_case(&mut self, case: Case) {
+        let Some(row) = self.rows.get(self.focus) else { return };
+        let Some(value) = self.shown_value(row) else {
+            self.status = format!("{} is empty", row.label);
+            return;
+        };
+        let recased = match value {
+            Value::Text(s) => Value::Text(case.apply(&s)),
+            Value::List(l) => Value::List(l.iter().map(|s| case.apply(s)).collect()),
+        };
+        let (key, label) = (row.key.clone(), row.label.clone());
+        self.stage(key, recased);
+        self.status = format!("{label} · {}", case.name());
+    }
+
+    /// Copy the focused field, staged value and all -- what you see is what
+    /// you get, which is the only reading that matches the display.
+    fn yank(&mut self) {
+        let Some(row) = self.rows.get(self.focus) else { return };
+        match self.shown_value(row) {
+            Some(v) => {
+                self.status = format!("yanked {}", row.label);
+                self.clipboard = Some(v);
+            }
+            None => self.status = format!("{} is empty", row.label),
+        }
+    }
+
+    /// Paste coerces to the target control rather than refusing across the
+    /// text/list split: the same words are meant either way, and the form is
+    /// small enough that the two shapes meet constantly.
+    fn paste(&mut self) {
+        let Some(row) = self.rows.get(self.focus) else { return };
+        if !row.editable() {
+            self.status = format!("{} is read-only", row.label);
+            return;
+        }
+        let Some(v) = self.clipboard.clone() else {
+            self.status = "nothing yanked".into();
+            return;
+        };
+        let listy = matches!(row.control, Control::List | Control::HashTags);
+        let value = match (v, listy) {
+            (Value::Text(s), true) => Value::List(
+                s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect(),
+            ),
+            (Value::List(l), false) => Value::Text(l.join(", ")),
+            (v, _) => v,
+        };
+        let (key, label) = (row.key.clone(), row.label.clone());
+        self.stage(key, value);
+        self.status = format!("pasted into {label}");
+    }
+
     fn clear_focused(&mut self) {
         let Some(row) = self.rows.get(self.focus) else { return };
         if !row.editable() {
@@ -904,6 +1063,25 @@ mod tests {
 
     fn l(v: &[&str]) -> Option<Value> {
         Some(Value::List(v.iter().map(|s| s.to_string()).collect()))
+    }
+
+    #[test]
+    fn case_transforms_lower_first_so_a_shouted_value_comes_back_readable() {
+        assert_eq!(Case::Capitalize.apply("THE LONG WAY"), "The long way");
+        assert_eq!(Case::Title.apply("THE LONG WAY"), "The Long Way");
+        assert_eq!(Case::Lower.apply("The Long Way"), "the long way");
+        assert_eq!(Case::Upper.apply("The Long Way"), "THE LONG WAY");
+    }
+
+    #[test]
+    fn the_capital_lands_on_the_letter_not_the_punctuation() {
+        assert_eq!(Case::Title.apply("\"foo\" (bar)"), "\"Foo\" (Bar)");
+        assert_eq!(Case::Capitalize.apply("  spaced"), "  Spaced");
+    }
+
+    #[test]
+    fn title_case_keeps_the_original_spacing() {
+        assert_eq!(Case::Title.apply("a  b\tc"), "A  B\tC");
     }
 
     #[test]

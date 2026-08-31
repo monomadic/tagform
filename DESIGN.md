@@ -996,7 +996,7 @@ one rather than being a dimmer shade. Both guards exist because both mistakes
 were made — 16-colour `DarkGray` labels, and a file path drawn in a divider
 colour at 1.4:1.
 
-The **inspector** (`p`) replaces the thumbnail band with a per-file value table
+The **inspector** (`i`) replaces the thumbnail band with a per-file value table
 for the focused field — the answer to "what does `‹multiple›` actually contain",
 which `mp4-tui-tagger` could only show in an fzf preview.
 
@@ -1272,7 +1272,7 @@ tagform [OPTIONS] FILE...
 
   --print-json     dump the aggregated tag model and exit
   --no-thumbnail   do not render a thumbnail
-  --theme=NAME     colour scheme; `c` cycles them at runtime
+  --theme=NAME     colour scheme; `t` cycles them at runtime
   -h, --help       show this message
 ```
 
@@ -1334,8 +1334,12 @@ would be a third thing to forget to update; what belongs in this document is
 why the map has the shape it does.
 
 Two rules do the work. `enter` opens a field and `esc` or `enter` closes it, so
-Select mode's letters are never ambiguous — `w` write, `m` merge, `p`
-inspector, `f` faststart, `c` theme, `r` revert, `]`/`[`/`a` for the selection.
+Select mode's letters are never ambiguous — `w` write, `m` merge, `i`
+inspector, `f` faststart, `t` theme, `r` revert, `y`/`p` yank and paste,
+`]`/`[`/`a` for the selection. `c` is the one exception: it arms a one-shot
+case menu (`c` capitalize, `t` title, `l` lower, `u` upper) because four more
+top-level letters would collide with commands that already own them, and the
+shortcut strip repaints to say which map is live.
 And a control that does not want a key hands it back (§5), so `tab` moves focus
 from inside a field, `j`/`k` move a row on a control with no text to type, and
 `h`/`l` step a set or a rating from either mode.

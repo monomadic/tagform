@@ -28,6 +28,12 @@ pub struct Palette {
     pub badge_fg: Color,
     pub header_fg: Color,
 
+    /// The shortcut strip's ground in Select mode. A step above the page and a
+    /// step below `input_bg_focus`: visible as its own band on a dark
+    /// terminal, while still leaving the lit tints the strip takes in Edit and
+    /// the case menu unmistakably *lit* against it.
+    pub bar_bg: Color,
+
     /// The editable region of a field, in its four states.
     pub input_bg: Color,
     pub input_bg_focus: Color,
@@ -62,6 +68,7 @@ pub static PALETTES: &[Palette] = &[
     Palette {
         name: "midnight",
         page: c(0x0d, 0x0f, 0x14),
+        bar_bg: c(0x1c, 0x1f, 0x28),
         header_bg: c(0x22, 0x26, 0x33),
         badge_bg: c(0x7a, 0xa2, 0xf7),
         badge_fg: c(0x0f, 0x11, 0x17),
@@ -89,6 +96,7 @@ pub static PALETTES: &[Palette] = &[
     Palette {
         name: "gruvbox",
         page: c(0x1d, 0x20, 0x21),
+        bar_bg: c(0x2b, 0x29, 0x28),
         header_bg: c(0x3c, 0x38, 0x36),
         badge_bg: c(0xfa, 0xbd, 0x2f),
         badge_fg: c(0x1d, 0x20, 0x21),
@@ -115,6 +123,7 @@ pub static PALETTES: &[Palette] = &[
     Palette {
         name: "nord",
         page: c(0x24, 0x29, 0x33),
+        bar_bg: c(0x2b, 0x31, 0x3c),
         header_bg: c(0x3b, 0x42, 0x52),
         badge_bg: c(0x88, 0xc0, 0xd0),
         badge_fg: c(0x2e, 0x34, 0x40),
@@ -141,6 +150,7 @@ pub static PALETTES: &[Palette] = &[
     Palette {
         name: "rose-pine",
         page: c(0x19, 0x17, 0x24),
+        bar_bg: c(0x23, 0x21, 0x35),
         header_bg: c(0x26, 0x23, 0x3a),
         badge_bg: c(0xc4, 0xa7, 0xe7),
         badge_fg: c(0x19, 0x17, 0x24),
@@ -205,7 +215,7 @@ macro_rules! colour {
 }
 colour!(
     header_bg, badge_bg, badge_fg, header_fg,
-    input_bg, input_bg_focus, input_bg_edit, input_bg_readonly,
+    bar_bg, input_bg, input_bg_focus, input_bg_edit, input_bg_readonly,
     label, label_focus, label_custom,
     value, value_empty, mixed,
     accent, staged, warn, error, muted, rule, star, path,
@@ -332,7 +342,12 @@ mod tests {
             ];
             for (name, colour) in text {
                 for (surface_name, surface) in
-                    [("page", p.page), ("field", p.input_bg_readonly), ("input", p.input_bg)]
+                    [
+                        ("page", p.page),
+                        ("field", p.input_bg_readonly),
+                        ("input", p.input_bg),
+                        ("bar", p.bar_bg),
+                    ]
                 {
                     let ratio = contrast(colour, surface);
                     assert!(
@@ -351,6 +366,19 @@ mod tests {
         for p in PALETTES {
             assert!(contrast(p.badge_fg, p.badge_bg) >= 4.5, "{}: badge", p.name);
             assert!(contrast(p.header_fg, p.header_bg) >= 4.5, "{}: header", p.name);
+        }
+    }
+
+    /// The mode indicator fills its badge with the mode's own colour and prints
+    /// `badge_fg` on top, so every colour used that way needs the same check the
+    /// badge bar gets.
+    #[test]
+    fn every_mode_badge_fill_is_legible() {
+        for p in PALETTES {
+            for (name, fill) in [("normal", p.accent), ("edit", p.staged), ("select", p.star)] {
+                let ratio = contrast(p.badge_fg, fill);
+                assert!(ratio >= 4.5, "{}: {name} mode badge is {ratio:.2}:1", p.name);
+            }
         }
     }
 

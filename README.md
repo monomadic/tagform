@@ -66,11 +66,13 @@ nothing is listening for the letter w.
 | `enter` | edit the focused field |
 | `w` | write staged edits (shows a plan first) |
 | `m` | merge a list field across every file in the selection |
-| `p` | inspector — per-file values for the focused field |
+| `i` | inspector — per-file values for the focused field |
 | `]` / `[` / `a` | next file / previous file / all files |
 | `u` / `ctrl-r` / `r` | undo / redo / revert every staged edit |
 | `backspace` | clear the focused field |
-| `c` | cycle the colour scheme |
+| `y` / `p` | yank the focused field / paste into it |
+| `c` | case menu — then `c` capitalize, `t` title, `l` lower, `u` upper |
+| `t` | cycle the colour scheme |
 | `f` | toggle MOV faststart on the write (on by default) |
 | `q` / `esc` | quit (asks if edits are staged) |
 
@@ -106,7 +108,7 @@ field shows a coloured editable region whether or not it is focused, the focused
 field is marked `▍` (`▶` while editing) and a staged one `●`, and a shortcut
 strip along the bottom lists the keys that are live in the current mode.
 Colours are true-colour throughout, in four schemes — `midnight`, `gruvbox`,
-`nord`, `rose-pine` — cycled with `c` or picked with `--theme=NAME`. A test
+`nord`, `rose-pine` — cycled with `t` or picked with `--theme=NAME`. A test
 computes WCAG contrast for every text colour in every scheme against that
 scheme's own background and fails below 3:1, and checks that a custom-key label
 is a different *hue* from an ordinary one rather than a dimmer shade. Both
