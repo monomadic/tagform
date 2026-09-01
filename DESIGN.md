@@ -1325,10 +1325,12 @@ is off by default and shown in the plan as an explicit line.
 
 ---
 
-### 9.5 The native writer ⟨designed⟩
+### 9.5 The native writer ⟨built, differs⟩
 
-**Not built.** This section supersedes the backend choice in §9.2, and the
-measurements behind it are docs/CONTAINER.md §8 and §9.
+**Built** as `tags/native.rs`, and preferred over both remux paths wherever it
+handles the file. This section supersedes the backend choice in §9.2; the
+measurements behind it are docs/CONTAINER.md §8 and §9. What differs from the
+plan below is one thing the spike did not meet, described at the end.
 
 Both current backends are wrong in a way the other is not. The remux destroys
 XMP (CONTAINER §2) and cannot carry a `mebx` timed-metadata track at all
@@ -1370,18 +1372,28 @@ do, and `plan.rs`'s decision tree becomes a single question — can this file be
 rewritten natively? The XMP snapshot stays, because reading still needs both
 readers (§4.1); it just stops being load-bearing for the write.
 
-**Order of work.** The native writer lands *beside* the existing two, chosen
-only when it verifies, before anything is deleted:
+**A file can carry two mdta boxes, and they collide.** The plan missed this;
+the round-trip verify caught it on the first real file. Anything the exiftool
+path has written in place carries the stray `moov/meta` box §8 describes, and
+ffprobe pairs *its* items against the *first* box's key table — so after a
+rewrite, Category read back as another key's value. The writer therefore folds
+every mdta box into the file's own, keeps any name only the stray box had, and
+removes the stray box. A file that has been through the in-place writer comes
+out repaired rather than inheriting the collision.
 
-1. Build `tags/native.rs` with the `keys`/`ilst` builders and their tests.
-   Everything here is a pure function over bytes and testable without media.
-2. Route to it, keeping ffmpeg and exiftool as fallbacks when it declines a
-   file. The verify in `write.rs` already proves the result: streams, duration,
-   tags, layout.
-3. Build the fixture suite (§14) — an iPhone MOV with `mebx`, a GoPro clip, a
+**Order of work.** Steps 1 and 2 are done; the writer lands *beside* the
+existing two and is chosen only when it verifies.
+
+1. ✅ `tags/native.rs`: the `keys`/`ilst` builders and the survey, all pure
+   functions over bytes, tested without media.
+2. ✅ Routed in `plan.rs` as `Writer::Native`, with ffmpeg and exiftool kept as
+   fallbacks for the layouts it declines. The verify in `write.rs` proves the
+   result exactly as it does for a remux: streams, duration, tags, layout.
+3. ⬜ The fixture suite (§14) — an iPhone MOV with `mebx`, a GoPro clip, a
    yt-dlp mp4, a file carrying XMP, a >4 GiB file. This is the gate on
-   deleting anything, not step 2.
-4. Only then remove the two-pass path and the remux.
+   deleting anything, not on step 2. `native.rs` carries the seed of it: one
+   `#[ignore]`d test that takes a path in `TAGFORM_FIXTURE`.
+4. ⬜ Only then remove the two-pass path and the remux.
 
 **Where it must decline**, all untested and each a reason the fallbacks stay:
 fragmented mp4 (`moof`), files above 4 GiB whose 32-bit `stco` offsets would

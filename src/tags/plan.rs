@@ -51,6 +51,10 @@ pub fn exiftool_name(key: &str) -> Option<&'static str> {
 pub enum Writer {
     /// In place: preserves XMP, the inode, and xattrs. Cannot add a key.
     Exiftool,
+    /// Rebuilds the container and nothing else (DESIGN §9.5): adds keys, keeps
+    /// XMP, and keeps every track the remux would destroy. Preferred over both
+    /// remux paths wherever the file's layout is one it can handle.
+    Native,
     /// Full remux. Adds keys correctly; destroys XMP.
     Ffmpeg,
     /// Remux, then put the XMP back from the snapshot taken at read time.
@@ -61,6 +65,7 @@ impl Writer {
     pub fn label(self) -> &'static str {
         match self {
             Writer::Exiftool => "in place",
+            Writer::Native => "rewrite container",
             Writer::Ffmpeg => "remux",
             Writer::TwoPass => "remux + restore XMP",
         }
@@ -153,8 +158,22 @@ pub fn build(
     // Only a remux can move the moov atom.
     let needs_remux_for_faststart = want_faststart && !layout.is_faststart();
 
+    // The native writer handles everything the remux was for, without the two
+    // losses that made the remux a last resort. It declines some layouts
+    // (DESIGN §9.5), and ffmpeg stays the fallback for those.
+    let native = crate::tags::native::survey(&file.path).ok().flatten().is_some();
+
     let (writer, why) = if !adds_new_key && !unwritable_in_place && !needs_remux_for_faststart {
         (Writer::Exiftool, "no new keys; keeps XMP, inode and xattrs")
+    } else if native {
+        (
+            Writer::Native,
+            if adds_new_key {
+                "adds a key by rewriting the container; keeps XMP and every track"
+            } else {
+                "rewrites the container; keeps XMP and every track"
+            },
+        )
     } else if has_xmp {
         (
             Writer::TwoPass,

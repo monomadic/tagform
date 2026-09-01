@@ -13,6 +13,7 @@ use std::process::{Command, Stdio};
 
 use crate::model::value::Value;
 use crate::tags::atoms;
+use crate::tags::native;
 use crate::tags::plan::{exiftool_name, junk_clears, FilePlan, Writer};
 use crate::tags::probe;
 
@@ -181,6 +182,7 @@ pub fn execute(
     }
     match plan.writer {
         Writer::Exiftool => in_place(plan, on),
+        Writer::Native => native_write(plan, on),
         Writer::Ffmpeg => remux(plan, None, on),
         Writer::TwoPass => remux(plan, Some(xmp_snapshot), on),
     }
@@ -235,6 +237,81 @@ fn xmp_args(xmp: &[(String, Vec<String>)]) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// native container rewrite
+// ---------------------------------------------------------------------------
+
+/// Rebuild the container with the new tags, keeping every track and the XMP
+/// (DESIGN §9.5). Structurally the same shape as the remux -- sibling temp,
+/// verify, rename -- and deliberately so: the safety comes from that sequence,
+/// not from the writer.
+///
+/// The XMP snapshot the two-pass path needs has no counterpart here. Nothing
+/// destroyed the file's XMP, so only the tags the user actually edited are
+/// written back.
+fn native_write(plan: &FilePlan, on: OnStep<'_>) -> Result<(), WriteError> {
+    step(on, "preparing", 0.0);
+    let path = &plan.path;
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let need = size + HEADROOM;
+    if let Some(avail) = atoms::free_bytes(dir) {
+        if avail < need {
+            return Err(WriteError::NoSpace { need, avail });
+        }
+    }
+
+    let survey = native::survey(path)
+        .map_err(WriteError::Failed)?
+        .ok_or_else(|| WriteError::Failed(anyhow!("this file's layout is not one the native writer handles; this is a planning bug")))?;
+
+    let shapes = probe_streams(path);
+    let tmp = temp_beside(path);
+    let _guard = TempGuard(tmp.clone());
+
+    // Junk keys are cleared here as they are on a remux: this writer does not
+    // create them, but a file that has been through ffmpeg carries them
+    // already (docs/CONTAINER.md §1.3).
+    let mut writes = junk_clears();
+    writes.extend(plan.atoms.iter().cloned());
+
+    step(on, "rewriting the container", 0.10);
+    native::rewrite(path, &tmp, &survey, &writes, plan.faststart).map_err(WriteError::Failed)?;
+
+    step(on, "verifying", REMUX_SHARE);
+    verify_duration(path, &tmp).map_err(WriteError::Failed)?;
+    verify_streams(&shapes, &tmp).map_err(WriteError::Failed)?;
+    verify_atoms(&tmp, &plan.atoms).map_err(WriteError::Failed)?;
+    if plan.faststart {
+        let l = atoms::layout(&tmp);
+        if !l.is_faststart() {
+            return Err(WriteError::Failed(anyhow!(
+                "the rewrite did not come out faststart (got {l:?})"
+            )));
+        }
+    }
+
+    if !plan.xmp.is_empty() {
+        step(on, "writing XMP", 0.90);
+        let mut a: Vec<String> = vec![
+            "-config".into(),
+            config_path().to_string_lossy().into_owned(),
+            "-q".into(),
+            "-overwrite_original_in_place".into(),
+        ];
+        a.extend(xmp_args(&plan.xmp));
+        a.push("--".into());
+        a.push(tmp.to_string_lossy().into_owned());
+        run("exiftool", &a).map_err(WriteError::Failed)?;
+        verify_xmp(&tmp, &plan.xmp).map_err(WriteError::Failed)?;
+    }
+
+    step(on, "replacing the original", 0.97);
+    swap(&tmp, path).map_err(WriteError::Failed)?;
+    std::mem::forget(_guard);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // remux
 // ---------------------------------------------------------------------------
 
@@ -257,11 +334,7 @@ fn remux(
         }
     }
 
-    let ext = path.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|| "mp4".into());
-    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    // Same directory, so the swap is a rename rather than a copy; same
-    // extension, so ffmpeg selects the same muxer mode (docs/CONTAINER.md §1.2).
-    let tmp = dir.join(format!(".{stem}.tagform.{}.{ext}", std::process::id()));
+    let tmp = temp_beside(path);
     let _guard = TempGuard(tmp.clone());
 
     let mut args: Vec<String> = vec!["-hide_banner".into(), "-loglevel".into(), "error".into(), "-nostdin".into(), "-y".into()];
@@ -340,14 +413,27 @@ fn remux(
     }
 
     step(on, "replacing the original", 0.97);
-    if let Some(t) = mtime(path) {
-        restore_mtime(&tmp, t);
-    }
-    std::fs::rename(&tmp, path)
-        .with_context(|| format!("replacing {}", path.display()))
-        .map_err(WriteError::Failed)?;
+    swap(&tmp, path).map_err(WriteError::Failed)?;
     std::mem::forget(_guard);
     Ok(())
+}
+
+/// Same directory, so the swap is a rename rather than a copy; same extension,
+/// so ffmpeg selects the same muxer mode (docs/CONTAINER.md §1.2).
+fn temp_beside(path: &Path) -> PathBuf {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let ext = path.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|| "mp4".into());
+    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    dir.join(format!(".{stem}.tagform.{}.{ext}", std::process::id()))
+}
+
+/// The last step of every write path: the original is replaced only by a file
+/// that has already been verified.
+fn swap(tmp: &Path, path: &Path) -> Result<()> {
+    if let Some(t) = mtime(path) {
+        restore_mtime(tmp, t);
+    }
+    std::fs::rename(tmp, path).with_context(|| format!("replacing {}", path.display()))
 }
 
 /// The staged edits win over the snapshot; everything else is restored as it was.

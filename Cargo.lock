@@ -1251,6 +1251,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mp4box"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e8a804923980f65596a3596032aa442eb0d057a1a19bed1c2655bdd025b6faa"
+dependencies = [
+ "anyhow",
+ "serde",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2402,6 +2412,7 @@ dependencies = [
  "anyhow",
  "crossterm",
  "image",
+ "mp4box",
  "ratatui",
  "ratatui-image",
  "ratatui-textarea",

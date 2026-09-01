@@ -18,10 +18,12 @@ controls → verified write, across a whole selection. Edits stage until `w`,
 which shows a plan to confirm; the original is only ever replaced by a result
 that has been read back and checked.
 
-XMP is read, written, and **restored across a remux** — which is the whole
-reason this tool exists, since an ffmpeg remux destroys XMP silently and
-`rename-footage` puts everything there. The writer picks one of three backends
-from the file's contents and verifies the result before replacing anything.
+XMP is read, written, and preserved — which is the whole reason this tool
+exists, since an ffmpeg remux destroys XMP silently and `rename-footage` puts
+everything there. The writer picks a backend from the file's contents and
+verifies the result before replacing anything. Most files now take a **native
+container rewrite** (DESIGN §9.5) that adds keys, keeps XMP, and keeps the
+timed-metadata tracks an iPhone clip carries — none of which the remux can do.
 
 Not built: the two filename grammars (the rest of milestone 6), seeding
 (`--fetch`, `--from-filename`, completion), headless `--set`/`--apply`, and a
@@ -198,12 +200,15 @@ People, tags, channel, location, rating and `PreservedFileName` are XMP written
 by exiftool. A reader using ffprobe alone concludes a footage file has no
 metadata at all. So `tagform` always runs both readers.
 
-**3. An ffmpeg remux destroys XMP.** Totally, silently, with no flag to prevent
-it. That is why the writer chooses its backend from the file's *contents* and
-never from a preference: exiftool in place where it can, a remux where a key
-has to be added, and a remux followed by re-applying the XMP snapshot taken at
-read time where both are true. There is deliberately **no flag to override the
-choice** — every such flag is a flag that lets you destroy XMP.
+**3. An ffmpeg remux destroys XMP** — totally, silently, with no flag to
+prevent it — **and it cannot carry an iPhone clip's timed-metadata tracks**
+either: the video's orientation and its Live Photo data go with them
+(docs/CONTAINER.md §6). That is why the writer chooses its backend from the
+file's *contents* and never from a preference: exiftool in place for a plain
+update, otherwise a native rewrite of the container that adds keys while
+keeping both. ffmpeg remains the fallback for the layouts the native writer
+declines. There is deliberately **no flag to override the choice** — every such
+flag is a flag that lets you destroy XMP.
 
 ## Dependencies
 

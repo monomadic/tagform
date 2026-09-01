@@ -67,7 +67,8 @@ src/model/
 src/tags/
   probe.rs          ffprobe + exiftool → FileTags
   atoms.rs          atom-chain parse, faststart/Layout detection
-  plan.rs           what to write and which backend writes it. Touches no disk.
+  plan.rs           what to write and which backend writes it.
+  native.rs         the native container rewrite: mdta keys/ilst, no ffmpeg
   write.rs          executes a plan. The remux, the verify, the rename.
 src/ui/
   app.rs            event loop, modal state, focus ring, undo/redo (939 lines)

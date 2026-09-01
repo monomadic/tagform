@@ -371,6 +371,13 @@ at `moov/meta` — the same box exiftool writes to — so the key and its item l
 together and both readers agree. The dump of the iPhone fixture after the write
 shows 8 keys and 8 items, consecutively indexed.
 
+**The stray box is not inert.** Write tags natively into the file's own box
+while the stray one is still there, and ffprobe pairs the stray box's items
+against the *first* box's key table: on a file with one stray value, `category`
+read back as `"probe-origin"`. So any file the in-place writer has touched
+carries a latent collision, not merely a dangling key. `tags/native.rs` folds
+every mdta box into the first and removes the others, which repairs the file.
+
 Note the second difference: exiftool wrote the key as
 `com.apple.quicktime.origin` where the file's own keys are bare (`category`,
 `date`). A writer of ours must not adopt that prefix; `schema.rs` expects the

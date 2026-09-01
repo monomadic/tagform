@@ -10,6 +10,9 @@ name = "tagform"
 path = "src/main.rs"
 
 [dependencies]
+# The box tree, the extent map and the chunk-offset fixup for the native
+# writer (DESIGN §9.5). Its own tag layer is iTunes ilst and is unused.
+mp4box = { version = "0.13", default-features = false, features = ["edit"] }
 ratatui       = "0.30"
 crossterm     = "0.29"
 ratatui-image = "11"
