@@ -104,7 +104,7 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App) {
     }
     let mut right = String::new();
     if !app.staged.is_empty() {
-        right.push_str(&format!("{} staged · ", app.staged.len()));
+        right.push_str(&format!("{} staged · ", app.staged_count()));
     }
     // The mode lives in the shortcut strip now, next to the keys it governs;
     // saying it twice, in two vocabularies, was worse than saying it once.
@@ -188,15 +188,21 @@ fn draw_inspector(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("  per file", Style::default().fg(t::muted())),
     ])];
 
-    match &row.agg {
+    // The effective values, so a per-file edit is visible here as the thing
+    // that will be written to that file.
+    let scope = app.scope();
+    match &row.eff {
         Agg::Mixed { values } => {
             for (i, v) in values.iter().enumerate() {
+                let file = scope.get(i).copied().unwrap_or(i);
                 let shown = match v {
                     Some(Value::Text(s)) => s.clone(),
                     Some(Value::List(l)) => l.join(" · "),
                     None => "—".into(),
                 };
-                let style = if v.is_some() {
+                let style = if app.file_is_staged(file, &row.key) {
+                    Style::default().fg(t::staged())
+                } else if v.is_some() {
                     Style::default().fg(t::value())
                 } else {
                     Style::default().fg(t::value_empty())
@@ -205,7 +211,7 @@ fn draw_inspector(f: &mut Frame, area: Rect, app: &App) {
                     Span::raw(" "),
                     Span::styled(t::fit(&shown, 34), style),
                     Span::styled(
-                        app.files.get(i).map(|f| file_label(&f.path)).unwrap_or_default(),
+                        app.files.get(file).map(|f| file_label(&f.path)).unwrap_or_default(),
                         Style::default().fg(t::muted()),
                     ),
                 ]));
@@ -251,7 +257,7 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
             focus_line = lines.len();
         }
         let editing = focused && app.mode == Mode::Edit;
-        let staged = app.is_staged(&row.key);
+        let staged = row.staged;
         let custom = row.def.is_none();
         let readonly = !row.editable();
 
@@ -409,7 +415,7 @@ fn closed_set(app: &App, row: &Row) -> Option<(Vec<String>, Option<usize>)> {
         return None;
     }
     let sel = match app.shown_value(row) {
-        Some(Value::Text(s)) if !row.is_mixed() || app.is_staged(&row.key) => {
+        Some(Value::Text(s)) if !row.is_mixed() || row.staged => {
             opts.iter().position(|o| o.code == s)
         }
         _ => None,
@@ -513,12 +519,12 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
     // The case menu is modal for exactly one keystroke, and the strip is the
     // only place that says so -- so it replaces the strip outright rather than
     // appending to it.
-    let (mode_name, mode_fg, bar_bg) = if app.case_pending {
-        ("CASE", t::star(), Some(t::input_bg_focus()))
+    let (mode_name, mode_fg, bar_bg) = if app.format_pending {
+        ("FORMAT", t::star(), Some(t::input_bg_focus()))
     } else {
         (mode_name, mode_fg, bar_bg)
     };
-    let pairs: &[(&str, &str)] = if app.case_pending {
+    let pairs: &[(&str, &str)] = if app.format_pending {
         &[
             ("c", "capitalize"),
             ("t", "title case"),
@@ -550,14 +556,19 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
             ("m", "merge"),
             ("i", "inspect"),
             ("][", "file"),
-            ("a", "all"),
+            ("a", "all files"),
+            ("o", "overwrite"),
+            ("b", "backfill"),
             ("u", "undo"),
-            ("⌫", "clear"),
-            ("c", "case"),
+            // The glyph is one column wide by the width tables and wider than
+            // that in most terminals, so it carries its own trailing space
+            // rather than letting the next label collide with it.
+            ("⌫ ", "clear"),
+            ("f", "format"),
             ("y", "yank"),
             ("p", "paste"),
             ("t", "theme"),
-            ("f", "fast"),
+            ("F", "fast"),
             ("q", "quit"),
         ]
     };
@@ -629,25 +640,25 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
         Line::from(""),
     ];
 
-    for row in &app.rows {
-        let Some(v) = app.staged.get(&row.key) else { continue };
-        let shown = match v {
-            Value::List(l) if l.is_empty() => "removed".to_string(),
-            Value::List(l) => l.join(", "),
-            Value::Text(s) if s.is_empty() => "removed".to_string(),
-            Value::Text(s) => s.clone(),
-        };
+    for edit in app.staged_summary() {
         let mut spans = vec![
-            Span::styled(format!("  {}", t::fit(&row.label, 14)), Style::default().fg(t::label())),
+            Span::styled(format!("  {}", t::fit(&edit.label, 14)), Style::default().fg(t::label())),
             Span::styled("→ ", Style::default().fg(t::muted())),
-            Span::styled(shown, Style::default().fg(t::staged())),
+            Span::styled(edit.shown, Style::default().fg(t::staged())),
         ];
+        // Which files, because an edit no longer belongs to whatever happens to
+        // be in view: it belongs to the files it was made on.
+        if edit.files < app.files.len() {
+            spans.push(Span::styled(
+                format!("   on {} file{}", edit.files, plural(edit.files)),
+                Style::default().fg(t::muted()),
+            ));
+        }
         // Replacing one value is an edit; replacing several distinct ones is a
         // different act, and this is the last place to notice it.
-        let n = app.overwrites(row);
-        if n > 1 {
+        if edit.overwrites > 1 {
             spans.push(Span::styled(
-                format!("   replaces {n} distinct values"),
+                format!("   replaces {} distinct values", edit.overwrites),
                 Style::default().fg(t::warn()),
             ));
         }
@@ -928,7 +939,7 @@ mod tests {
         };
         let mut app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
         let chosen = app.enums.category[1].clone();
-        app.staged.insert("category".into(), Value::Text(chosen.clone()));
+        app.set_staged(0, "category", Value::Text(chosen.clone()));
 
         let mut term = Terminal::new(TestBackend::new(90, 12)).unwrap();
         term.draw(|fr| draw_fields(fr, fr.area(), &app)).unwrap();
@@ -941,6 +952,37 @@ mod tests {
         let at = row.find(&chosen).unwrap() as u16;
         assert!(buf[(at, 1)].style().add_modifier.contains(Modifier::BOLD), "{row:?}");
         assert!(!buf[(2 + LABEL_COLS, 1)].style().add_modifier.contains(Modifier::BOLD));
+    }
+
+    /// The strip is one line and its keys are a fixed vocabulary, so a hint
+    /// that renders into its neighbour is a permanent smudge. The clear key is
+    /// the one at risk: ⌫ is one column by the width tables and wider than
+    /// that in most terminals.
+    #[test]
+    fn every_shortcut_hint_keeps_a_gap_after_its_key() {
+        use crate::tags::probe::FileTags;
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use std::collections::BTreeMap;
+
+        let f = FileTags {
+            path: std::path::PathBuf::from("/tmp/tagform-strip-test.mp4"),
+            atoms: BTreeMap::new(),
+            xmp: BTreeMap::new(),
+        };
+        let app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
+        let mut term = Terminal::new(TestBackend::new(220, 1)).unwrap();
+        term.draw(|fr| draw_shortcuts(fr, fr.area(), &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let strip: String = (0..220).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+
+        // Two spaces of padding plus the one the key carries, so the gap
+        // still reads as one column once the terminal draws the glyph wide.
+        assert!(strip.contains(" ⌫   clear"), "{strip:?}");
+        assert!(!strip.contains("…"), "the whole strip should fit at 220 cols: {strip:?}");
+        for key in ["o", "b", "f", "F", "t"] {
+            assert!(strip.contains(&format!(" {key}  ")), "{key} crowded: {strip:?}");
+        }
     }
 
     #[test]

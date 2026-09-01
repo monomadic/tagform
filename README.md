@@ -35,6 +35,14 @@ which is the operation you actually want when tagging a batch and which none of
 the scripts this replaces can do. Setting a `‹multiple›` field says how many
 distinct values it is about to flatten, in the confirmation, before it happens.
 
+An edit belongs to the files it was made on. `[` and `]` walk the selection
+without disturbing anything staged elsewhere, and `w` writes every staged edit,
+including one made on a file you have since walked away from — the confirmation
+says which files each edit lands on. `o` **overwrites** the focused field on every
+open file; `b` **backfills** it into only the files where that field is still
+empty, which is the one-key way to give a batch a Channel or a Category without
+overwriting the files that already have their own.
+
 ```bash
 cargo run -- FILE...                  # the form
 cargo run -- --print-json FILE...     # the model, as JSON
@@ -68,12 +76,13 @@ nothing is listening for the letter w.
 | `m` | merge a list field across every file in the selection |
 | `i` | inspector — per-file values for the focused field |
 | `]` / `[` / `a` | next file / previous file / all files |
-| `u` / `ctrl-r` / `r` | undo / redo / revert every staged edit |
+| `o` / `b` | overwrite the focused field on every file / backfill it into only the files where it is empty |
+| `u` / `ctrl-r` | undo / redo |
 | `backspace` | clear the focused field |
 | `y` / `p` | yank the focused field / paste into it |
-| `c` | case menu — then `c` capitalize, `t` title, `l` lower, `u` upper |
+| `f` | format menu — then `c` capitalize, `t` title, `l` lower, `u` upper |
 | `t` | cycle the colour scheme |
-| `f` | toggle MOV faststart on the write (on by default) |
+| `F` | toggle MOV faststart on the write (on by default) |
 | `q` / `esc` | quit (asks if edits are staged) |
 
 **Edit**

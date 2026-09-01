@@ -32,19 +32,25 @@ pub struct Row {
     pub label: String,
     pub control: Control,
     pub def: Option<&'static FieldDef>,
-    pub agg: Agg,
+    /// The aggregate as displayed: what is on disk with the staged edits laid
+    /// over it, which is also what a write would leave behind. Disk truth is
+    /// not carried here -- an edit is compared against the one file it is
+    /// being staged on (`disk_value`), never against the selection.
+    pub eff: Agg,
+    /// Whether any file in scope carries a staged edit for this key.
+    pub staged: bool,
 }
 
 impl Row {
+    /// Mixed as displayed -- so a field the files disagreed about stops
+    /// reading ‹multiple› once an edit has been staged across all of them.
     pub fn is_mixed(&self) -> bool {
-        matches!(self.agg, Agg::Mixed { .. })
+        matches!(self.eff, Agg::Mixed { .. })
     }
 
-    /// What the field held before editing. None for a field the selection does
-    /// not agree on -- there is nothing to compare an edit against, so any
-    /// assignment counts as a change.
-    pub fn original(&self) -> Option<&Value> {
-        self.agg.value()
+    /// The value the row shows: the edit where there is one, else disk.
+    pub fn shown(&self) -> Option<&Value> {
+        self.eff.value()
     }
 
     pub fn editable(&self) -> bool {
@@ -164,6 +170,9 @@ pub enum Msg {
     Wrote(Box<WriteResults>),
 }
 
+/// Staged edits, keyed by file index then by row key.
+pub type Staged = BTreeMap<usize, BTreeMap<String, Value>>;
+
 pub struct App {
     pub files: Vec<FileTags>,
     pub media: Vec<MediaInfo>,
@@ -198,18 +207,26 @@ pub struct App {
     /// and typing goes straight into it, the way a GUI form behaves.
     pub editor: Option<Editor>,
     pub mode: Mode,
-    /// Edits not yet written. Nothing reaches disk in this milestone; this is
-    /// the staging model mp4-tui-tagger got right, kept.
-    pub staged: BTreeMap<String, Value>,
-    undo: Vec<BTreeMap<String, Value>>,
-    redo: Vec<BTreeMap<String, Value>>,
+    /// Edits not yet written: file index → field key → value.
+    ///
+    /// Per file, not one map for the whole selection. Held globally an edit
+    /// had no owner, so it followed the cursor onto the next file and was
+    /// then dropped by the first file that already agreed with it --
+    /// "equals what is on disk" was being read as "not an edit" against
+    /// whichever file happened to be in view. Attributing each edit to the
+    /// files it was made against is what makes `[` and `]` non-destructive.
+    pub staged: Staged,
+    undo: Vec<Staged>,
+    redo: Vec<Staged>,
     pub quit: bool,
     /// Esc with staged edits asks once before discarding them.
     confirm_quit: bool,
-    /// `c` in Select mode arms a one-shot case menu: the next key is a case
-    /// transform rather than a command. A sub-menu rather than four top-level
-    /// letters because the letters worth using are already commands.
-    pub case_pending: bool,
+    /// `f` in Select mode arms a one-shot format menu: the next key is a
+    /// transform of the focused text rather than a command. A sub-menu rather
+    /// than top-level letters because the letters worth using are already
+    /// commands -- and because the menu has room to grow, which a handful of
+    /// scattered top-level keys does not.
+    pub format_pending: bool,
     /// The yank register. One slot, `y` fills it and `p` pastes it -- there is
     /// no need for named registers in a form of twenty fields.
     pub clipboard: Option<Value>,
@@ -224,8 +241,10 @@ pub struct App {
 
 impl App {
     pub fn new(files: Vec<FileTags>, custom: BTreeMap<String, Agg>, thumbnails: bool) -> Self {
-        let rows = build_rows(&files.iter().collect::<Vec<_>>(), &custom);
-        let n_custom = custom.len();
+        let custom_keys: Vec<String> = custom.keys().cloned().collect();
+        let n_custom = custom_keys.len();
+        let scope: Vec<usize> = (0..files.len()).collect();
+        let rows = build_rows(&files, &scope, &Staged::new(), &custom_keys);
         let (tx, rx) = mpsc::channel();
         let n = files.len();
         let mut app = Self {
@@ -233,7 +252,7 @@ impl App {
             files,
             rows,
             n_custom,
-            custom_keys: custom.keys().cloned().collect(),
+            custom_keys,
             focus: 0,
             view: None,
             inspector: false,
@@ -246,12 +265,12 @@ impl App {
             progress: None,
             editor: None,
             mode: Mode::Select,
-            staged: BTreeMap::new(),
+            staged: Staged::new(),
             undo: Vec::new(),
             redo: Vec::new(),
             quit: false,
             confirm_quit: false,
-            case_pending: false,
+            format_pending: false,
             clipboard: None,
             thumb_image: None,
             thumb_for: None,
@@ -273,6 +292,26 @@ impl App {
     /// first, so the band always has something to show.
     pub fn current_file(&self) -> usize {
         self.view.unwrap_or(0)
+    }
+
+    /// The files an edit made now applies to: one in single-file view, every
+    /// file in the aggregate.
+    pub fn scope(&self) -> Vec<usize> {
+        match self.view {
+            Some(i) => vec![i],
+            None => (0..self.files.len()).collect(),
+        }
+    }
+
+    /// How many distinct fields carry an edit, anywhere in the selection.
+    /// Fields rather than file/field pairs, because "3 staged" should not
+    /// become "12 staged" for the same three edits across four files.
+    pub fn staged_count(&self) -> usize {
+        let mut keys: Vec<&str> =
+            self.staged.values().flat_map(|m| m.keys().map(String::as_str)).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        keys.len()
     }
 
     fn spawn_media(&self, idx: usize) {
@@ -347,7 +386,7 @@ impl App {
             self.status = "merge applies to list fields".into();
             return;
         }
-        let Agg::Mixed { values } = &row.agg else {
+        let Agg::Mixed { values } = &row.eff else {
             self.status = "nothing to merge: the files already agree".into();
             return;
         };
@@ -358,29 +397,52 @@ impl App {
         }
         let key = row.key.clone();
         let n = merged.len();
-        let before = self.staged.clone();
-        self.staged.insert(key, Value::List(merged));
-        self.undo.push(before);
-        self.redo.clear();
-        self.open_editor();
+        self.stage(key, Value::List(merged));
         self.status = format!("merged {n} value{} across the selection", if n == 1 { "" } else { "s" });
     }
 
-    /// How many distinct values a staged edit is about to replace. Zero when
-    /// the files already agreed; that is the difference between changing a
-    /// value and flattening several.
-    pub fn overwrites(&self, row: &Row) -> usize {
-        if !self.staged.contains_key(&row.key) {
-            return 0;
-        }
-        let Agg::Mixed { values } = &row.agg else { return 0 };
-        let mut seen: Vec<&Value> = Vec::new();
-        for v in values.iter().flatten() {
-            if !seen.contains(&v) {
-                seen.push(v);
-            }
-        }
-        seen.len()
+    /// Every staged edit, for the confirmation dialog.
+    ///
+    /// Built from the staging map rather than from the visible rows: `w`
+    /// writes every edit, including one made on a file that has since been
+    /// walked away from, and the dialog is the last chance to see that.
+    pub fn staged_summary(&self) -> Vec<StagedEdit> {
+        let mut keys: Vec<&str> =
+            self.staged.values().flat_map(|m| m.keys().map(String::as_str)).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        keys.into_iter()
+            .map(|key| {
+                let edits: Vec<(usize, &Value)> = self
+                    .staged
+                    .iter()
+                    .filter_map(|(i, m)| m.get(key).map(|v| (*i, v)))
+                    .collect();
+                let agreed = edits.windows(2).all(|w| w[0].1 == w[1].1);
+                // How many distinct values this is about to flatten. One is a
+                // change; several is a different act, and this is the last
+                // place to notice it.
+                let mut seen: Vec<Value> = Vec::new();
+                for (i, _) in &edits {
+                    if let Some(v) = disk_value(&self.files[*i], key) {
+                        if !seen.contains(&v) {
+                            seen.push(v);
+                        }
+                    }
+                }
+                StagedEdit {
+                    label: key_label(key),
+                    shown: match (agreed, edits.first()) {
+                        (true, Some((_, v))) if v.is_empty() => "removed".into(),
+                        (true, Some((_, Value::Text(t)))) => t.clone(),
+                        (true, Some((_, Value::List(l)))) => l.join(", "),
+                        _ => "‹multiple›".into(),
+                    },
+                    files: edits.len(),
+                    overwrites: seen.len(),
+                }
+            })
+            .collect()
     }
 
     /// Build the plan for the files in scope and hold it for confirmation.
@@ -390,13 +452,13 @@ impl App {
             self.status = "nothing to write".into();
             return;
         }
-        let scope: Vec<usize> = match self.view {
-            Some(i) => vec![i],
-            None => (0..self.files.len()).collect(),
-        };
-        let plans: Vec<FilePlan> = scope
+        // Every staged edit, not just the ones in view: an edit belongs to the
+        // file it was made on, and silently skipping the file you are not
+        // looking at is how a batch loses half its work.
+        let plans: Vec<FilePlan> = self
+            .staged
             .iter()
-            .map(|i| plan::build(&self.files[*i], &self.staged, self.faststart))
+            .map(|(i, edits)| plan::build(&self.files[*i], edits, self.faststart))
             .filter(|p| !p.is_empty())
             .collect();
         if plans.is_empty() {
@@ -480,19 +542,15 @@ impl App {
                 *f = fresh;
             }
         }
-        self.rebuild_rows();
         // Compared against what is now on disk rather than against the list of
         // files that succeeded: in a mixed batch an edit can land on four files
         // and fail on the fifth, and it is still an edit until the fifth has it.
-        let landed: Vec<String> = self
-            .rows
-            .iter()
-            .filter(|r| self.staged.get(&r.key).is_some_and(|v| r.original() == Some(v)))
-            .map(|r| r.key.clone())
-            .collect();
-        for k in landed {
-            self.staged.remove(&k);
+        let files = &self.files;
+        for (i, edits) in self.staged.iter_mut() {
+            let Some(file) = files.get(*i) else { continue };
+            edits.retain(|key, value| !landed(file, key, value));
         }
+        self.staged.retain(|_, edits| !edits.is_empty());
         if self.staged.is_empty() {
             self.undo.clear();
             self.redo.clear();
@@ -501,15 +559,16 @@ impl App {
         self.writing = false;
         self.progress = None;
         let total = results.ok.len() + results.failed.len();
-        self.status = if self.staged.is_empty() {
+        let kept = self.staged_count();
+        self.status = if kept == 0 {
             format!("wrote {} of {}", results.ok.len(), total)
         } else {
             format!(
                 "wrote {} of {}; {} edit{} kept",
                 results.ok.len(),
                 total,
-                self.staged.len(),
-                if self.staged.len() == 1 { "" } else { "s" }
+                kept,
+                if kept == 1 { "" } else { "s" }
             )
         };
         self.results = Some(results);
@@ -603,17 +662,17 @@ impl App {
         if key.code != KeyCode::Esc && key.code != KeyCode::Char('q') {
             self.confirm_quit = false;
         }
-        // The case menu owns the next key entirely: `t` there means title
+        // The format menu owns the next key entirely: `t` there means title
         // case, not theme, and an unknown key cancels rather than falling
         // through to a command the user did not mean to reach.
-        if self.case_pending {
-            self.case_pending = false;
+        if self.format_pending {
+            self.format_pending = false;
             match key.code {
                 KeyCode::Char('c') if !ctrl => self.apply_case(Case::Capitalize),
                 KeyCode::Char('t') if !ctrl => self.apply_case(Case::Title),
                 KeyCode::Char('l') if !ctrl => self.apply_case(Case::Lower),
                 KeyCode::Char('u') if !ctrl => self.apply_case(Case::Upper),
-                _ => self.status = "case cancelled".into(),
+                _ => self.status = "format cancelled".into(),
             }
             return;
         }
@@ -638,11 +697,14 @@ impl App {
             (KeyCode::Char(']'), false) => self.cycle_file(1),
             (KeyCode::Char('['), false) => self.cycle_file(-1),
             (KeyCode::Char('a'), false) => {
+                self.commit_editor();
                 self.view = None;
                 self.rebuild_rows();
                 self.status = "aggregate view".into();
             }
             (KeyCode::Char('m'), false) => self.merge_focused(),
+            (KeyCode::Char('o'), false) => self.copy_out(false),
+            (KeyCode::Char('b'), false) => self.copy_out(true),
             (KeyCode::Char('u'), false) => self.undo(),
             (KeyCode::Char('r'), true) => self.redo(),
             (KeyCode::Backspace, _) => self.clear_focused(),
@@ -650,8 +712,8 @@ impl App {
             (KeyCode::Char('t'), false) => {
                 self.status = format!("theme: {}", theme::cycle());
             }
-            (KeyCode::Char('c'), false) => self.begin_case(),
-            (KeyCode::Char('f'), false) => {
+            (KeyCode::Char('f'), false) => self.begin_format(),
+            (KeyCode::Char('F'), false) => {
                 self.faststart = !self.faststart;
                 self.status = format!("faststart {}", if self.faststart { "on" } else { "off" });
             }
@@ -661,6 +723,7 @@ impl App {
     }
 
     fn jump(&mut self, to: usize) {
+        self.commit_editor();
         self.focus = to.min(self.rows.len().saturating_sub(1));
         self.open_editor();
     }
@@ -686,12 +749,13 @@ impl App {
     /// Edit mode already handled that -- so here Esc and q mean quit. Staged
     /// edits are never discarded silently.
     fn escape(&mut self) {
-        if !self.staged.is_empty() && !self.confirm_quit {
+        let n = self.staged_count();
+        if n > 0 && !self.confirm_quit {
             self.confirm_quit = true;
             self.status = format!(
                 "{} staged edit{} · press again to discard and quit, or w to write",
-                self.staged.len(),
-                if self.staged.len() == 1 { "" } else { "s" }
+                n,
+                if n == 1 { "" } else { "s" }
             );
         } else {
             self.quit = true;
@@ -745,21 +809,96 @@ impl App {
         self.stage(key, Value::Text(opts[next].code.clone()));
     }
 
-    /// Stage a value the way an edit would, undo entry and all.
+    /// Stage a value the way an edit would, undo entry and all, on every file
+    /// currently in scope.
     fn stage(&mut self, key: String, value: Value) {
-        let Some(row) = self.rows.iter().find(|r| r.key == key) else { return };
-        let baseline = Editor::new(row.control, row.original(), self.options_for(row)).value();
+        let scope = self.scope();
+        self.stage_on(&scope, &key, &value, false);
+        self.rebuild_rows();
+    }
+
+    /// Put `value` on `targets`, and report how many files took it.
+    ///
+    /// A file whose own disk value already produces this value through this
+    /// control gets no entry: there is nothing to write there. That test is
+    /// per file, which is the point -- an edit is not un-made by walking onto
+    /// a file that happens to hold the value already.
+    ///
+    /// With `only_empty`, files that already show something keep it. That is
+    /// the backfill: fill the gaps, disturb nothing.
+    fn stage_on(&mut self, targets: &[usize], key: &str, value: &Value, only_empty: bool) -> usize {
+        let Some(row) = self.rows.iter().find(|r| r.key == key) else { return 0 };
+        let (control, opts) = (row.control, self.options_for(row));
         let before = self.staged.clone();
-        if value == baseline {
-            self.staged.remove(&key);
-        } else {
-            self.staged.insert(key, value);
+        let mut n = 0;
+        for i in targets {
+            let Some(file) = self.files.get(*i) else { continue };
+            let disk = disk_value(file, key);
+            if only_empty {
+                let now = overlay(disk.clone(), self.staged.get(i).and_then(|m| m.get(key)));
+                if now.is_some_and(|v| !v.is_empty()) {
+                    continue;
+                }
+            }
+            // Round-trip the disk value through the same control before
+            // comparing: an absent Rating opens as ☆☆☆☆☆, whose value is "0",
+            // so comparing against the stored `None` would stage a 0 on every
+            // file merely tabbed past.
+            let baseline = Editor::new(control, disk.as_ref(), opts.clone()).value();
+            let entry = self.staged.entry(*i).or_default();
+            if *value == baseline {
+                entry.remove(key);
+            } else {
+                entry.insert(key.to_string(), value.clone());
+            }
+            n += 1;
         }
+        self.staged.retain(|_, edits| !edits.is_empty());
         if before != self.staged {
             self.undo.push(before);
             self.redo.clear();
         }
-        self.open_editor();
+        n
+    }
+
+    /// Push the focused field out to every open file — over whatever they
+    /// hold (`o`, overwrite all), or into only the ones where it is still
+    /// empty (`b`, backfill).
+    ///
+    /// The aggregate view already reaches every file; this is the same reach
+    /// from a single-file view, where the value worth spreading is usually the
+    /// one just typed onto one file. "Overwrite" rather than "copy" because
+    /// that is the half of it worth being warned about: every other file's own
+    /// value goes.
+    fn copy_out(&mut self, only_empty: bool) {
+        let Some(row) = self.rows.get(self.focus) else { return };
+        if !row.editable() {
+            self.status = format!("{} is read-only", row.label);
+            return;
+        }
+        if self.files.len() < 2 {
+            self.status = "only one file open".into();
+            return;
+        }
+        let (key, label) = (row.key.clone(), row.label.clone());
+        let Some(value) = row.shown().cloned().filter(|v| !v.is_empty()) else {
+            self.status = if row.is_mixed() {
+                format!("{label} differs across the selection — pick a file with ] first")
+            } else {
+                format!("{label} is empty")
+            };
+            return;
+        };
+        let all: Vec<usize> = (0..self.files.len()).collect();
+        let n = self.stage_on(&all, &key, &value, only_empty);
+        self.rebuild_rows();
+        let files = format!("{n} file{}", if n == 1 { "" } else { "s" });
+        self.status = match (n, only_empty) {
+            (0, true) => format!("{label} is already set on every file"),
+            (0, false) => format!("nothing to copy into"),
+            (_, true) => format!("{label} backfilled into {files}"),
+            (_, false) => format!("{label} overwritten on {files}"),
+        };
     }
 
     /// Human label for a stored enum code, so an unfocused Kind row reads
@@ -793,66 +932,69 @@ impl App {
         }
     }
 
-    /// Seed a control from the staged edit if there is one, else from disk.
+    /// Seed a control from the staged edit if there is one, else from disk --
+    /// which is what the row's effective aggregate already is.
     fn open_editor(&mut self) {
         let Some(row) = self.rows.get(self.focus) else {
             self.editor = None;
             return;
         };
-        let staged = self.staged.get(&row.key).cloned();
-        let value = staged.as_ref().or_else(|| row.original());
         let opts = self.options_for(row);
-        self.editor = Some(Editor::new(row.control, value, opts));
+        self.editor = Some(Editor::new(row.control, row.shown(), opts));
     }
 
     /// Fold the focused control's value into the staging map.
     ///
-    /// "Unchanged" means the control produces the same value the *disk state*
-    /// produces through that same control -- not that the raw stored value
-    /// matches. The difference matters: an absent Rating opens as ☆☆☆☆☆, whose
-    /// value is "0", so comparing against the stored `None` would stage a 0 on
-    /// every file merely tabbed past. Round-tripping the original through the
-    /// control puts both sides in the same terms.
+    /// Compared against what the row was *showing*, not against disk: a
+    /// control the user never touched must be a no-op, and a field showing a
+    /// staged edit is unchanged when it still reads the same. Comparing
+    /// against disk here is what lost edits — walking onto a file that already
+    /// held the staged value made the untouched control look like a revert,
+    /// and the edit was dropped for every other file with it.
     fn commit_editor(&mut self) {
         let (Some(ed), Some(row)) = (&self.editor, self.rows.get(self.focus)) else { return };
         if !row.editable() {
             return;
         }
         let new = ed.value();
-        let baseline =
-            Editor::new(row.control, row.original(), self.options_for(row)).value();
+        let shown = Editor::new(row.control, row.shown(), self.options_for(row)).value();
+        if new == shown {
+            return;
+        }
         let key = row.key.clone();
-        let before = self.staged.clone();
-        if new == baseline {
-            self.staged.remove(&key);
-        } else {
-            self.staged.insert(key, new);
-        }
-        if before != self.staged {
-            self.undo.push(before);
-            self.redo.clear();
-        }
+        self.stage(key, new);
     }
 
     pub fn validation(&self) -> Validation {
         self.editor.as_ref().map(|e| e.validate()).unwrap_or(Validation::Ok)
     }
 
-    pub fn is_staged(&self, key: &str) -> bool {
-        self.staged.contains_key(key)
+    /// The value a row should display: the staged edit if any, else what is on
+    /// disk. None when the files in scope do not agree.
+    pub fn shown_value(&self, row: &Row) -> Option<Value> {
+        row.shown().cloned()
     }
 
-    /// The value a row should display: the staged edit if any, else what is on
-    /// disk.
-    pub fn shown_value(&self, row: &Row) -> Option<Value> {
-        self.staged.get(&row.key).cloned().or_else(|| row.original().cloned())
+    #[cfg(test)]
+    /// Put an edit on one file directly, bypassing the control round-trip.
+    /// The only way to stage against a file that is not in view, which is what
+    /// the tests need and what nothing in the UI does.
+    pub fn set_staged(&mut self, file: usize, key: &str, value: Value) {
+        self.staged.entry(file).or_default().insert(key.to_string(), value);
+        self.rebuild_rows();
+    }
+
+    /// Whether a given file carries an edit for a key — the inspector's
+    /// question, since it lists the selection file by file.
+    pub fn file_is_staged(&self, file: usize, key: &str) -> bool {
+        self.staged.get(&file).is_some_and(|m| m.contains_key(key))
     }
 
     fn undo(&mut self) {
         if let Some(prev) = self.undo.pop() {
             self.redo.push(std::mem::replace(&mut self.staged, prev));
-            self.open_editor();
-            self.status = format!("undo · {} staged", self.staged.len());
+            self.rebuild_rows();
+            self.status = format!("undo · {} staged", self.staged_count());
         } else {
             self.status = "nothing to undo".into();
         }
@@ -861,8 +1003,8 @@ impl App {
     fn redo(&mut self) {
         if let Some(next) = self.redo.pop() {
             self.undo.push(std::mem::replace(&mut self.staged, next));
-            self.open_editor();
-            self.status = format!("redo · {} staged", self.staged.len());
+            self.rebuild_rows();
+            self.status = format!("redo · {} staged", self.staged_count());
         } else {
             self.status = "nothing to redo".into();
         }
@@ -874,21 +1016,21 @@ impl App {
     /// Clearing a field that is already empty stages nothing: `stage` compares
     /// against the disk value through the same control, and an empty value is
     /// what an absent one produces.
-    /// Arm the case menu, but only over a field whose value is prose. A case
+    /// Arm the format menu, but only over a field whose value is prose. A case
     /// transform on a rating or an enum code would be a no-op at best, so the
-    /// menu refuses to open rather than offering four keys that do nothing.
-    fn begin_case(&mut self) {
+    /// menu refuses to open rather than offering keys that do nothing.
+    fn begin_format(&mut self) {
         let Some(row) = self.rows.get(self.focus) else { return };
         if !row.editable() {
             self.status = format!("{} is read-only", row.label);
             return;
         }
         if !is_textual(row.control) {
-            self.status = format!("{} takes no case transform", row.label);
+            self.status = format!("{} takes no formatting", row.label);
             return;
         }
-        self.case_pending = true;
-        self.status = format!("case: {}", row.label);
+        self.format_pending = true;
+        self.status = format!("format: {}", row.label);
     }
 
     fn apply_case(&mut self, case: Case) {
@@ -970,12 +1112,8 @@ impl App {
     /// as itself rather than as ‹multiple› -- the aggregate is only meaningful
     /// when more than one file is in scope.
     fn rebuild_rows(&mut self) {
-        let subset: Vec<&FileTags> = match self.view {
-            Some(i) => vec![&self.files[i]],
-            None => self.files.iter().collect(),
-        };
-        let custom = custom_aggs(&subset, &self.custom_keys);
-        self.rows = build_rows(&subset, &custom);
+        let scope = self.scope();
+        self.rows = build_rows(&self.files, &scope, &self.staged, &self.custom_keys);
         if self.focus >= self.rows.len() {
             self.focus = self.rows.len().saturating_sub(1);
         }
@@ -1022,21 +1160,36 @@ impl App {
 /// Visible rows: every primary field, plus footage fields only once they hold
 /// something. An absent primary field still gets a row -- seeing that Title is
 /// empty is the point of a form.
-/// Aggregate the unclaimed keys over just the files in scope.
-fn custom_aggs(files: &[&FileTags], keys: &[String]) -> BTreeMap<String, Agg> {
-    keys.iter()
-        .map(|k| {
-            let per_file = files
-                .iter()
-                .map(|t| match k.split_once(':') {
-                    Some(("xmp", tag)) => t.xmp.get(tag).cloned(),
-                    Some((_, key)) => t.atoms.get(key).cloned(),
-                    None => None,
-                })
-                .collect();
-            (k.clone(), Agg::fold(per_file))
-        })
-        .collect()
+/// What one file holds for a row key, whether the key is a schema field or an
+/// unclaimed atom or XMP tag carried through from disk.
+pub fn disk_value(t: &FileTags, key: &str) -> Option<Value> {
+    match key.split_once(':') {
+        Some(("xmp", tag)) => t.xmp.get(tag).cloned(),
+        Some((_, k)) => t.atoms.get(k).cloned(),
+        None => crate::model::schema::field_by_id(key).and_then(|def| t.lookup(def)),
+    }
+}
+
+/// A staged edit seen as a value. An empty edit is a *clear*, which reads as
+/// absent rather than as an empty string: absent is what the row showed before
+/// anyone typed in it, and what the write will leave behind.
+fn overlay(disk: Option<Value>, staged: Option<&Value>) -> Option<Value> {
+    match staged {
+        Some(v) if v.is_empty() => None,
+        Some(v) => Some(v.clone()),
+        None => disk,
+    }
+}
+
+/// The label a staged key wears in the confirmation dialog, where there may be
+/// no visible row to take it from.
+fn key_label(key: &str) -> String {
+    if key.contains(':') {
+        return custom_label(key);
+    }
+    crate::model::schema::field_by_id(key)
+        .map(|d| d.label.to_string())
+        .unwrap_or_else(|| key.to_string())
 }
 
 /// Label for an unclaimed key: the namespace prefix is noise once the row is
@@ -1050,33 +1203,61 @@ fn custom_label(key: &str) -> String {
     }
 }
 
-fn build_rows(files: &[&FileTags], custom: &BTreeMap<String, Agg>) -> Vec<Row> {
+fn build_rows(
+    files: &[FileTags],
+    scope: &[usize],
+    staged: &Staged,
+    custom_keys: &[String],
+) -> Vec<Row> {
+    let row = |key: String, label: String, control, def, disk: Vec<Option<Value>>| {
+        let eff = scope
+            .iter()
+            .zip(disk.iter())
+            .map(|(i, d)| overlay(d.clone(), staged.get(i).and_then(|m| m.get(&key))))
+            .collect();
+        let is_staged =
+            scope.iter().any(|i| staged.get(i).is_some_and(|m| m.contains_key(&key)));
+        Row { key, label, control, def, eff: Agg::fold(eff), staged: is_staged }
+    };
+
     let mut rows: Vec<Row> = FIELDS
         .iter()
         .filter_map(|def| {
-            let agg = Agg::fold(files.iter().map(|t| t.lookup(def)).collect());
-            if def.footage_only && matches!(agg, Agg::Absent) {
+            let disk: Vec<Option<Value>> = scope.iter().map(|i| files[*i].lookup(def)).collect();
+            // A footage field appears once it holds something -- or once it has
+            // been edited, since hiding the row would hide the edit with it.
+            let edited = scope.iter().any(|i| staged.get(i).is_some_and(|m| m.contains_key(def.id)));
+            if def.footage_only && !edited && disk.iter().all(Option::is_none) {
                 return None;
             }
-            Some(Row {
-                key: def.id.to_string(),
-                label: def.label.to_string(),
-                control: def.control,
-                def: Some(def),
-                agg,
-            })
+            Some(row(def.id.to_string(), def.label.to_string(), def.control, Some(def), disk))
         })
         .collect();
-    // The map is already keyed by origin ("custom:" atom / "xmp:" tag), which
-    // the write plan needs in order to put an edit back where it came from.
-    rows.extend(custom.iter().map(|(k, agg)| Row {
-        key: k.clone(),
-        label: custom_label(k),
-        control: Control::Text,
-        def: None,
-        agg: agg.clone(),
+    // Keys are already named by origin ("custom:" atom / "xmp:" tag), which the
+    // write plan needs in order to put an edit back where it came from.
+    rows.extend(custom_keys.iter().map(|k| {
+        let disk = scope.iter().map(|i| disk_value(&files[*i], k)).collect();
+        row(k.clone(), custom_label(k), Control::Text, None, disk)
     }));
     rows
+}
+
+/// One staged edit as the confirmation dialog needs it.
+pub struct StagedEdit {
+    pub label: String,
+    pub shown: String,
+    pub files: usize,
+    /// Distinct values on disk this edit is about to replace.
+    pub overwrites: usize,
+}
+
+/// Whether the file now carries what was staged for it. An edit that cleared a
+/// field has landed when the field is gone, not when it reads empty-string.
+fn landed(t: &FileTags, key: &str, staged: &Value) -> bool {
+    match disk_value(t, key) {
+        Some(v) => v == *staged || (v.is_empty() && staged.is_empty()),
+        None => staged.is_empty(),
+    }
 }
 
 /// Pick an image backend, querying the terminal only where a reply is plausible.
@@ -1273,14 +1454,14 @@ mod tests {
             xmp: BTreeMap::new(),
         };
         let mut app = App::new(vec![f], BTreeMap::new(), false);
-        app.staged.insert("title".into(), Value::Text("kept".into()));
+        app.set_staged(0, "title", Value::Text("kept".into()));
 
         app.finish_write(WriteResults {
             ok: vec![],
             failed: vec![(PathBuf::from("/nonexistent/tagform-test.mov"), "boom".into())],
         });
 
-        assert_eq!(app.staged.get("title"), Some(&Value::Text("kept".into())));
+        assert_eq!(app.staged[&0].get("title"), Some(&Value::Text("kept".into())));
         assert!(app.status.contains("1 edit kept"), "{}", app.status);
     }
 
@@ -1297,7 +1478,7 @@ mod tests {
             xmp: BTreeMap::new(),
         };
         let mut app = App::new(vec![f], BTreeMap::new(), false);
-        app.staged.insert("title".into(), Value::Text("landed".into()));
+        app.set_staged(0, "title", Value::Text("landed".into()));
 
         app.finish_write(WriteResults {
             ok: vec![PathBuf::from("/nonexistent/tagform-test.mov")],
@@ -1306,5 +1487,145 @@ mod tests {
 
         assert!(app.staged.is_empty(), "{:?}", app.staged);
         assert_eq!(app.status, "wrote 1 of 1");
+    }
+
+    /// Two files whose Title differs -- the shape every multi-file bug shows
+    /// up in.
+    fn pair() -> App {
+        use crate::tags::probe::FileTags;
+        let mk = |name: &str, title: Option<&str>| FileTags {
+            // Paths that cannot be probed, so nothing here touches a disk.
+            path: PathBuf::from(format!("/nonexistent/{name}.mov")),
+            atoms: title
+                .map(|t| BTreeMap::from([("title".to_string(), Value::text(t))]))
+                .unwrap_or_default(),
+            xmp: BTreeMap::new(),
+        };
+        App::new(vec![mk("a", Some("A")), mk("b", Some("B"))], BTreeMap::new(), false)
+    }
+
+    fn focus_on(app: &mut App, key: &str) {
+        app.focus = app.rows.iter().position(|r| r.key == key).expect(key);
+        app.open_editor();
+    }
+
+    fn row<'a>(app: &'a App, key: &str) -> &'a Row {
+        app.rows.iter().find(|r| r.key == key).expect(key)
+    }
+
+    /// The reported bug: walking to another file and back reset a field to
+    /// what it held on read. It happened whenever the file walked onto already
+    /// agreed with the edit -- which is the normal case when giving a batch
+    /// the same value one file at a time.
+    #[test]
+    fn an_edit_survives_a_file_that_already_agrees_with_it() {
+        let mut app = pair();
+        app.cycle_file(1);
+        focus_on(&mut app, "title");
+        app.stage("title".into(), Value::text("B"));
+
+        app.cycle_file(1); // onto the file that already reads "B"
+        app.move_focus(1);
+        app.move_focus(-1);
+        app.cycle_file(-1);
+
+        assert_eq!(app.staged[&0].get("title"), Some(&Value::text("B")));
+        assert_eq!(row(&app, "title").shown(), Some(&Value::text("B")));
+    }
+
+    /// And it belongs to the file it was made on: the next file shows its own
+    /// value, not the edit trailing behind the cursor.
+    #[test]
+    fn an_edit_does_not_follow_the_cursor_onto_the_next_file() {
+        let mut app = pair();
+        app.cycle_file(1);
+        focus_on(&mut app, "title");
+        app.stage("title".into(), Value::text("edited"));
+
+        app.cycle_file(1);
+        assert_eq!(row(&app, "title").shown(), Some(&Value::text("B")));
+        assert!(!row(&app, "title").staged);
+
+        app.cycle_file(-1);
+        assert_eq!(row(&app, "title").shown(), Some(&Value::text("edited")));
+        assert!(row(&app, "title").staged);
+    }
+
+    /// `w` writes every staged edit, including one made on a file that is no
+    /// longer in view -- otherwise the plan silently drops half the batch.
+    #[test]
+    fn the_plan_covers_files_that_are_not_in_view() {
+        let mut app = pair();
+        app.cycle_file(1);
+        focus_on(&mut app, "title");
+        app.stage("title".into(), Value::text("edited"));
+        app.cycle_file(1);
+        app.prepare_write();
+
+        let plans = app.pending.as_ref().expect("a plan");
+        assert_eq!(plans.len(), 1);
+        assert!(plans[0].path.ends_with("a.mov"), "{:?}", plans[0].path);
+    }
+
+    /// An untouched control commits nothing. This is the rule the lost edits
+    /// were breaking: tabbing through a form must not stage or unstage.
+    #[test]
+    fn moving_through_the_form_stages_nothing() {
+        let mut app = pair();
+        for _ in 0..app.rows.len() * 2 {
+            app.move_focus(1);
+        }
+        assert!(app.staged.is_empty(), "{:?}", app.staged);
+    }
+
+    #[test]
+    fn overwrite_all_puts_the_focused_value_on_every_file() {
+        let mut app = pair();
+        app.cycle_file(1);
+        focus_on(&mut app, "title");
+        app.copy_out(false);
+
+        assert_eq!(app.staged[&1].get("title"), Some(&Value::text("A")));
+        // Nothing staged on the file it came from: it already holds the value,
+        // and an edit that changes nothing is not an edit.
+        assert!(!app.staged.contains_key(&0), "{:?}", app.staged);
+        assert!(app.status.contains("overwritten on 2 files"), "{}", app.status);
+    }
+
+    /// Backfill fills the gaps and disturbs nothing else.
+    #[test]
+    fn backfill_only_reaches_files_where_the_field_is_empty() {
+        use crate::tags::probe::FileTags;
+        let mut app = pair();
+        app.files.push(FileTags {
+            path: PathBuf::from("/nonexistent/c.mov"),
+            atoms: BTreeMap::new(),
+            xmp: BTreeMap::new(),
+        });
+        app.view = Some(0);
+        app.rebuild_rows();
+        focus_on(&mut app, "title");
+        app.copy_out(true);
+
+        assert_eq!(app.staged[&2].get("title"), Some(&Value::text("A")));
+        assert!(!app.staged.contains_key(&1), "B kept its own title: {:?}", app.staged);
+        assert!(app.status.contains("backfilled into 1 file"), "{}", app.status);
+    }
+
+    /// A clear reads as absent rather than as an empty string, so the row
+    /// shows what the write will leave behind.
+    #[test]
+    fn a_cleared_field_shows_as_absent_and_stays_staged() {
+        let mut app = pair();
+        app.cycle_file(1);
+        focus_on(&mut app, "title");
+        app.clear_focused();
+        assert_eq!(app.staged[&0].get("title"), Some(&Value::text("")));
+        assert_eq!(row(&app, "title").shown(), None);
+        assert!(row(&app, "title").staged);
+
+        app.move_focus(1);
+        app.move_focus(-1);
+        assert_eq!(app.staged[&0].get("title"), Some(&Value::text("")));
     }
 }

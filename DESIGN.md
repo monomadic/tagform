@@ -646,6 +646,34 @@ edits live separately in the app rather than as extra variants of it. A state
 that means "the user did something" has no business in a type produced by the
 reader.
 
+⟨built, differs⟩ **Staging is per file**: `staged: BTreeMap<usize, BTreeMap<String, Value>>`,
+file index then row key. One map for the whole selection was the first shape and
+it was wrong — an edit with no owner followed the cursor onto the next file, and
+was then dropped by the first file that already agreed with it, because "equals
+what is on disk" was being tested against whichever file happened to be in view.
+Walking a selection with `[` and `]` therefore destroyed unwritten work, which
+is the opposite of what a staging model is for. Three rules follow from the fix:
+
+- An edit is compared against **the one file it is being staged on**, never
+  against the selection. A file that already holds the value simply gets no
+  entry: there is nothing to write there.
+- Committing an untouched control is a **no-op**. It is compared against what
+  the row was *showing* — staged value included — so tabbing through a form can
+  neither stage nor unstage anything.
+- `w` writes **every** staged edit, not the ones in view. An edit belongs to its
+  files; silently skipping the file you are not looking at is how a batch loses
+  half its work. The confirmation names the files each edit lands on.
+
+A row therefore carries the aggregate *as displayed* — disk with the edits laid
+over it — and a staged clear reads as absent rather than as an empty string,
+because absent is what the write will leave behind.
+
+`o` overwrites the focused field on every open file and `b` backfills it into
+only the files where it is still empty. The aggregate view already reaches every
+file; these are the same reach from a single-file view, where the value worth
+spreading is usually the one just typed onto one file. Backfill is the one of
+the two the aggregate view cannot express at all.
+
 What the reader produces:
 
 | `Agg` | Meaning | Display |
@@ -1369,11 +1397,14 @@ why the map has the shape it does.
 
 Two rules do the work. `enter` opens a field and `esc` or `enter` closes it, so
 Select mode's letters are never ambiguous — `w` write, `m` merge, `i`
-inspector, `f` faststart, `t` theme, `r` revert, `y`/`p` yank and paste,
-`]`/`[`/`a` for the selection. `c` is the one exception: it arms a one-shot
-case menu (`c` capitalize, `t` title, `l` lower, `u` upper) because four more
-top-level letters would collide with commands that already own them, and the
-shortcut strip repaints to say which map is live.
+inspector, `F` faststart, `t` theme, `y`/`p` yank and paste, `]`/`[`/`a` for
+the selection, `o`/`b` to push a field out to every file (§4.3). `f` is the one
+exception: it arms a one-shot **format** menu (`c` capitalize, `t` title, `l`
+lower, `u` upper) because four more top-level letters would collide with
+commands that already own them, and the shortcut strip repaints to say which
+map is live. The menu is the growth path for anything else that reshapes text
+in place — trim, collapse, strip — which is why it is `f` for format rather
+than `c` for case, and why faststart moved up to `F` to make room.
 And a control that does not want a key hands it back (§5), so `tab` moves focus
 from inside a field, `j`/`k` move a row on a control with no text to type, and
 `h`/`l` step a set or a rating from either mode.

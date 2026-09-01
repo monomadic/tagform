@@ -218,11 +218,15 @@ Keys — the form is modal.
     enter             edit the focused field; a fixed set opens as a menu
     w                 write staged edits (shows a plan to confirm first)
     m                 merge a list field across every file in the selection
-    p                 inspector: per-file values for the focused field
+    i                 inspector: per-file values for the focused field
     ] / [             next / previous file         a       all files
-    u / ctrl-r        undo / redo                  r       revert every staged edit
-    c                 cycle the colour scheme
-    f                 toggle MOV faststart on the write   [on]
+    o                 overwrite the focused field on every open file
+    b                 backfill it into only the files where it is still empty
+    u / ctrl-r        undo / redo                  backspace  clear the field
+    y / p             yank the focused field / paste into it
+    f                 format menu: then c capitalize, t title, l lower, u upper
+    t                 cycle the colour scheme
+    F                 toggle MOV faststart on the write   [on]
     q / esc           quit (asks if edits are staged)
 
   EDIT
