@@ -769,12 +769,26 @@ fn draw_results(f: &mut Frame, area: Rect, r: &WriteResults) {
             Span::styled(file_label(p), Style::default().fg(t::value())),
         ]));
     }
+    // A failure gets the file on its own line and the reason indented under
+    // it, wrapped to the box. Held on one line, a stream mismatch ran off the
+    // right edge of the terminal and the part that said what went wrong was
+    // the part that fell off.
+    let text_width = (area.width as usize).saturating_sub(10).max(20);
     for (p, err) in &r.failed {
         lines.push(Line::from(vec![
             Span::styled("  ✕ ", Style::default().fg(t::error())),
-            Span::styled(t::fit(&file_label(p), 26), Style::default().fg(t::error())),
-            Span::styled(err.clone(), Style::default().fg(t::muted())),
+            Span::styled(
+                file_label(p),
+                Style::default().fg(t::error()).add_modifier(Modifier::BOLD),
+            ),
         ]));
+        for l in wrap(err, text_width) {
+            lines.push(Line::from(Span::styled(
+                format!("      {l}"),
+                Style::default().fg(t::muted()),
+            )));
+        }
+        lines.push(Line::from(""));
     }
     if !ok {
         lines.push(Line::from(""));
@@ -801,6 +815,41 @@ fn draw_results(f: &mut Frame, area: Rect, r: &WriteResults) {
 
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
+}
+
+/// Break `text` to `width` columns, keeping the newlines it already has: an
+/// error that laid itself out in lines (`verify_streams` does) keeps that
+/// layout, and a line that already fits is passed through untouched so its
+/// columns stay lined up. Only an over-long line is folded, and its
+/// continuations keep the original's indent. A word longer than the width is
+/// left to overflow rather than cut -- a truncated path helps nobody.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for para in text.lines() {
+        if para.chars().count() <= width {
+            out.push(para.to_string());
+            continue;
+        }
+        let indent: String = para.chars().take_while(|c| *c == ' ').collect();
+        let mut line = String::new();
+        for word in para.split_whitespace() {
+            let candidate = if line.is_empty() { indent.chars().count() + word.chars().count() }
+            else { line.chars().count() + 1 + word.chars().count() };
+            if line.is_empty() {
+                line = format!("{indent}{word}");
+            } else if candidate <= width {
+                line.push(' ');
+                line.push_str(word);
+            } else {
+                out.push(std::mem::take(&mut line));
+                line = format!("{indent}{word}");
+            }
+        }
+        if !line.is_empty() {
+            out.push(line);
+        }
+    }
+    out
 }
 
 fn file_label(p: &std::path::Path) -> String {
@@ -892,5 +941,47 @@ mod tests {
         let at = row.find(&chosen).unwrap() as u16;
         assert!(buf[(at, 1)].style().add_modifier.contains(Modifier::BOLD), "{row:?}");
         assert!(!buf[(2 + LABEL_COLS, 1)].style().add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn wrap_keeps_short_lines_and_their_columns() {
+        let msg = "the remux did not reproduce this file's tracks\nlost:    data/mebx x3\ngained:  data/stts x3";
+        assert_eq!(
+            wrap(msg, 60),
+            vec![
+                "the remux did not reproduce this file's tracks",
+                "lost:    data/mebx x3",
+                "gained:  data/stts x3",
+            ]
+        );
+    }
+
+    #[test]
+    fn wrap_folds_a_long_line_under_its_own_indent() {
+        let out = wrap("  aaa bbb ccc ddd eee", 11);
+        assert_eq!(out, vec!["  aaa bbb", "  ccc ddd", "  eee"]);
+    }
+
+    #[test]
+    fn a_failure_puts_the_reason_under_the_file_name() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let r = WriteResults {
+            ok: vec![],
+            failed: vec![(
+                std::path::PathBuf::from("/x/IMG_4855.MOV"),
+                "the remux did not reproduce this file's tracks\nlost:    data/mebx x3".into(),
+            )],
+        };
+        let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        term.draw(|fr| draw_results(fr, fr.area(), &r)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let row = |y: u16| -> String { (0..60).map(|x| buf[(x, y)].symbol().to_string()).collect() };
+        let rows: Vec<String> = (0..12).map(row).collect();
+        let at = rows.iter().position(|l| l.contains("IMG_4855.MOV")).unwrap();
+        // The name owns its line; the reason follows, indented, unwrapped.
+        assert!(!rows[at].contains("remux"), "{:?}", rows[at]);
+        assert!(rows[at + 1].contains("the remux did not reproduce"), "{:?}", rows[at + 1]);
+        assert!(rows[at + 2].contains("lost:    data/mebx x3"), "{:?}", rows[at + 2]);
     }
 }

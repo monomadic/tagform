@@ -36,15 +36,17 @@ impl StreamShape {
     /// outright on any file with a timecode track ("Could not find tag for
     /// codec none"). Both are rebuilt from metadata instead.
     ///
-    /// Matched by tag, not by a missing codec: an iPhone MOV carries three
-    /// `Core Media Metadata` tracks whose codec ffprobe also reports as
-    /// `none`, and ffmpeg rebuilds none of them. Skipping those dropped three
-    /// tracks per write -- caught by `verify_streams`, so the original was
-    /// never replaced, but the write could not succeed either. Mapping them
-    /// by index copies them through intact; it is only `tmcd` that the muxer
-    /// refuses.
+    /// A codec-less `data` track that is *not* one of those two -- an iPhone's
+    /// `mebx` timed-metadata tracks -- is not rebuilt by anything, and cannot
+    /// be carried either: mapping it by index copies the samples but writes a
+    /// sample description ffmpeg has no encoder tag for, so the track comes
+    /// out as `stts` with its `tref` to the video track and its `MetaFormat`
+    /// gone. Measured on a real iPhone 13 MOV; `-copy_unknown` and
+    /// `-tag:d copy` make no difference. So they are skipped here and
+    /// `verify_streams` refuses the result -- no remux can serve such a file,
+    /// and saying so is better than replacing an original with a poorer one.
     fn is_synthesised(&self) -> bool {
-        self.kind == "data" && matches!(self.tag.as_str(), "text" | "tmcd")
+        self.kind == "data" && (self.codec.is_none() || self.tag == "text")
     }
 }
 
@@ -428,16 +430,44 @@ fn verify_xmp(path: &Path, wanted: &[(String, Vec<String>)]) -> Result<()> {
 /// for several milestones precisely because nothing compared the two.
 fn verify_streams(before: &[StreamShape], after: &Path) -> Result<()> {
     let got = probe_streams(after);
-    let shape = |v: &[StreamShape]| {
-        let mut s: Vec<String> = v.iter().map(|x| format!("{}/{}", x.kind, x.tag)).collect();
-        s.sort();
-        s
-    };
-    let (a, b) = (shape(before), shape(&got));
+    let (a, b) = (tally(before), tally(&got));
     if a != b {
-        bail!("streams changed: {a:?} -> {b:?}");
+        bail!("the remux did not reproduce this file's tracks\n{}", diff_lines(&a, &b).join("\n"));
     }
     Ok(())
+}
+
+/// `kind/tag` -> how many tracks carry it. Counted rather than listed, because
+/// what a mismatch needs to say is *which* track went missing, not the whole
+/// roster twice over.
+fn tally(v: &[StreamShape]) -> BTreeMap<String, usize> {
+    let mut m = BTreeMap::new();
+    for s in v {
+        *m.entry(format!("{}/{}", s.kind, s.tag)).or_insert(0) += 1;
+    }
+    m
+}
+
+/// One short line per track that differs, in the order a reader wants them:
+/// what is gone, then what appeared in its place. A file with five tracks and
+/// one problem should print one line about the problem, not two arrays of
+/// five to be compared by eye.
+fn diff_lines(before: &BTreeMap<String, usize>, after: &BTreeMap<String, usize>) -> Vec<String> {
+    let count = |n: usize| if n == 1 { String::new() } else { format!(" x{n}") };
+    let mut out = Vec::new();
+    for (k, n) in before {
+        let had = after.get(k).copied().unwrap_or(0);
+        if *n > had {
+            out.push(format!("lost:    {k}{}", count(n - had)));
+        }
+    }
+    for (k, n) in after {
+        let had = before.get(k).copied().unwrap_or(0);
+        if *n > had {
+            out.push(format!("gained:  {k}{}", count(n - had)));
+        }
+    }
+    out
 }
 
 fn verify_duration(before: &Path, after: &Path) -> Result<()> {
