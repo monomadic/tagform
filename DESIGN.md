@@ -1283,6 +1283,16 @@ metadata → parse it out of the filename") is inert: an empty field stays empty
 This is the largest remaining piece of milestone 6, and the section below is
 the design it should be built to.
 
+⟨built, differs⟩ **Composing is delegated, for now.** `r` in Select mode hands
+the files in view to `rename-video` (`tags/rename.rs`), which composes both
+grammars below from the same atoms and XMP tags this program writes, and picks
+between them on Category. It runs on the tags *on disk*, so it refuses while
+edits are staged — the name would be built from the values `w` is about to
+replace. That is a rename key, not filename sync: it is not part of the write,
+it is not shown in the plan, and it does not make the filename readable as a
+source. Parsing (§3.6) is still the unbuilt half, and it is the half that needs
+a grammar in this codebase.
+
 When **Sync filename** is checked, the file is renamed — but to **one of two
 grammars**, selected by Category, because this library has two and they are
 close to inverses of each other:

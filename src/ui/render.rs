@@ -553,6 +553,7 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
             ("jk", "move"),
             ("⏎", "edit"),
             ("w", "write"),
+            ("r", "rename"),
             ("m", "merge"),
             ("i", "inspect"),
             ("][", "file"),

@@ -75,6 +75,7 @@ nothing is listening for the letter w.
 | `h` / `l` | cycle a fixed-set field, or nudge a rating, without entering edit mode |
 | `enter` | edit the focused field |
 | `w` | write staged edits (shows a plan first) |
+| `r` | rename the file — or every file in the selection — from the tags on disk, by running `rename-video` |
 | `m` | merge a list field across every file in the selection |
 | `i` | inspector — per-file values for the focused field |
 | `]` / `[` / `a` | next file / previous file / all files |
@@ -213,6 +214,7 @@ flag is a flag that lets you destroy XMP.
 ## Dependencies
 
 `ffmpeg`/`ffprobe` and `exiftool`, both required at runtime.
+`rename-video` is optional: it backs the `r` key and nothing else.
 `assets/tagform.exiftool.cfg` is a required runtime asset too: without it
 exiftool refuses to write this library's custom `Keys:` tags (`Sorry, Keys:Actors doesn't exist or isn't writable`) —
 the same wall `rename-footage` hit before it retreated to XMP.

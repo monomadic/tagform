@@ -217,6 +217,7 @@ Keys — the form is modal.
     h / l             cycle a fixed-set field (Category, Variant, Kind) or a rating
     enter             edit the focused field; a fixed set opens as a menu
     w                 write staged edits (shows a plan to confirm first)
+    r                 rename the file(s) in view from their tags (rename-video)
     m                 merge a list field across every file in the selection
     i                 inspector: per-file values for the focused field
     ] / [             next / previous file         a       all files

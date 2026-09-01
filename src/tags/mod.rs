@@ -6,4 +6,5 @@ mod fixtures;
 pub mod native;
 pub mod plan;
 pub mod probe;
+pub mod rename;
 pub mod write;

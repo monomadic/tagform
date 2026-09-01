@@ -19,6 +19,7 @@ use crate::ui::theme;
 use crate::model::value::{Agg, Value};
 use crate::tags::plan::{self, FilePlan};
 use crate::tags::probe::FileTags;
+use crate::tags::rename::{self, Outcome};
 use crate::tags::write;
 use crate::thumb::{self, MediaInfo};
 
@@ -168,6 +169,8 @@ pub enum Msg {
     /// A stage of the running write, from the writer thread.
     Progress(Box<WriteProgress>),
     Wrote(Box<WriteResults>),
+    /// One outcome per file a `rename-video` run was given, by file index.
+    Renamed(Vec<(usize, Result<Outcome, String>)>),
 }
 
 /// Staged edits, keyed by file index then by row key.
@@ -198,6 +201,11 @@ pub struct App {
     /// The outcome of the last write, held until dismissed.
     pub results: Option<WriteResults>,
     pub writing: bool,
+    /// A `rename-video` run is in flight. It shells out to ffprobe and exiftool
+    /// per file, so it runs off the UI thread like every other probe here --
+    /// and while it does, the paths in `files` are the ones about to change,
+    /// which is why `w` and a second `r` are held off until it lands.
+    pub renaming: bool,
     /// Live position of the running write. The write happens on its own thread
     /// precisely so this can be painted while it runs -- done inline, the event
     /// loop cannot redraw and a multi-gigabyte remux looks like a hang.
@@ -262,6 +270,7 @@ impl App {
             pending: None,
             results: None,
             writing: false,
+            renaming: false,
             progress: None,
             editor: None,
             mode: Mode::Select,
@@ -369,6 +378,7 @@ impl App {
                     }
                 }
                 Msg::Wrote(r) => self.finish_write(*r),
+                Msg::Renamed(r) => self.finish_rename(r),
             }
         }
     }
@@ -448,6 +458,12 @@ impl App {
     /// Build the plan for the files in scope and hold it for confirmation.
     fn prepare_write(&mut self) {
         self.commit_editor();
+        // The paths a plan would be built on are the ones a rename is in the
+        // middle of changing.
+        if self.renaming {
+            self.status = "rename in progress".into();
+            return;
+        }
         if self.staged.is_empty() {
             self.status = "nothing to write".into();
             return;
@@ -572,6 +588,82 @@ impl App {
             )
         };
         self.results = Some(results);
+    }
+
+    /// `r`: hand the files in scope to `rename-video`, which names each one
+    /// from its own tags. Filename sync as designed (DESIGN §9.4) is not built
+    /// here; the tool already composes both of this library's grammars, and one
+    /// grammar in one place is the point.
+    ///
+    /// Disk tags, not staged ones: the tool re-probes each file, so a rename
+    /// run before the write would build the name out of the values the edit is
+    /// about to replace. Refusing is better than a name that is stale the
+    /// moment `w` lands.
+    fn rename_files(&mut self) {
+        self.commit_editor();
+        if self.renaming {
+            return;
+        }
+        let scope = self.scope();
+        let stale = scope
+            .iter()
+            .any(|i| self.staged.get(i).is_some_and(|e| !e.is_empty()));
+        if stale {
+            self.status = "staged edits: write with w first, then rename".into();
+            return;
+        }
+        let jobs: Vec<(usize, PathBuf)> =
+            scope.iter().map(|i| (*i, self.files[*i].path.clone())).collect();
+        let Some((_, first)) = jobs.first() else { return };
+        self.status = match jobs.len() {
+            1 => format!("renaming {}", file_name(first)),
+            n => format!("renaming {n} files"),
+        };
+        self.renaming = true;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let out = jobs
+                .iter()
+                // A file the tool refuses must not cost the rest of the batch
+                // its rename, so each carries its own outcome home.
+                .map(|(i, p)| (*i, rename::run(p).map_err(|e| format!("{e:#}"))))
+                .collect();
+            let _ = tx.send(Msg::Renamed(out));
+        });
+    }
+
+    /// Take the new paths and nothing else. `rename-video` writes no tags, so
+    /// the model is still true of every file -- only where it lives changed,
+    /// and re-probing to learn that would be minutes of ffprobe for a string.
+    fn finish_rename(&mut self, out: Vec<(usize, Result<Outcome, String>)>) {
+        self.renaming = false;
+        let total = out.len();
+        let mut renamed = 0usize;
+        let mut name = String::new();
+        // Why a file kept its name, kept separately from the names that changed:
+        // in a mixed batch the interesting half is the half that did not move,
+        // and the strip has room for one line.
+        let mut note = String::new();
+        for (i, r) in out {
+            match r {
+                Ok(Outcome::Renamed(to)) => {
+                    name = file_name(&to);
+                    if let Some(f) = self.files.get_mut(i) {
+                        f.path = to;
+                    }
+                    renamed += 1;
+                }
+                Ok(Outcome::Unchanged) => note = "already named from its tags".into(),
+                Ok(Outcome::Taken(to)) => note = format!("name taken: {}", file_name(&to)),
+                Err(e) => note = e,
+            }
+        }
+        self.status = match (renamed, total) {
+            (0, _) => note,
+            (1, 1) => format!("renamed to {name}"),
+            (n, t) if n == t => format!("renamed {n} files"),
+            (n, t) => format!("renamed {n} of {t}: {note}"),
+        };
     }
 
     /// Route by mode. Select moves and commands; Edit types.
@@ -707,6 +799,7 @@ impl App {
             (KeyCode::Char('b'), false) => self.copy_out(true),
             (KeyCode::Char('u'), false) => self.undo(),
             (KeyCode::Char('r'), true) => self.redo(),
+            (KeyCode::Char('r'), false) => self.rename_files(),
             (KeyCode::Backspace, _) => self.clear_focused(),
             (KeyCode::Char('w'), false) => self.prepare_write(),
             (KeyCode::Char('t'), false) => {
