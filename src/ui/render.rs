@@ -16,7 +16,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::model::schema::Control;
 use crate::model::value::{Agg, Value};
 use crate::tags::plan::FilePlan;
-use crate::ui::app::{App, Mode, Row, WriteResults};
+use crate::ui::app::{App, Mode, Row, WriteProgress, WriteResults};
 use crate::ui::edit::{stars_glyphs, Validation};
 use crate::ui::theme as t;
 
@@ -60,7 +60,7 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
     draw_badge_bar(f, chunks[0], app);
 
     // A dialog takes everything below the header: it is the whole message.
-    if app.pending.is_some() || app.results.is_some() {
+    if app.pending.is_some() || app.results.is_some() || app.progress.is_some() {
         let top = chunks[2].y;
         let body = Rect {
             x: area.x,
@@ -68,7 +68,9 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
             width: area.width,
             height: area.height.saturating_sub(top.saturating_sub(area.y)),
         };
-        if let Some(plans) = &app.pending {
+        if let Some(p) = &app.progress {
+            draw_progress(f, body, p);
+        } else if let Some(plans) = &app.pending {
             draw_confirm(f, body, app, plans);
         } else if let Some(r) = &app.results {
             draw_results(f, body, r);
@@ -332,7 +334,18 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
         // A fixed set expands into the value box while the field is open --
         // same row, same height, so opening one never reflows the form.
         let value_spans = match editing.then(|| app.editor.as_ref()?.choices()).flatten() {
-            Some((labels, sel)) => set_spans(&labels, sel, text_w, bg),
+            Some((labels, sel)) => set_spans(&labels, sel, text_w, bg, true),
+            // Category shows its set closed as well: the whole form hangs off
+            // that one answer, so which answers exist is worth the row even
+            // when the field is shut. Same layout either way, so opening it
+            // moves nothing.
+            None if always_shows_its_set(row) => match closed_set(app, row) {
+                Some((labels, sel)) => set_spans(&labels, sel, text_w, bg, focused),
+                None => vec![Span::styled(
+                    t::fit(&raw, text_w),
+                    Style::default().bg(bg).fg(value_fg),
+                )],
+            },
             None => vec![Span::styled(
                 t::fit(&raw, text_w),
                 Style::default().bg(bg).fg(value_fg),
@@ -380,16 +393,44 @@ fn group_break_after(row: &Row) -> bool {
     row.def.is_some_and(|d| d.id == "category")
 }
 
+/// Rows whose set is painted whether the field is open or not -- Category, for
+/// the reason above: its options are the form's table of contents.
+fn always_shows_its_set(row: &Row) -> bool {
+    row.def.is_some_and(|d| d.id == "category")
+}
+
+/// The set to draw for a closed row: its options, and which one the row holds.
+/// `None` when the set is empty (no `--alias` configured), so the row falls
+/// back to the ordinary value box rather than to a blank strip. A mixed row
+/// selects nothing -- there is no single answer to light.
+fn closed_set(app: &App, row: &Row) -> Option<(Vec<String>, Option<usize>)> {
+    let opts = app.options_for(row);
+    if opts.is_empty() {
+        return None;
+    }
+    let sel = match app.shown_value(row) {
+        Some(Value::Text(s)) if !row.is_mixed() || app.is_staged(&row.key) => {
+            opts.iter().position(|o| o.code == s)
+        }
+        _ => None,
+    };
+    Some((opts.into_iter().map(|o| o.label).collect(), sel))
+}
+
 /// The set, laid out along the value box with the current one lit.
 ///
 /// Scrolls to keep the selection in view rather than eliding the tail: with
 /// seven kinds and "Podcast" chosen, a naive trim showed every option except
 /// the one you were on.
+/// `lit` is whether the row is the one you are on: an open or focused set lights
+/// its selection in accent, a set sitting quietly further down the form marks
+/// it without competing with the caret for attention.
 fn set_spans(
     labels: &[String],
     sel: Option<usize>,
     width: usize,
     bg: ratatui::style::Color,
+    lit: bool,
 ) -> Vec<Span<'static>> {
     let cell = |i: usize| format!(" {} ", labels[i]);
     let mut first = 0usize;
@@ -411,10 +452,14 @@ fn set_spans(
         used += text.width();
         spans.push(Span::styled(
             text,
-            if Some(i) == sel {
-                Style::default().bg(t::accent()).fg(t::badge_fg()).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().bg(bg).fg(t::muted())
+            match (Some(i) == sel, lit) {
+                (true, true) => {
+                    Style::default().bg(t::accent()).fg(t::badge_fg()).add_modifier(Modifier::BOLD)
+                }
+                (true, false) => {
+                    Style::default().bg(t::rule()).fg(t::value()).add_modifier(Modifier::BOLD)
+                }
+                (false, _) => Style::default().bg(bg).fg(t::muted()),
             },
         ));
     }
@@ -646,6 +691,62 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
     );
 }
 
+/// The bar, drawn by hand rather than with `Gauge` so the filled and unfilled
+/// halves take their colours from the theme like everything else.
+fn bar(width: usize, frac: f64) -> Line<'static> {
+    let filled = ((width as f64) * frac.clamp(0.0, 1.0)).round() as usize;
+    Line::from(vec![
+        Span::styled("█".repeat(filled), Style::default().fg(t::accent())),
+        Span::styled("░".repeat(width.saturating_sub(filled)), Style::default().fg(t::rule())),
+    ])
+}
+
+/// A write in flight. The stage name matters as much as the bar: "remuxing" for
+/// two minutes is patience, the same two minutes unlabelled is a hang.
+fn draw_progress(f: &mut Frame, area: Rect, p: &WriteProgress) {
+    let overall = p.overall();
+    let width = (area.width as usize).saturating_sub(6).clamp(10, 60);
+    let secs = p.started.elapsed().as_secs();
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            format!(" Writing {} of {} ", p.file + 1, p.total),
+            Style::default().bg(t::accent()).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  {}", t::fit(&p.name, width)),
+            Style::default().fg(t::header_fg()),
+        )),
+        Line::from(""),
+    ];
+
+    let mut b = vec![Span::raw("  ")];
+    b.extend(bar(width, overall).spans);
+    b.push(Span::styled(
+        format!(" {:>3}%", (overall * 100.0).round() as u32),
+        Style::default().fg(t::value()),
+    ));
+    lines.push(Line::from(b));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(format!("  {}", p.label), Style::default().fg(t::value())),
+        Span::styled(format!("   {}m {:02}s elapsed", secs / 60, secs % 60), Style::default().fg(t::muted())),
+    ]));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Originals are replaced only after the result is verified; nothing is half-written.",
+        Style::default().fg(t::muted()),
+    )));
+
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default().borders(Borders::ALL).border_style(Style::default().fg(t::accent())),
+        ),
+        area,
+    );
+}
+
 /// What actually happened, per file. A one-line status is fine for one file and
 /// useless for forty: a batch needs to say which ones failed and why, without
 /// the successes scrolling them away.
@@ -760,5 +861,36 @@ mod tests {
         assert!(line(1).contains("Category"), "{:?}", line(1));
         assert!(line(2).trim_end().chars().all(|c| c == '\u{2500}'), "{:?}", line(2));
         assert!(line(3).contains("Title"), "{:?}", line(3));
+    }
+
+    /// Category's set is painted on the closed row, and the value it holds is
+    /// the one lit -- the whole point of giving it the row.
+    #[test]
+    fn a_closed_category_row_draws_its_set_and_lights_the_choice() {
+        use crate::tags::probe::FileTags;
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use std::collections::BTreeMap;
+
+        let f = FileTags {
+            path: std::path::PathBuf::from("/tmp/tagform-render-test.mp4"),
+            atoms: BTreeMap::new(),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
+        let chosen = app.enums.category[1].clone();
+        app.staged.insert("category".into(), Value::Text(chosen.clone()));
+
+        let mut term = Terminal::new(TestBackend::new(90, 12)).unwrap();
+        term.draw(|fr| draw_fields(fr, fr.area(), &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let row: String = (0..90).map(|x| buf[(x, 1)].symbol().to_string()).collect();
+
+        assert!(row.contains(&app.enums.category[0]), "{row:?}");
+        assert!(row.contains(&chosen), "{row:?}");
+        // The chosen cell is bold; the ones either side of it are not.
+        let at = row.find(&chosen).unwrap() as u16;
+        assert!(buf[(at, 1)].style().add_modifier.contains(Modifier::BOLD), "{row:?}");
+        assert!(!buf[(2 + LABEL_COLS, 1)].style().add_modifier.contains(Modifier::BOLD));
     }
 }

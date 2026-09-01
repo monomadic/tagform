@@ -10,7 +10,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::config::{Enums, KINDS};
 use crate::model::schema::{Control, FieldDef, FIELDS};
@@ -128,9 +128,40 @@ pub struct WriteResults {
     pub failed: Vec<(PathBuf, String)>,
 }
 
+fn file_name(p: &std::path::Path) -> String {
+    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// Where the running write has got to. One file at a time, so this is a
+/// position in the batch plus a position within the file.
+pub struct WriteProgress {
+    /// 0-based index of the file being written.
+    pub file: usize,
+    pub total: usize,
+    pub name: String,
+    pub label: &'static str,
+    /// Fraction of this file's work, 0..1.
+    pub frac: f64,
+    pub started: Instant,
+}
+
+impl WriteProgress {
+    /// Across the whole batch, so the bar moves steadily through forty files
+    /// rather than resetting on each.
+    pub fn overall(&self) -> f64 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        ((self.file as f64 + self.frac.clamp(0.0, 1.0)) / self.total as f64).clamp(0.0, 1.0)
+    }
+}
+
 pub enum Msg {
     Thumb(usize, Box<image::DynamicImage>),
     Media(usize, MediaInfo),
+    /// A stage of the running write, from the writer thread.
+    Progress(Box<WriteProgress>),
+    Wrote(Box<WriteResults>),
 }
 
 pub struct App {
@@ -158,6 +189,10 @@ pub struct App {
     /// The outcome of the last write, held until dismissed.
     pub results: Option<WriteResults>,
     pub writing: bool,
+    /// Live position of the running write. The write happens on its own thread
+    /// precisely so this can be painted while it runs -- done inline, the event
+    /// loop cannot redraw and a multi-gigabyte remux looks like a hang.
+    pub progress: Option<WriteProgress>,
     /// The live control for the focused row. Recreated whenever focus moves, so
     /// there is no separate "edit mode": the focused field is always editable
     /// and typing goes straight into it, the way a GUI form behaves.
@@ -208,6 +243,7 @@ impl App {
             pending: None,
             results: None,
             writing: false,
+            progress: None,
             editor: None,
             mode: Mode::Select,
             staged: BTreeMap::new(),
@@ -288,6 +324,12 @@ impl App {
                         self.media[i] = info;
                     }
                 }
+                Msg::Progress(p) => {
+                    if self.writing {
+                        self.progress = Some(*p);
+                    }
+                }
+                Msg::Wrote(r) => self.finish_write(*r),
             }
         }
     }
@@ -364,26 +406,70 @@ impl App {
         self.pending = Some(plans);
     }
 
-    /// Run the confirmed plan, then re-read from disk so the form shows what is
-    /// actually on the files rather than what was hoped for.
+    /// Start the confirmed plan on its own thread, reporting progress back
+    /// through the same channel the thumbnails use.
+    ///
+    /// Off-thread because a remux is minutes of work and the event loop must
+    /// keep painting: the bar is the whole point, and it cannot move from
+    /// inside a blocking call.
     fn apply(&mut self) {
         let Some(plans) = self.pending.take() else { return };
-        self.writing = true;
-        let mut written: Vec<PathBuf> = Vec::new();
-        let mut failed: Vec<(PathBuf, String)> = Vec::new();
-        for p in &plans {
-            let snapshot = self
-                .files
-                .iter()
-                .find(|f| f.path == p.path)
-                .map(|f| f.xmp.clone())
-                .unwrap_or_default();
-            match write::execute(p, &snapshot) {
-                Ok(()) => written.push(p.path.clone()),
-                Err(e) => failed.push((p.path.clone(), e.to_string())),
-            }
+        let jobs: Vec<(FilePlan, BTreeMap<String, Value>)> = plans
+            .into_iter()
+            .map(|p| {
+                let snapshot = self
+                    .files
+                    .iter()
+                    .find(|f| f.path == p.path)
+                    .map(|f| f.xmp.clone())
+                    .unwrap_or_default();
+                (p, snapshot)
+            })
+            .collect();
+        if jobs.is_empty() {
+            return;
         }
-        // A bad file in a batch must not cost the others their write.
+        self.writing = true;
+        let started = Instant::now();
+        self.progress = Some(WriteProgress {
+            file: 0,
+            total: jobs.len(),
+            name: file_name(&jobs[0].0.path),
+            label: "starting",
+            frac: 0.0,
+            started,
+        });
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let total = jobs.len();
+            let mut written: Vec<PathBuf> = Vec::new();
+            let mut failed: Vec<(PathBuf, String)> = Vec::new();
+            for (i, (plan, snapshot)) in jobs.iter().enumerate() {
+                let name = file_name(&plan.path);
+                let tick = &tx;
+                let mut on = |s: write::Step| {
+                    let _ = tick.send(Msg::Progress(Box::new(WriteProgress {
+                        file: i,
+                        total,
+                        name: name.clone(),
+                        label: s.label,
+                        frac: s.frac,
+                        started,
+                    })));
+                };
+                match write::execute(plan, snapshot, &mut on) {
+                    Ok(()) => written.push(plan.path.clone()),
+                    // A bad file in a batch must not cost the others their write.
+                    Err(e) => failed.push((plan.path.clone(), e.to_string())),
+                }
+            }
+            let _ = tx.send(Msg::Wrote(Box::new(WriteResults { ok: written, failed })));
+        });
+    }
+
+    /// The write is over: re-read from disk so the form shows what is actually
+    /// on the files rather than what was hoped for.
+    fn finish_write(&mut self, results: WriteResults) {
         for f in self.files.iter_mut() {
             if let Ok(fresh) = crate::tags::probe::probe(&f.path) {
                 *f = fresh;
@@ -394,12 +480,13 @@ impl App {
         self.redo.clear();
         self.rebuild_rows();
         self.writing = false;
+        self.progress = None;
         self.status = format!(
             "wrote {} of {}",
-            written.len(),
-            written.len() + failed.len()
+            results.ok.len(),
+            results.ok.len() + results.failed.len()
         );
-        self.results = Some(WriteResults { ok: written, failed });
+        self.results = Some(results);
     }
 
     /// Route by mode. Select moves and commands; Edit types.
@@ -409,6 +496,11 @@ impl App {
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.quit = true;
+            return;
+        }
+        // Nothing to press while a write runs: the files are being replaced
+        // under us, and a stray key must not stage an edit against them.
+        if self.writing {
             return;
         }
         if self.results.is_some() {
@@ -1014,7 +1106,9 @@ pub fn run(files: Vec<FileTags>, custom: BTreeMap<String, Agg>, no_thumbnail: bo
             }
             terminal.draw(|f| render::draw(f, &app, proto.as_mut()))?;
 
-            if event::poll(Duration::from_millis(250))? {
+            // A running write repaints often enough for the bar to move.
+            let tick = if app.writing { 80 } else { 250 };
+            if event::poll(Duration::from_millis(tick))? {
                 if let Event::Key(key) = event::read()? {
                     app.on_key(key);
                 }
@@ -1055,6 +1149,30 @@ pub fn merge_values(per_file: &[Option<Value>]) -> Vec<String> {
         }
     }
     merged
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    fn p(file: usize, total: usize, frac: f64) -> WriteProgress {
+        WriteProgress { file, total, name: String::new(), label: "", frac, started: Instant::now() }
+    }
+
+    #[test]
+    fn overall_walks_the_batch_rather_than_resetting_per_file() {
+        assert!((p(0, 4, 0.0).overall() - 0.0).abs() < 1e-9);
+        assert!((p(0, 4, 1.0).overall() - 0.25).abs() < 1e-9);
+        assert!((p(2, 4, 0.5).overall() - 0.625).abs() < 1e-9);
+        assert!((p(3, 4, 1.0).overall() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_bad_fraction_cannot_push_the_bar_past_its_ends() {
+        assert_eq!(p(0, 1, 9.0).overall(), 1.0);
+        assert_eq!(p(0, 1, -1.0).overall(), 0.0);
+        assert_eq!(p(0, 0, 0.5).overall(), 0.0);
+    }
 }
 
 #[cfg(test)]

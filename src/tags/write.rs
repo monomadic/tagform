@@ -35,8 +35,16 @@ impl StreamShape {
     /// duplicate chapter track on every write, and what made a remux fail
     /// outright on any file with a timecode track ("Could not find tag for
     /// codec none"). Both are rebuilt from metadata instead.
+    ///
+    /// Matched by tag, not by a missing codec: an iPhone MOV carries three
+    /// `Core Media Metadata` tracks whose codec ffprobe also reports as
+    /// `none`, and ffmpeg rebuilds none of them. Skipping those dropped three
+    /// tracks per write -- caught by `verify_streams`, so the original was
+    /// never replaced, but the write could not succeed either. Mapping them
+    /// by index copies them through intact; it is only `tmcd` that the muxer
+    /// refuses.
     fn is_synthesised(&self) -> bool {
-        self.kind == "data" && (self.codec.is_none() || self.tag == "text")
+        self.kind == "data" && matches!(self.tag.as_str(), "text" | "tmcd")
     }
 }
 
@@ -133,28 +141,55 @@ fn config_path() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/tagform.exiftool.cfg"))
 }
 
-/// Execute a plan against one file.
+/// How far a write has got, as a fraction of one file's work and a phrase to
+/// put next to the bar.
+///
+/// Reported rather than estimated: a remux of a multi-gigabyte file is minutes
+/// of silence otherwise, and the silence reads as a hang. The fractions are
+/// weights over the stages of a write, not a clock -- the remux dominates, so
+/// it gets most of the bar and is driven by ffmpeg's own `-progress` output.
+#[derive(Debug, Clone, Copy)]
+pub struct Step {
+    pub label: &'static str,
+    pub frac: f64,
+}
+
+/// The remux owns this much of the bar; the verifies and the swap share the
+/// rest.
+const REMUX_SHARE: f64 = 0.75;
+
+type OnStep<'a> = &'a mut dyn FnMut(Step);
+
+fn step(on: &mut dyn FnMut(Step), label: &'static str, frac: f64) {
+    on(Step { label, frac });
+}
+
+/// Execute a plan against one file, reporting each stage to `on` as it starts.
 ///
 /// `xmp_snapshot` is everything the file's XMP held when it was read. It is
 /// what the two-pass writer puts back after a remux has destroyed it, so it
 /// must come from the read, not from a re-probe of the remuxed file.
-pub fn execute(plan: &FilePlan, xmp_snapshot: &BTreeMap<String, Value>) -> Result<(), WriteError> {
+pub fn execute(
+    plan: &FilePlan,
+    xmp_snapshot: &BTreeMap<String, Value>,
+    on: OnStep<'_>,
+) -> Result<(), WriteError> {
     if plan.is_empty() {
         return Ok(());
     }
-    let r = match plan.writer {
-        Writer::Exiftool => in_place(plan),
-        Writer::Ffmpeg => remux(plan, None),
-        Writer::TwoPass => remux(plan, Some(xmp_snapshot)),
-    };
-    r
+    match plan.writer {
+        Writer::Exiftool => in_place(plan, on),
+        Writer::Ffmpeg => remux(plan, None, on),
+        Writer::TwoPass => remux(plan, Some(xmp_snapshot), on),
+    }
 }
 
 // ---------------------------------------------------------------------------
 // in place
 // ---------------------------------------------------------------------------
 
-fn in_place(plan: &FilePlan) -> Result<(), WriteError> {
+fn in_place(plan: &FilePlan, on: OnStep<'_>) -> Result<(), WriteError> {
+    step(on, "writing tags in place", 0.0);
     let mut args: Vec<String> = vec![
         "-config".into(),
         config_path().to_string_lossy().into_owned(),
@@ -176,6 +211,7 @@ fn in_place(plan: &FilePlan) -> Result<(), WriteError> {
     if let Some(t) = before {
         restore_mtime(&plan.path, t);
     }
+    step(on, "verifying", 0.7);
     verify_atoms(&plan.path, &plan.atoms).map_err(WriteError::Failed)
 }
 
@@ -200,7 +236,12 @@ fn xmp_args(xmp: &[(String, Vec<String>)]) -> Vec<String> {
 // remux
 // ---------------------------------------------------------------------------
 
-fn remux(plan: &FilePlan, restore: Option<&BTreeMap<String, Value>>) -> Result<(), WriteError> {
+fn remux(
+    plan: &FilePlan,
+    restore: Option<&BTreeMap<String, Value>>,
+    on: OnStep<'_>,
+) -> Result<(), WriteError> {
+    step(on, "preparing", 0.0);
     let path = &plan.path;
     let dir = path.parent().unwrap_or(Path::new("."));
     let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
@@ -251,8 +292,18 @@ fn remux(plan: &FilePlan, restore: Option<&BTreeMap<String, Value>>) -> Result<(
     args.push("--".into());
     args.push(tmp.to_string_lossy().into_owned());
 
-    run("ffmpeg", &args).map_err(WriteError::Failed)?;
+    // The one long step: report ffmpeg's own position rather than a spinner.
+    let total = duration(path);
+    run_ffmpeg(&args, |secs| {
+        let f = match total {
+            Some(d) if d > 0.0 => (secs / d).clamp(0.0, 1.0),
+            _ => 0.0,
+        };
+        step(on, "remuxing", f * REMUX_SHARE);
+    })
+    .map_err(WriteError::Failed)?;
 
+    step(on, "verifying", REMUX_SHARE);
     verify_duration(path, &tmp).map_err(WriteError::Failed)?;
     verify_streams(&shapes, &tmp).map_err(WriteError::Failed)?;
     verify_atoms(&tmp, &plan.atoms).map_err(WriteError::Failed)?;
@@ -269,6 +320,7 @@ fn remux(plan: &FilePlan, restore: Option<&BTreeMap<String, Value>>) -> Result<(
     // before the swap, so the original is only replaced by a file that is
     // strictly no poorer than it was.
     if let Some(snapshot) = restore {
+        step(on, "restoring XMP", 0.90);
         let merged = merge_xmp(snapshot, &plan.xmp);
         if !merged.is_empty() {
             let mut a: Vec<String> = vec![
@@ -285,6 +337,7 @@ fn remux(plan: &FilePlan, restore: Option<&BTreeMap<String, Value>>) -> Result<(
         }
     }
 
+    step(on, "replacing the original", 0.97);
     if let Some(t) = mtime(path) {
         restore_mtime(&tmp, t);
     }
@@ -414,6 +467,56 @@ fn mtime(path: &Path) -> Option<std::time::SystemTime> {
 fn restore_mtime(path: &Path, _t: std::time::SystemTime) {
     let _ = _t;
     let _ = Command::new("touch").arg("-r").arg(path).arg(path).status();
+}
+
+/// Run ffmpeg with `-progress` on stdout, calling `tick` with the position in
+/// seconds as it advances.
+///
+/// The output is parsed rather than the stderr banner because `-progress` is
+/// the one machine-readable channel ffmpeg offers, and it is line-oriented
+/// key=value. stderr is drained on its own thread: with a pipe attached and
+/// nobody reading it, a chatty failure would fill the buffer and deadlock the
+/// write.
+fn run_ffmpeg(args: &[String], mut tick: impl FnMut(f64)) -> Result<()> {
+    use std::io::{BufRead, BufReader};
+
+    let mut child = Command::new("ffmpeg")
+        .args(["-progress", "pipe:1", "-nostats"])
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("running ffmpeg")?;
+
+    let stderr = child.stderr.take();
+    let drain = std::thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(mut e) = stderr {
+            use std::io::Read;
+            e.read_to_string(&mut buf).ok();
+        }
+        buf
+    });
+
+    if let Some(out) = child.stdout.take() {
+        for line in BufReader::new(out).lines().map_while(Result::ok) {
+            // `out_time_us` is microseconds of output written so far; ffmpeg
+            // emits `N/A` before the first frame lands.
+            if let Some(v) = line.strip_prefix("out_time_us=") {
+                if let Ok(us) = v.trim().parse::<i64>() {
+                    tick(us as f64 / 1_000_000.0);
+                }
+            }
+        }
+    }
+
+    let status = child.wait().context("waiting for ffmpeg")?;
+    let err = drain.join().unwrap_or_default();
+    if !status.success() {
+        bail!("ffmpeg failed: {}", err.trim().lines().next().unwrap_or("(no output)"));
+    }
+    Ok(())
 }
 
 fn run(program: &str, args: &[String]) -> Result<()> {
