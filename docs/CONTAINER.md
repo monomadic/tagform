@@ -3,13 +3,17 @@
 Milestone 0 of [DESIGN.md](../DESIGN.md). Every claim here was measured, not read off
 a wiki. Reproduce with `tests/container-experiment.sh`.
 
-Environment: ffmpeg 8.1.2, exiftool 13.55, macOS 25.5 / APFS.
+Environment: ffmpeg 8.1.2, exiftool 13.55, GPAC 26.07, macOS 25.5 / APFS.
 
 Method: a fixture tagged with 20 keys — 11 that ffmpeg has an ilst mapping for,
 9 custom ones this repo's yt-dlp config produces (`actors`, `type`, `channel`,
 `rating`, `origin`, `source_url`, `webpage_url`, `purl`, `yt_dlp_id`) — written
 four ways, then dumped with `exiftool -a -G1 -s` and `ffprobe -show_entries
 format_tags`.
+
+Sections 6 and 7 use a second fixture the script does not build: a 52 MB
+iPhone 13 mini `.MOV` straight off the camera, because the tracks and the Keys
+box they are about cannot be synthesised.
 
 ---
 
@@ -241,8 +245,86 @@ padding has been consumed is exactly the file the in-place writer will hit next.
 7. The exiftool user-defined config is a required runtime asset (§3.1).
 8. `mp4ameta` is dropped: it covers only ilst, and this library is mdta.
 9. Warn on reader *disagreement*, not on value size (§4).
+10. **A file carrying `mebx` tracks cannot be remuxed at all** (§6). The write
+    path must not offer to; `verify_streams` refusing the result is correct
+    behaviour, not a false alarm.
+11. exiftool stays the only writer. MP4Box is faster and preserves the tracks
+    §6 is about, but corrupts the Keys box (§7).
 
-## 6. Not yet established
+## 6. A remux cannot carry a timed-metadata (`mebx`) track
+
+An iPhone `.MOV` carries `mebx` tracks alongside the video and audio: timed
+metadata, sampled on the video's own timeline. The fixture has three.
+
+| Track | Samples | Carries |
+|---|---|---|
+| 3 | 1 | `VideoOrientation: Rotate 90 CW` |
+| 4 | 71 | `DetectedFaceBounds`, tracked over time |
+| 5 | 705 | `LivePhotoInfo`, one per video frame |
+
+705 samples for 705 video frames. Track 3 is how a player knows to show the
+video upright; track 5 is what makes it a Live Photo rather than a clip.
+
+**Every ffmpeg remux destroys them**, and no flag prevents it:
+
+| Attempt | `mebx` sample entry | `tref` to video | Decodable samples |
+|---|---|---|---|
+| source | 3 | 3 | **768** |
+| `-map 0:N -c copy` | 0 | 0 | **0** |
+| `+ -copy_unknown` | 0 | 0 | **0** |
+| `+ -tag:d mebx` | 0 | 0 | **0** |
+| `+ -tag:d copy` | 0 | 0 | **0** |
+| `-f mov` explicit | 0 | 0 | **0** |
+
+The samples themselves survive — frame counts and durations are exact — but the
+tracks land tagged `stts`, with the sample description that declares their keys
+and the `tref` that binds them to the video both gone. Counted with
+`exiftool -ee`: 768 decodable metadata samples before, 0 after.
+
+No flag helps because **the loss happens at demux, not at mux**. ffprobe reports
+`extradata_size: None` for these streams: the `mebx` key table never enters
+ffmpeg's model of the file, so by the time the muxer runs the information needed
+to write the track correctly no longer exists in the pipeline. `-c copy` is
+copying samples whose schema has already been discarded.
+
+Apple's own `avconvert --preset PresetPassthrough` does write `mebx` sample
+entries, so this is not an impossible format — but it dropped one of the three
+tracks and recovered 63 of 768 samples. Better than ffmpeg, still lossy.
+`AVAssetExportSession` passthrough is a different code path and is untested.
+
+## 7. MP4Box writes `mdta` — and destroys the Keys box doing it
+
+GPAC is the only tool found besides exiftool that writes real `mdta` keys
+(`-itags "QT/com.apple.quicktime.title=..."`, default namespace `mdta`). On the
+iPhone fixture it looks like the answer to §6 and §3.3 at once: an in-place
+rewrite in **0.03 s**, with all three `mebx` tracks and all 768 samples intact.
+
+Then look at what else it did. `[Keys]` before, and after one invocation:
+
+| Before | After |
+|---|---|
+| `LocationAccuracyHorizontal`, `GPSCoordinates`, `Make`, `Model`, `Software`, `CreationDate` | `Title`, `Description` |
+
+It **replaced** the Keys box rather than adding to it, and the two readers then
+disagree about the result: ffprobe paired the new values against the *old* key
+names, reporting `com.apple.quicktime.location.accuracy.horizontal` as
+`"MP4Box title"`. That is a malformed `keys`/`ilst` index, not merely a lossy
+write.
+
+A second invocation merged correctly — `Genre` was added, `Title` and
+`Description` kept — so the damage happens on first touch of an Apple-authored
+Keys box, presumably dropping the keys it cannot reparse.
+
+**Rejected.** Silently losing a file's GPS is a worse failure than any this
+tool has, and it violates the rule that unrecognised keys are never dropped.
+One tool version, one fixture; the speed is genuinely attractive, so if anyone
+revisits GPAC this is the experiment to re-run first.
+
+Not tested, and ruled out by §1 rather than by measurement: AtomicParsley,
+Bento4 and mutagen all write iTunes `ilst`, which is the wrong box for this
+library.
+
+## 8. Not yet established
 
 Things this document deliberately does not claim:
 
@@ -251,3 +333,9 @@ Things this document deliberately does not claim:
 - Whether the add-vs-update limit also applies to ilst atoms, which decides
   how `--compat both` has to be built.
 - What Plex and Infuse actually read for a star rating.
+- Whether §3.2's add-vs-update limit holds on an Apple-authored Keys box. On
+  the §6 fixture, exiftool added `Keys:Title` and `Keys:Description` to a file
+  that had neither and **ffprobe read both back** — the opposite of §3.2. One
+  file against one file; the difference may be that §3.2's fixture had an
+  ffmpeg-built `mdta` box and this one has Apple's. This decides whether
+  adding a key must force a remux.
