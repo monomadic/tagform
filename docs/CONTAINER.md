@@ -11,7 +11,7 @@ Method: a fixture tagged with 20 keys — 11 that ffmpeg has an ilst mapping for
 four ways, then dumped with `exiftool -a -G1 -s` and `ffprobe -show_entries
 format_tags`.
 
-Sections 6 and 7 use a second fixture the script does not build: a 52 MB
+Sections 6 to 9 use a second fixture the script does not build: a 52 MB
 iPhone 13 mini `.MOV` straight off the camera, because the tracks and the Keys
 box they are about cannot be synthesised.
 
@@ -165,8 +165,9 @@ pairing that mdta relies on ends up in a state ffprobe indexes differently;
 the mechanism was not isolated, only the behaviour. A full remux adds new keys
 correctly every time.
 
-This is also the most likely explanation for the anomaly in §4, and it is
-load-bearing for the writer:
+**§8 isolates the mechanism, and §9 shows a writer that does not have this
+limit at all.** This is also the most likely explanation for the anomaly in §4,
+and it is load-bearing for the writer:
 
 - **Changing a value that is already on the file** → in place is safe.
 - **Adding a key the file does not have** → must remux.
@@ -248,8 +249,11 @@ padding has been consumed is exactly the file the in-place writer will hit next.
 10. **A file carrying `mebx` tracks cannot be remuxed at all** (§6). The write
     path must not offer to; `verify_streams` refusing the result is correct
     behaviour, not a false alarm.
-11. exiftool stays the only writer. MP4Box is faster and preserves the tracks
-    §6 is about, but corrupts the Keys box (§7).
+11. MP4Box is faster and preserves the tracks §6 is about, but corrupts the
+    Keys box (§7).
+12. **§3.2 is a keys/ilst pairing bug, not a law of the format** (§8). A writer
+    that appends the key and its item together does not have the limit, which
+    removes the reason adding a key must remux (§9).
 
 ## 6. A remux cannot carry a timed-metadata (`mebx`) track
 
@@ -324,7 +328,94 @@ Not tested, and ruled out by §1 rather than by measurement: AtomicParsley,
 Bento4 and mutagen all write iTunes `ilst`, which is the wrong box for this
 library.
 
-## 8. Not yet established
+## 8. The mechanism behind §3.2: two `meta` boxes, one dangling key
+
+§3.2 measured the behaviour. Six real files and a box dump give the cause.
+
+**The survey.** `Keys:Origin` and `Keys:Description` added in place, to files
+that had neither:
+
+| Fixture | Container | mdta box lives at | ffprobe sees the added key |
+|---|---|---|---|
+| iPhone 13 mini, straight off camera | `.MOV` | `moov/meta` | **yes** |
+| iPhone, straight off camera, 465 MB | `.MOV` | `moov/meta` | **yes** |
+| yt-dlp download, tagged by ffmpeg | `.mp4` | `moov/udta/meta` | no |
+| iPhone 15 Pro, after processing | `.mp4` | `moov/udta/meta` | no |
+| library file, tagged by ffmpeg | `.mp4` | `moov/udta/meta` | no |
+| transcoded clip | `.mov` | `moov/udta/meta` | no |
+
+ffprobe reads each file's *existing* keys in every row, so this is add-vs-update
+as §3.2 says, not a reader that cannot see the box. `-overwrite_original`
+instead of `-overwrite_original_in_place` — a full container rewrite rather than
+a patch — makes no difference, so it is not an artifact of patching either.
+
+**What exiftool actually does.** Dumping the boxes of the failing `.mp4`:
+
+```
+/moov/udta/meta/hdlr: handler=mdta
+/moov/udta/meta/keys: 6 keys -> [category, date, keywords, variant, encoder,
+                                 com.apple.quicktime.origin]   <- appended
+/moov/udta/meta/ilst: item indices [1, 2, 3, 4, 5]             <- no item 6
+/moov/meta: a second, complete mdta box exiftool created, holding
+            keys[1] = com.apple.quicktime.origin, ilst item 1 = "probe-origin"
+```
+
+**exiftool writes added keys to `moov/meta`, whatever the file already uses.**
+It appends the key name to the box the file does use, but the *value* goes into
+a new box of its own — leaving key 6 with no `ilst` item behind it. ffprobe
+pairs keys to items by index within one box, finds nothing at index 6, and
+reports nothing. exiftool reads both boxes, so it reports the value it wrote.
+
+That also explains the two rows that work. Apple files already keep their tags
+at `moov/meta` — the same box exiftool writes to — so the key and its item land
+together and both readers agree. The dump of the iPhone fixture after the write
+shows 8 keys and 8 items, consecutively indexed.
+
+Note the second difference: exiftool wrote the key as
+`com.apple.quicktime.origin` where the file's own keys are bare (`category`,
+`date`). A writer of ours must not adopt that prefix; `schema.rs` expects the
+bare name.
+
+## 9. A container-only rewrite has none of these limits
+
+If the failure is a keys/ilst pairing, then writing the pair correctly should
+fix it. Measured with a ~120-line spike over the `mp4box` crate (0.13, MIT):
+parse the box tree, rebuild `keys` and `ilst` as a superset of what is there,
+copy every other box through as an untouched extent, and let the crate remap
+`stco`/`co64`.
+
+| | iPhone `.MOV`, 52 MB | library `.mp4`, 7 MB | iPhone `.MOV`, 465 MB |
+|---|---|---|---|
+| new key added, **ffprobe reads it** | ✅ | ✅ | ✅ |
+| existing keys (GPS, Make, Model…) | all kept | all kept | all kept |
+| `mebx` tracks | 3 of 3, tagged `mebx` | — | all kept |
+| decodable metadata samples | **768 of 768** | — | 3143 |
+| XMP | — | **kept** (uuid box copied) | — |
+| duration | identical | identical | identical |
+| chunk offsets remapped | 0 (moov after mdat) | 2004 | 1112 |
+| time | 0.58 s | 0.37 s | **0.43 s** |
+
+Every column that ffmpeg or exiftool or MP4Box gets wrong, this gets right, at
+ffmpeg's speed (§3.3: 0.25 s for a 475 MB remux; this is 0.43 s for 465 MB, and
+copy-bound rather than parse-bound).
+
+The reason is structural rather than clever: `mdat` is never parsed or rebuilt,
+only copied as a byte range, so tracks the tool has no model of — `mebx`,
+`gpmd`, `tmcd`, chapters — survive because nothing ever looked at them. XMP
+survives for the same reason: the `uuid` box is copied like any other.
+
+Two details worth keeping:
+
+- **QuickTime's `meta` is not a FullBox.** Apple writes `hdlr` immediately after
+  the header; ISO/ffmpeg writes four version/flags bytes first. Detect by
+  checking whether the type at +12 is `hdlr`, and do not assume.
+- **`mp4box`'s own tag layer is iTunes `ilst` only** (`SetTag` builds `©nam`
+  and friends under an `mdir` handler), so it is subject to §1 exactly like
+  `mp4ameta` and cannot be used for tags. What earns its place is the layer
+  underneath: the box tree, the extent map, the chunk-offset fixup, and a
+  `Faststart` command. Those are the parts that are tedious to get right.
+
+## 10. Not yet established
 
 Things this document deliberately does not claim:
 
@@ -333,9 +424,9 @@ Things this document deliberately does not claim:
 - Whether the add-vs-update limit also applies to ilst atoms, which decides
   how `--compat both` has to be built.
 - What Plex and Infuse actually read for a star rating.
-- Whether §3.2's add-vs-update limit holds on an Apple-authored Keys box. On
-  the §6 fixture, exiftool added `Keys:Title` and `Keys:Description` to a file
-  that had neither and **ffprobe read both back** — the opposite of §3.2. One
-  file against one file; the difference may be that §3.2's fixture had an
-  ffmpeg-built `mdta` box and this one has Apple's. This decides whether
-  adding a key must force a remux.
+- Whether §9's writer holds up on fragmented mp4 (`moof`), on files above
+  4 GiB using 32-bit `stco`, and on the `wide`-padding case §4 and §17.6 of
+  DESIGN.md are about. The crate refuses some of these outright; that refusal
+  is untested here.
+- Whether the second `meta` box exiftool creates (§8) is also what §4's
+  consumed-padding anomaly is really about. Same shape, unproven.

@@ -1325,6 +1325,70 @@ is off by default and shown in the plan as an explicit line.
 
 ---
 
+### 9.5 The native writer ⟨designed⟩
+
+**Not built.** This section supersedes the backend choice in §9.2, and the
+measurements behind it are docs/CONTAINER.md §8 and §9.
+
+Both current backends are wrong in a way the other is not. The remux destroys
+XMP (CONTAINER §2) and cannot carry a `mebx` timed-metadata track at all
+(CONTAINER §6) — which on an iPhone clip means its orientation and its Live
+Photo data. The in-place writer preserves both, but cannot add a key that
+ffprobe will read (CONTAINER §3.2). The whole three-backend decision tree in
+§9.2 exists to route around that pair of holes.
+
+CONTAINER §8 shows the second hole is not a property of the format. exiftool
+appends the key name to the file's own `keys` box but writes the value into a
+`moov/meta` box of its own, leaving a key with no `ilst` item behind it;
+ffprobe pairs the two by index within one box and so sees nothing. **Write the
+key and its item into the same box and the limit disappears.**
+
+That is what the writer does:
+
+1. Parse the box tree, keeping every box as a byte extent — `mdat` is never
+   read.
+2. Rebuild `keys` and `ilst` as a **superset** of what the file already has:
+   update an item in place, or append the key and its item together.
+3. Copy every other box through untouched, remap `stco`/`co64`, write to a
+   sibling temp, verify, rename over the original as §9.2 already does.
+
+Measured on a spike (CONTAINER §9): new keys that ffprobe reads, on files
+where the in-place writer cannot add them; all three `mebx` tracks and 768 of
+768 metadata samples kept; XMP kept; 465 MB in 0.43 s. Tracks survive because
+nothing parses them, and XMP survives because the `uuid` box is copied like
+any other.
+
+**On the crate.** `mp4box` (0.13, MIT) supplies the box tree, the extent map,
+the chunk-offset fixup and a `Faststart` command — the tedious half. Its *tag*
+layer is iTunes `ilst` only and is unusable here for the reason §2 gives, so
+the `keys`/`ilst` builders are ours. That split is the whole design: we own the
+part this tool is about, and borrow the part that is only arithmetic.
+
+**What this collapses.** `Writer::TwoPass` stops existing: there is no remux to
+restore XMP from. `Writer::Ffmpeg` narrows to nothing the native writer cannot
+do, and `plan.rs`'s decision tree becomes a single question — can this file be
+rewritten natively? The XMP snapshot stays, because reading still needs both
+readers (§4.1); it just stops being load-bearing for the write.
+
+**Order of work.** The native writer lands *beside* the existing two, chosen
+only when it verifies, before anything is deleted:
+
+1. Build `tags/native.rs` with the `keys`/`ilst` builders and their tests.
+   Everything here is a pure function over bytes and testable without media.
+2. Route to it, keeping ffmpeg and exiftool as fallbacks when it declines a
+   file. The verify in `write.rs` already proves the result: streams, duration,
+   tags, layout.
+3. Build the fixture suite (§14) — an iPhone MOV with `mebx`, a GoPro clip, a
+   yt-dlp mp4, a file carrying XMP, a >4 GiB file. This is the gate on
+   deleting anything, not step 2.
+4. Only then remove the two-pass path and the remux.
+
+**Where it must decline**, all untested and each a reason the fallbacks stay:
+fragmented mp4 (`moof`), files above 4 GiB whose 32-bit `stco` offsets would
+overflow (the crate reports these rather than converting to `co64`), and any
+file whose tags live somewhere neither §8 layout covers. Declining is cheap and
+correct; guessing is neither.
+
 ## 10. CLI surface
 
 **Built.** The whole of it:
@@ -1607,16 +1671,24 @@ the writer that preserves them (§9.2) and verifies the XMP read back
 afterwards.
 
 **The direction from here** is narrower than the original 8-milestone plan, and
-deliberately so. What is left divides into three:
+deliberately so. What is left divides into four, of which the first is new and
+now the most valuable:
 
-1. **Filename work** (the rest of 6) — the two grammars, parsing as well as
+1. **The native writer** (§9.5) — measured, spiked, and not built. It removes
+   the reason the remux exists, and with it the two failures this design has
+   been routing around: XMP loss and, newly measured, the destruction of an
+   iPhone clip's `mebx` tracks (docs/CONTAINER.md §6). It is the only item here
+   that fixes files the tool currently cannot write at all.
+2. **Filename work** (the rest of 6) — the two grammars, parsing as well as
    composing. This is the last piece that unlocks something the old scripts
    could do and `tagform` cannot.
-2. **Seeding** (7) — `--fetch` and completion. The largest ergonomic wins
+3. **Seeding** (7) — `--fetch` and completion. The largest ergonomic wins
    available, and both are additive: nothing about the existing form changes.
-3. **A fixture suite** (§14) — not a milestone in the original plan, and it
+4. **A fixture suite** (§14) — not a milestone in the original plan, and it
    should have been. It is the cheapest remaining risk reduction in the
-   project, and it gates being comfortable with any of the above.
+   project, and it gates being comfortable with any of the above. §9.5 makes
+   it a prerequisite rather than a nicety: the native writer cannot replace
+   the old ones until real files prove it.
 
 Milestone 8's contents have thinned. Headless `--apply` is real work with a
 real customer (§10). The remaining §3.2 fields, the config file and
@@ -1659,7 +1731,10 @@ without it, an ilst write produces a file whose cast Apple cannot read,
 which is most of the reason to have written ilst at all.
 ### 17.6 What actually triggers the ffprobe blind spot?
 
- Unresolved. Not value
+ **Half resolved.** The add-a-key case is now explained: exiftool splits the
+key from its value across two `meta` boxes (docs/CONTAINER.md §8), and ffprobe
+pairs them by index within one box. Whether the consumed-padding case below is
+the same bug wearing different clothes is unproven — the shape matches. Not value
 size — that first guess was disproved on re-run. The one reproducible case
 is a 475 MB `.mov` whose `wide` padding atom was consumed by an 8 KB write
 (docs/CONTAINER.md §4). The writer now guards the *symptom* — it never
