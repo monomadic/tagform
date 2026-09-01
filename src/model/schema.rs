@@ -60,6 +60,24 @@ macro_rules! field {
 }
 
 pub static FIELDS: &[FieldDef] = &[
+    // What kind of thing the file is: Adult, Footage, Karaoke, Live Visual,
+    // Music Video, Tutorial, Meme, Texture. This used to be Genre, which was
+    // wrong in both directions -- it is not a style, and it spent the one name
+    // every other player already displays as one (DESIGN §3.5). No `read` alias
+    // for `genre`: nothing in this library ever carried these values there, so
+    // there is nothing to migrate.
+    //
+    // First, and alone above the rule the form draws under it: it is not one
+    // field among the rest but the answer that decides which of the rest are
+    // worth showing. Footage wants a location block; a music video wants an
+    // artist. Nothing keys off it yet -- the position is the promise (§16).
+    //
+    // ilst is None because it has not been measured. `catg` exists in the
+    // iTunes set, but docs/CONTAINER.md never tested it, and this table only
+    // claims atoms that were (invariant 1).
+    field!("category", "Category", Control::Enum,
+        mdta: ["category"], read: ["category"], xmp: [], ilst: None),
+
     field!("title", "Title", Control::Text,
         mdta: ["title"], read: ["title"], xmp: ["XMP-dc:Title"], ilst: Some("\u{a9}nam")),
 
@@ -95,18 +113,6 @@ pub static FIELDS: &[FieldDef] = &[
     field!("tags", "Tags", Control::HashTags,
         mdta: ["keywords"], read: ["keywords", "keyw"],
         xmp: ["XMP-dc:Subject"], ilst: Some("keyw")),
-
-    // What kind of thing the file is: Adult, Footage, Karaoke, Live Visual,
-    // Music Video, Tutorial, Meme, Texture. This used to be Genre, which was
-    // wrong in both directions -- it is not a style, and it spent the one name
-    // every other player already displays as one (DESIGN §3.5). No `read` alias for `genre`: nothing in this library
-    // ever carried these values there, so there is nothing to migrate.
-    //
-    // ilst is None because it has not been measured. `catg` exists in the
-    // iTunes set, but docs/CONTAINER.md never tested it, and this table only
-    // claims atoms that were (invariant 1).
-    field!("category", "Category", Control::Enum,
-        mdta: ["category"], read: ["category"], xmp: [], ilst: None),
 
     // The real one now: an open text field for the musical or cinematic style,
     // which is what `genre`/`©gen` means to Plex, Jellyfin, Music.app and
@@ -239,6 +245,14 @@ mod tests {
         assert_eq!(genre.mdta, ["genre"]);
         assert!(!cat.read.contains(&"genre"));
         assert!(!genre.read.contains(&"category"));
+    }
+
+    /// The order is load-bearing, not cosmetic: Category is the answer the rest
+    /// of the form will be filtered by, and the renderer draws its group rule
+    /// by finding it. A field inserted above it would silently take both.
+    #[test]
+    fn category_leads_the_form() {
+        assert_eq!(FIELDS[0].id, "category");
     }
 
     #[test]

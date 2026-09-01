@@ -230,21 +230,24 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let height = inner.height as usize;
-    let start = if app.focus >= height { app.focus + 1 - height } else { 0 };
     // The box is the full width; the text sits inside it with a blank column of
     // its own background either side, so it reads as an input rather than as a
     // block of colour butted straight up against the label.
     let value_w = inner.width.saturating_sub(1 + LABEL_COLS + GUTTER + 1) as usize;
     let text_w = value_w.saturating_sub(2 * PAD as usize);
     let value_x = inner.x + 1 + LABEL_COLS + GUTTER;
-    let mut cursor: Option<(u16, u16)> = None;
 
+    // Every row is laid out, then a window of it is drawn: a group rule is a
+    // line with no row of its own, so the focused row's position is no longer
+    // its index and scrolling has to count lines rather than fields.
     let mut lines: Vec<Line> = Vec::new();
-    for (i, row) in app.rows.iter().enumerate().skip(start) {
-        if lines.len() >= height {
-            break;
-        }
+    let mut cursor_line: Option<(u16, usize)> = None;
+    let mut focus_line = 0usize;
+    for (i, row) in app.rows.iter().enumerate() {
         let focused = i == app.focus;
+        if focused {
+            focus_line = lines.len();
+        }
         let editing = focused && app.mode == Mode::Edit;
         let staged = app.is_staged(&row.key);
         let custom = row.def.is_none();
@@ -296,7 +299,7 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
                 .unwrap_or_else(|| (String::new(), None));
             if let Some(c) = cur {
                 let x = value_x + PAD + (c as u16).min(text_w.saturating_sub(1) as u16);
-                cursor = Some((x, inner.y + (i - start) as u16));
+                cursor_line = Some((x, lines.len()));
             }
             let fg = match app.validation() {
                 Validation::Error(_) => t::error(),
@@ -351,12 +354,30 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
         spans.extend(value_spans);
         spans.push(Span::styled(" ".repeat(PAD as usize), Style::default().bg(bg)));
         lines.push(Line::from(spans));
-    }
-    f.render_widget(Paragraph::new(lines), inner);
-    if let Some((x, y)) = cursor {
-        f.set_cursor_position((x, y));
+        if group_break_after(row) {
+            lines.push(Line::from(Span::styled(
+                "\u{2500}".repeat(inner.width as usize),
+                Style::default().fg(t::rule()),
+            )));
+        }
     }
 
+    let start = if focus_line >= height { focus_line + 1 - height } else { 0 };
+    let visible: Vec<Line> = lines.into_iter().skip(start).take(height).collect();
+    f.render_widget(Paragraph::new(visible), inner);
+    if let Some((x, line)) = cursor_line {
+        if let Some(y) = line.checked_sub(start).filter(|y| *y < height) {
+            f.set_cursor_position((x, inner.y + y as u16));
+        }
+    }
+}
+
+/// Category is drawn alone above a rule. It is not one field among the others:
+/// it says what the file *is*, and which of the fields below it are worth
+/// showing at all (DESIGN §3.5, §16). A form where that choice sits eighth,
+/// indistinguishable from Tags, hides the one answer everything else follows.
+fn group_break_after(row: &Row) -> bool {
+    row.def.is_some_and(|d| d.id == "category")
 }
 
 /// The set, laid out along the value box with the current one lit.
@@ -709,5 +730,35 @@ mod tests {
     fn columns_stay_within_bounds() {
         assert!(thumb_cols(6, 0.01) >= 4);
         assert!(thumb_cols(60, 10.0) <= 40);
+    }
+
+    /// The rule is a line with no row behind it, so the whole window has to be
+    /// counted in lines: this is the test that fails if the group break is
+    /// added back into the field loop without adjusting the scroll.
+    #[test]
+    fn category_is_drawn_first_and_the_rule_follows_it() {
+        use crate::tags::probe::FileTags;
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use std::collections::BTreeMap;
+
+        let f = FileTags {
+            path: std::path::PathBuf::from("/tmp/tagform-render-test.mp4"),
+            atoms: BTreeMap::new(),
+            xmp: BTreeMap::new(),
+        };
+        let app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
+        assert_eq!(app.rows[0].key, "category");
+
+        let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        term.draw(|fr| draw_fields(fr, fr.area(), &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let line = |y: u16| -> String {
+            (0..60).map(|x| buf[(x, y)].symbol().to_string()).collect()
+        };
+        // y=0 is the block's top border; the form starts at y=1.
+        assert!(line(1).contains("Category"), "{:?}", line(1));
+        assert!(line(2).trim_end().chars().all(|c| c == '\u{2500}'), "{:?}", line(2));
+        assert!(line(3).contains("Title"), "{:?}", line(3));
     }
 }

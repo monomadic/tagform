@@ -180,9 +180,16 @@ writes five keys — and that fan-out is the whole reason this tool exists.
 ### 3.1 The primary fields
 
 The ten the brief requires, plus the ones the yt-dlp config already produces
-and would otherwise be silently dropped on every rewrite: **Title, Actors,
-Artist, Rating, Description, URL, Channel, Tags, Category, Genre, Variant,
+and would otherwise be silently dropped on every rewrite: **Category, Title,
+Actors, Artist, Rating, Description, URL, Channel, Tags, Genre, Variant,
 Kind.**
+
+**Category is first, and drawn alone above a rule.** It is not one field among
+the others: it says what the file *is*, and the fields worth showing follow
+from that answer — a Footage clip wants its location block, a music video wants
+an Artist. Nothing keys off it yet; the position and the rule are the promise
+(§16). `FIELDS[0]` is asserted to be `category`, because the renderer finds the
+group break by id and a field inserted above it would take both.
 
 **The table is not reproduced here.** `FIELDS` in `src/model/schema.rs` is the
 authority, and `tagform --print-schema` emits it as JSON — every field with its
