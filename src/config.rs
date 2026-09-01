@@ -101,13 +101,35 @@ fn parse_alias_values(text: &str, field: &str) -> Vec<String> {
             // Walk back from the marker to the quote that opens the literal.
             let before = &line[..idx];
             let Some(start) = before.rfind('"') else { continue };
-            let value = normalize(&before[start + 1..]);
+            let value = normalize(unwrap_const(&before[start + 1..]));
             if !value.is_empty() && !out.iter().any(|v| v.eq_ignore_ascii_case(&value)) {
                 out.push(value);
             }
         }
     }
     out
+}
+
+/// The constant inside a yt-dlp `%(_const|VALUE)s` template, or the literal
+/// unchanged.
+///
+/// Both spellings mean the same thing to yt-dlp and both appear in real
+/// configs -- `"Media:%(meta_genre)s"` is the plain form, `_const` the one
+/// yt-dlp's own docs now use. Reading only the plain form put the template
+/// *source* in the dropdown: the form offered `%(_const|Media)s`, which then
+/// matched nothing on disk, so no category ever lit.
+fn unwrap_const(literal: &str) -> &str {
+    let s = literal.trim();
+    let Some(inner) = s.strip_prefix("%(").and_then(|s| s.strip_suffix(")s")) else {
+        return s;
+    };
+    match inner.split_once('|') {
+        // `%(_const|X)s` is X. Any other template is a per-file value, not a
+        // constant, and names no member of the set -- drop it rather than
+        // offering a placeholder that can never match.
+        Some(("_const", v)) => v,
+        _ => "",
+    }
 }
 
 /// Canonical spelling for a value stored under an older name.
@@ -199,6 +221,36 @@ mod tests {
         let e = Enums::from_ytdlp_config("");
         assert_eq!(e.category, DEFAULT_CATEGORIES);
         assert_eq!(e.variant, DEFAULT_VARIANTS);
+    }
+
+    /// The form the real config actually uses. Parsing this as a literal put
+    /// `%(_const|Media)s` in the dropdown and lit nothing on any file.
+    const CONST_SAMPLE: &str = r#"
+--alias media '--embed-metadata --parse-metadata "%(_const|Media)s:%(meta_genre)s"'
+--alias footage '--embed-metadata --parse-metadata "%(_const|Camera Footage)s:%(meta_genre)s"'
+--alias vj '--parse-metadata "%(_const|VJ Clip)s:%(meta_genre)s"'
+--alias clip '--embed-metadata --parse-metadata "%(_const|Clip)s:%(meta_type)s"'
+--alias master '--embed-metadata --parse-metadata "%(_const|Master)s:%(meta_type)s"'
+"#;
+
+    #[test]
+    fn const_templates_yield_their_constant() {
+        let e = Enums::from_ytdlp_config(CONST_SAMPLE);
+        assert_eq!(e.category, vec!["Adult", "Footage", "Live Visual"]);
+        assert_eq!(e.variant, vec!["Clip", "Enhanced"]);
+    }
+
+    #[test]
+    fn a_template_that_is_not_a_constant_names_no_value() {
+        assert_eq!(unwrap_const("%(_const|Media)s"), "Media");
+        assert_eq!(unwrap_const("Media"), "Media");
+        // Not a constant: a per-file field, which can never be a set member.
+        assert_eq!(unwrap_const("%(title)s"), "");
+        assert_eq!(unwrap_const("%(uploader|unknown)s"), "");
+        let e = Enums::from_ytdlp_config(
+            "--alias x '--parse-metadata \"%(title)s:%(meta_genre)s\"'",
+        );
+        assert_eq!(e.category, DEFAULT_CATEGORIES);
     }
 
     #[test]
