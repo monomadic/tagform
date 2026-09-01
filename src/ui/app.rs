@@ -469,23 +469,49 @@ impl App {
 
     /// The write is over: re-read from disk so the form shows what is actually
     /// on the files rather than what was hoped for.
+    ///
+    /// An edit is dropped only once the files agree with it. Clearing the whole
+    /// staging map here cost a failed write everything that had been typed into
+    /// it -- the form was the only place those edits existed, and the retry the
+    /// error message invites began with retyping them.
     fn finish_write(&mut self, results: WriteResults) {
         for f in self.files.iter_mut() {
             if let Ok(fresh) = crate::tags::probe::probe(&f.path) {
                 *f = fresh;
             }
         }
-        self.staged.clear();
-        self.undo.clear();
-        self.redo.clear();
+        self.rebuild_rows();
+        // Compared against what is now on disk rather than against the list of
+        // files that succeeded: in a mixed batch an edit can land on four files
+        // and fail on the fifth, and it is still an edit until the fifth has it.
+        let landed: Vec<String> = self
+            .rows
+            .iter()
+            .filter(|r| self.staged.get(&r.key).is_some_and(|v| r.original() == Some(v)))
+            .map(|r| r.key.clone())
+            .collect();
+        for k in landed {
+            self.staged.remove(&k);
+        }
+        if self.staged.is_empty() {
+            self.undo.clear();
+            self.redo.clear();
+        }
         self.rebuild_rows();
         self.writing = false;
         self.progress = None;
-        self.status = format!(
-            "wrote {} of {}",
-            results.ok.len(),
-            results.ok.len() + results.failed.len()
-        );
+        let total = results.ok.len() + results.failed.len();
+        self.status = if self.staged.is_empty() {
+            format!("wrote {} of {}", results.ok.len(), total)
+        } else {
+            format!(
+                "wrote {} of {}; {} edit{} kept",
+                results.ok.len(),
+                total,
+                self.staged.len(),
+                if self.staged.len() == 1 { "" } else { "s" }
+            )
+        };
         self.results = Some(results);
     }
 
@@ -1231,5 +1257,54 @@ mod tests {
     #[test]
     fn merging_nothing_yields_nothing() {
         assert!(merge_values(&[None, None]).is_empty());
+    }
+
+    /// A failed write must not cost the user what they typed: the form is the
+    /// only place a staged edit exists, so clearing it turns "try again" into
+    /// "type it all again".
+    #[test]
+    fn a_failed_write_keeps_its_edits() {
+        use crate::tags::probe::FileTags;
+        let f = FileTags {
+            // A path that cannot be probed, so the re-read leaves the fixture
+            // as it is and the test stays off the disk.
+            path: PathBuf::from("/nonexistent/tagform-test.mov"),
+            atoms: BTreeMap::new(),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = App::new(vec![f], BTreeMap::new(), false);
+        app.staged.insert("title".into(), Value::Text("kept".into()));
+
+        app.finish_write(WriteResults {
+            ok: vec![],
+            failed: vec![(PathBuf::from("/nonexistent/tagform-test.mov"), "boom".into())],
+        });
+
+        assert_eq!(app.staged.get("title"), Some(&Value::Text("kept".into())));
+        assert!(app.status.contains("1 edit kept"), "{}", app.status);
+    }
+
+    /// The other half of the rule: an edit the file now carries is no longer an
+    /// edit, or every successful write would leave the form permanently dirty.
+    #[test]
+    fn an_edit_the_file_now_carries_is_dropped() {
+        use crate::tags::probe::FileTags;
+        let mut atoms = BTreeMap::new();
+        atoms.insert("title".to_string(), Value::Text("landed".into()));
+        let f = FileTags {
+            path: PathBuf::from("/nonexistent/tagform-test.mov"),
+            atoms,
+            xmp: BTreeMap::new(),
+        };
+        let mut app = App::new(vec![f], BTreeMap::new(), false);
+        app.staged.insert("title".into(), Value::Text("landed".into()));
+
+        app.finish_write(WriteResults {
+            ok: vec![PathBuf::from("/nonexistent/tagform-test.mov")],
+            failed: vec![],
+        });
+
+        assert!(app.staged.is_empty(), "{:?}", app.staged);
+        assert_eq!(app.status, "wrote 1 of 1");
     }
 }
