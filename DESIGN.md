@@ -1389,11 +1389,14 @@ existing two and is chosen only when it verifies.
 2. ✅ Routed in `plan.rs` as `Writer::Native`, with ffmpeg and exiftool kept as
    fallbacks for the layouts it declines. The verify in `write.rs` proves the
    result exactly as it does for a remux: streams, duration, tags, layout.
-3. ⬜ The fixture suite (§14) — an iPhone MOV with `mebx`, a GoPro clip, a
-   yt-dlp mp4, a file carrying XMP, a >4 GiB file. This is the gate on
-   deleting anything, not on step 2. `native.rs` carries the seed of it: one
-   `#[ignore]`d test that takes a path in `TAGFORM_FIXTURE`.
-4. ⬜ Only then remove the two-pass path and the remux.
+3. ◐ The fixture suite (§14) — built for everything ffmpeg can generate,
+   including XMP survival, the round-trip and the failure paths. What it still
+   cannot cover is what a generator cannot make: `mebx`, `gpmd`, and a file
+   above 4 GiB. `native.rs` carries an `#[ignore]`d test taking a path in
+   `TAGFORM_FIXTURE` for the first of those.
+4. ⬜ Only then remove the two-pass path and the remux. Those three uncovered
+   cases are exactly what the fallbacks are for, so this waits on real media,
+   not on more code.
 
 **Where it must decline**, all untested and each a reason the fallbacks stay:
 fragmented mp4 (`moof`), files above 4 GiB whose 32-bit `stco` offsets would
@@ -1603,28 +1606,52 @@ upgrade; the findings are version-specific.
 real files. Both scripts mutate real media, which is why neither runs from
 `cargo test`.
 
-⟨designed⟩ **The gap that matters is a fixture suite.** There is no
-`tests/fixtures/`, no generated tiny.mp4, and so no test that a write
-round-trips without touching real media:
+**Fixtures** — `tags/fixtures.rs`, ⟨built, differs⟩ and run by plain
+`cargo test`. Eleven tests over containers ffmpeg generates at test time, about
+16 KB each:
 
 ```bash
-ffmpeg -f lavfi -i testsrc=d=2:s=320x240 -f lavfi -i sine=d=2 \
-  -c:v h264 -c:a aac tests/fixtures/tiny.mp4
+ffmpeg -f lavfi -i testsrc=d=1:s=160x120 -f lavfi -i sine=d=1 -c:v libx264 -c:a aac ...
 ```
 
-In rough order of what they would have caught:
+**How it differs from the sketch below: there is no `tests/fixtures/`
+directory and nothing is checked in.** A generated fixture is built into a
+per-test temp directory and thrown away, which costs about 0.7 s for the whole
+suite and removes the two problems a committed fixture has — a binary in git,
+and a fixture that silently stops matching the ffmpeg actually installed. The
+suite lives inside the crate rather than in `tests/` because `tagform` is a
+binary with no library target, and an integration test cannot reach `plan` or
+`write`.
 
-- **the XMP regression** — write XMP with exiftool, run a `tagform` write,
-  assert every XMP field survives. This is the test for the §2.2 data loss, and
-  the one the whole write path's design rests on being true.
-- **backend selection** — assert a file carrying XMP never routes to a bare
-  remux.
-- **round-trip every field** — write, re-probe, assert every key comes back.
-  This is what turns §3's table from an assumption into something checked.
-- delete semantics: `-metadata key=` removes rather than empties.
-- stream tags and a second audio track survive the remux.
-- faststart: a deliberately moov-at-end fixture, fixed and detected.
-- failure paths: read-only file, no space, a truncated input.
+In the order §14 first put them, by what they would have caught:
+
+- **the XMP regression** ✅ `every_xmp_field_survives_a_write` — five fields
+  written by exiftool, a write run over them, every field asserted afterwards.
+  This is the test for the §2.2 data loss.
+- **backend selection** ✅ `a_file_carrying_xmp_never_routes_to_a_bare_remux`,
+  across update-only and add-a-key, with and without faststart.
+- **round-trip every field** ✅ `every_field_round_trips` — one field per
+  container key, written and read back through both readers.
+- delete semantics ✅ `an_emptied_field_removes_the_key`, and invariant 4 in
+  `a_key_no_field_claims_survives`.
+- extra streams ✅ `extra_tracks_survive_a_write` — a second audio track and a
+  timecode track, the two that a careless `-map` drops.
+- faststart ✅ `a_moov_at_end_file_is_detected_and_moved`.
+- failure paths ✅ a read-only directory and a truncated file, both asserting
+  the original is byte-identical afterwards.
+- the native writer's decline ✅ `a_fragmented_file_is_declined_by_the_native_writer`.
+
+One test pins behaviour rather than endorsing it:
+`two_fields_writing_one_key_fail_rather_than_pick_a_winner`. Actors and Artist
+both write `artist` (§17.4), so setting them to different values cannot be
+honoured — the verify catches it and the write fails with the original intact.
+Answering §17.4 is what should change that test.
+
+⟨designed⟩ **Still not covered**, and each is a reason `Writer::Ffmpeg` and
+`Writer::TwoPass` are still in the tree: a `mebx` fixture (it cannot be
+generated — `native.rs` has an `#[ignore]`d test taking `TAGFORM_FIXTURE`
+instead), a GoPro `gpmd` clip, a file above 4 GiB whose 32-bit `stco` offsets
+would overflow, and the no-space path.
 
 **Manual**: kitty / Ghostty / iTerm2 / tmux / plain xterm-256color for the
 thumbnail ladder, and one run over SMB for the timing story in §9.3.
@@ -1696,11 +1723,12 @@ now the most valuable:
    could do and `tagform` cannot.
 3. **Seeding** (7) — `--fetch` and completion. The largest ergonomic wins
    available, and both are additive: nothing about the existing form changes.
-4. **A fixture suite** (§14) — not a milestone in the original plan, and it
-   should have been. It is the cheapest remaining risk reduction in the
-   project, and it gates being comfortable with any of the above. §9.5 makes
-   it a prerequisite rather than a nicety: the native writer cannot replace
-   the old ones until real files prove it.
+4. **A fixture suite** (§14) — ✅ **built**, and it was the cheapest risk
+   reduction in the project: eleven tests over containers generated at test
+   time, guarding XMP survival, the round-trip, the failure paths and the
+   native writer's decline. What is left of it needs media a generator cannot
+   make — `mebx`, `gpmd`, >4 GiB — which is what still gates removing the old
+   writers (§9.5).
 
 Milestone 8's contents have thinned. Headless `--apply` is real work with a
 real customer (§10). The remaining §3.2 fields, the config file and

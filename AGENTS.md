@@ -69,6 +69,8 @@ src/tags/
   atoms.rs          atom-chain parse, faststart/Layout detection
   plan.rs           what to write and which backend writes it.
   native.rs         the native container rewrite: mdta keys/ilst, no ffmpeg
+  fixtures.rs       test-only: the write-path suite, on containers ffmpeg
+                    generates at test time (§14). Needs ffmpeg + exiftool.
   write.rs          executes a plan. The remux, the verify, the rename.
 src/ui/
   app.rs            event loop, modal state, focus ring, undo/redo (939 lines)
@@ -91,7 +93,12 @@ cargo run -- --print-schema       # the field schema as JSON — what we write v
 cargo build --release
 ```
 
-There is no integration-test harness and no CI. `tests/` holds two shell
+`cargo test` includes the fixture suite in `tags/fixtures.rs`: it shells out to
+ffmpeg to generate ~16 KB containers in a temp directory, exercises the write
+path against them, and throws them away. It needs `ffmpeg` and `exiftool` on
+PATH, and adds under a second.
+
+There is no CI. `tests/` holds two shell
 scripts that mutate real files — `container-experiment.sh` regenerates
 `docs/CONTAINER.md`'s numbers, `write-paths.sh` exercises the write path.
 **Do not run them without asking**; they need real media and rewrite it.
