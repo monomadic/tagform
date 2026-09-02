@@ -214,8 +214,9 @@ Keys — the form is modal.
 
   SELECT (default)
     j / k, arrows     move between fields          g / G   first / last
-    h / l             cycle a fixed-set field (Category, Variant, Kind) or a rating
-    enter             edit the focused field; a fixed set opens as a menu
+    h / l             step a fixed set (Category, Variant, Kind) or a rating;
+                      a set is drawn along its own line and edited only this way
+    enter             edit the focused field; on an empty date, fill in now
     w                 write staged edits (shows a plan to confirm first)
     r                 rename the file(s) in view from their tags (rename-video)
     m                 merge a list field across every file in the selection
@@ -232,8 +233,7 @@ Keys — the form is modal.
 
   EDIT
     (type)            edit the field
-    left / right      step a fixed set, or adjust a rating; the set is drawn
-                      along the field's own line while it is open
+    left / right      adjust a rating
     tab / shift-tab   accept and move to the next / previous field
     enter             save and stop editing
     esc               cancel this field's edit

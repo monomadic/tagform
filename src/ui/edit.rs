@@ -47,10 +47,11 @@ pub struct Opt {
     pub label: String,
 }
 
-/// Every enum is a fixed set for now: the value is chosen from the list and
-/// nothing is typed. A value already on the file that the list does not know
-/// joins the set for that field, so an unfamiliar Category is still selectable
-/// -- and still survives being tabbed past -- without a free-text mode.
+/// A fixed set holds a value; it no longer *edits* one. Every set is stepped
+/// in place with h/l from Select mode (§5.7), so there is no open state to
+/// enter, nothing typed, and no third mode for the reader to keep track of.
+/// What is left here is the seed-and-read half: the label a stored code wears,
+/// and the code an option maps back to.
 pub struct EnumEdit {
     pub input: Input,
     pub options: Vec<Opt>,
@@ -112,7 +113,17 @@ impl Editor {
             Editor::Line { input, .. } => line_key(input, key),
             Editor::Chips(c) => line_key(&mut c.input, key),
             Editor::Stars(n) => stars_key(n, key),
-            Editor::Enum(e) => enum_key(e, key),
+            // A set is never open, so every key belongs to the app.
+            Editor::Enum(_) => Reaction::Pass,
+        }
+    }
+
+    /// Replace the whole line, cursor at the end. The date control uses it to
+    /// arrive pre-filled with now (§5.9); nothing else needs it, because every
+    /// other control is seeded from a value it already has.
+    pub fn set_text(&mut self, text: &str) {
+        if let Editor::Line { input, .. } = self {
+            *input = Input::new(text.to_string());
         }
     }
 
@@ -136,39 +147,6 @@ impl Editor {
                     .unwrap_or_else(|| shown.to_string());
                 Value::Text(code)
             }
-        }
-    }
-
-    /// Opening a set with nothing chosen starts on its first option: a field
-    /// showing no highlight gives you nothing to step away from, and leaves
-    /// the arrow keys looking broken.
-    ///
-    /// This runs when edit mode is entered, not when the control is seeded --
-    /// so an unset field still reads as empty while you are merely moving past
-    /// it, and only takes a value once you open it.
-    pub fn select_first_if_unset(&mut self) {
-        if let Editor::Enum(e) = self {
-            if e.input.value().trim().is_empty() {
-                if let Some(first) = e.options.first() {
-                    e.input = Input::new(first.label.clone());
-                }
-            }
-        }
-    }
-
-    /// An enum's options and which one is selected, for drawing the set inline
-    /// while the field is open. `None` for the index means the field is empty,
-    /// which happens only before it has been opened.
-    pub fn choices(&self) -> Option<(Vec<String>, Option<usize>)> {
-        match self {
-            Editor::Enum(e) => {
-                let at = e
-                    .options
-                    .iter()
-                    .position(|o| o.label.eq_ignore_ascii_case(e.input.value().trim()));
-                Some((e.options.iter().map(|o| o.label.clone()).collect(), at))
-            }
-            _ => None,
         }
     }
 
@@ -227,7 +205,7 @@ fn validate_line(v: &str, kind: LineKind) -> Validation {
             Err(e) => Validation::Error(format!("not a URL: {e}")),
         },
         LineKind::Date => {
-            if is_iso_date(v) {
+            if is_iso_date(v) || is_iso_timestamp(v) {
                 Validation::Ok
             } else if v.len() == 8 && v.chars().all(|c| c.is_ascii_digit()) {
                 Validation::Warn("YYYYMMDD; will be stored as YYYY-MM-DD".into())
@@ -236,6 +214,24 @@ fn validate_line(v: &str, kind: LineKind) -> Validation {
             }
         }
     }
+}
+
+/// A full ISO 8601 instant: the date, `T`, and a time that may carry an
+/// offset. Accepted alongside the bare date because it is what the container
+/// actually holds -- `XMP-xmp:CreateDate` and a phone's
+/// `com.apple.quicktime.creationdate` are both timestamps -- and because it is
+/// what ⏎ on an empty Date fills in (§5.9). Only the shape is checked; a
+/// nonsense month is the write path's problem, not a reason to paint the field
+/// red while it is still being typed.
+fn is_iso_timestamp(v: &str) -> bool {
+    let Some((date, time)) = v.split_once('T') else { return false };
+    if !is_iso_date(date) || time.len() < 5 {
+        return false;
+    }
+    let b = time.as_bytes();
+    b[2] == b':'
+        && b[..5].iter().enumerate().all(|(i, c)| i == 2 || c.is_ascii_digit())
+        && time[5..].chars().all(|c| c.is_ascii_digit() || ":+-.Z".contains(c))
 }
 
 fn is_iso_date(v: &str) -> bool {
@@ -301,32 +297,6 @@ fn stars_key(n: &mut u8, key: KeyEvent) -> Reaction {
         KeyCode::Right | KeyCode::Char('l') => *n = (*n + 1).min(5),
         _ => return Reaction::Pass,
     }
-    Reaction::Consumed
-}
-
-/// Only stepping. A set has no text to edit, which frees every other key --
-/// including `j`/`k` -- to mean what it means in Select mode.
-fn enum_key(e: &mut EnumEdit, key: KeyEvent) -> Reaction {
-    let forward = match key.code {
-        KeyCode::Left | KeyCode::Char('h') => false,
-        KeyCode::Right | KeyCode::Char('l') => true,
-        _ => return Reaction::Pass,
-    };
-    if e.options.is_empty() {
-        return Reaction::Pass;
-    }
-    // Nothing is committed until the app sees Enter, Tab or j/k, so Esc still
-    // reverts the whole edit.
-    let n = e.options.len();
-    let cur = e.options.iter().position(|o| o.label.eq_ignore_ascii_case(e.input.value().trim()));
-    let next = match (cur, forward) {
-        (Some(i), true) => (i + 1) % n,
-        (Some(i), false) => (i + n - 1) % n,
-        // Empty: step in from whichever end matches the direction.
-        (None, true) => 0,
-        (None, false) => n - 1,
-    };
-    e.input = Input::new(e.options[next].label.clone());
     Reaction::Consumed
 }
 
@@ -514,93 +484,51 @@ mod tests {
     #[test]
     fn closed_enum_shows_label_and_stores_code() {
         let o = opts(&[("9", "Movie"), ("10", "TV Show")]);
-        let mut e = Editor::new(Control::Enum, Some(&Value::Text("9".into())), o);
+        let e = Editor::new(Control::Enum, Some(&Value::Text("9".into())), o);
         assert_eq!(e.display().0, "Movie");
         assert_eq!(e.value(), Value::Text("9".into()));
-        e.handle(code(KeyCode::Right));
-        assert_eq!(e.display().0, "TV Show");
-        assert_eq!(e.value(), Value::Text("10".into()));
-    }
-
-    /// The set is drawn inline while the field is open, so `choices` reports
-    /// the options and which one is lit.
-    #[test]
-    fn an_enum_reports_its_set_and_the_lit_option() {
-        let o = opts(&[("9", "Movie"), ("10", "TV Show")]);
-        let e = Editor::new(Control::Enum, Some(&Value::Text("9".into())), o);
-        let (labels, sel) = e.choices().expect("enums expose their set");
-        assert_eq!(labels, vec!["Movie", "TV Show"]);
-        assert_eq!(sel, Some(0));
-    }
-
-    /// Left and right step the pending value, wrapping at both ends.
-    #[test]
-    fn arrows_step_the_value_and_wrap() {
-        let o = opts(&[("a", "A"), ("b", "B"), ("c", "C")]);
-        let mut e = Editor::new(Control::Enum, Some(&Value::Text("a".into())), o);
-        e.handle(code(KeyCode::Right));
-        assert_eq!(e.value(), Value::Text("b".into()));
-        e.handle(code(KeyCode::Left));
-        e.handle(code(KeyCode::Left));
-        assert_eq!(e.value(), Value::Text("c".into()), "left from the first wraps to the last");
     }
 
     /// A value written outside the app joins the set for that field, so it is
-    /// lit like any option and can be stepped back onto. Dropping it would
-    /// lose the tag the moment the field was stepped.
+    /// still the value the control reports rather than being dropped on the
+    /// floor the moment the field is stepped past.
     #[test]
     fn a_value_outside_the_set_joins_it() {
         let o = opts(&[("Clip", "Clip"), ("Master", "Master")]);
-        let mut e = Editor::new(Control::Enum, Some(&Value::Text("Bespoke".into())), o);
-        let (labels, sel) = e.choices().unwrap();
-        assert_eq!(labels, vec!["Clip", "Master", "Bespoke"]);
-        assert_eq!(sel, Some(2));
+        let e = Editor::new(Control::Enum, Some(&Value::Text("Bespoke".into())), o);
+        assert_eq!(e.display().0, "Bespoke");
+        assert_eq!(e.value(), Value::Text("Bespoke".into()));
         assert_eq!(e.validate(), Validation::Ok, "a value on the file is never an error");
-        e.handle(code(KeyCode::Right));
-        assert_eq!(e.value(), Value::Text("Clip".into()), "wraps past the appended value");
-        e.handle(code(KeyCode::Left));
-        assert_eq!(e.value(), Value::Text("Bespoke".into()), "and back onto it");
     }
 
-    /// Free text into a set is not supported yet. Every non-stepping key is
-    /// handed back, which is what leaves `j`/`k` free to mean "save and move".
+    /// A set has no open state at all now: it holds a value and hands every
+    /// key straight back, which is what leaves h/l free to step it from Select
+    /// mode and ⏎ free to mean nothing here.
     #[test]
-    fn a_set_refuses_typing_and_passes_the_keys_back() {
+    fn a_set_consumes_no_keys_at_all() {
         let o = opts(&[("9", "Movie"), ("10", "TV Show")]);
         let mut e = Editor::new(Control::Enum, Some(&Value::Text("9".into())), o);
-        for c in ['x', 'j', 'k'] {
-            assert_eq!(e.handle(key(c)), Reaction::Pass, "‘{c}’ is a command, not text");
+        for k in [key('x'), key('j'), key('k'), key('h'), key('l')] {
+            assert_eq!(e.handle(k), Reaction::Pass, "a set is not open");
         }
-        assert_eq!(e.handle(code(KeyCode::Backspace)), Reaction::Pass);
+        for c in [KeyCode::Left, KeyCode::Right, KeyCode::Enter, KeyCode::Backspace] {
+            assert_eq!(e.handle(code(c)), Reaction::Pass);
+        }
         assert_eq!(e.value(), Value::Text("9".into()), "nothing typed, nothing changed");
     }
 
-    /// h and l step the set, so a hand never leaves the home row.
+    /// The date field arrives pre-filled when it is opened empty, so `set_text`
+    /// has to land in the line *and* be what the control then reports.
     #[test]
-    fn vim_keys_step_a_set() {
-        let o = opts(&[("a", "A"), ("b", "B"), ("c", "C")]);
-        let mut e = Editor::new(Control::Enum, Some(&Value::Text("a".into())), o);
-        assert_eq!(e.handle(key('l')), Reaction::Consumed);
-        assert_eq!(e.value(), Value::Text("b".into()));
-        assert_eq!(e.handle(key('h')), Reaction::Consumed);
-        assert_eq!(e.value(), Value::Text("a".into()));
-    }
+    fn set_text_replaces_a_line_and_leaves_other_controls_alone() {
+        let mut e = Editor::new(Control::Date, None, vec![]);
+        e.set_text("2026-09-02T14:30:00+07:00");
+        assert_eq!(e.value(), Value::Text("2026-09-02T14:30:00+07:00".into()));
+        assert_eq!(e.validate(), Validation::Ok);
 
-    /// Seeding leaves an unset field empty -- so a row merely tabbed past
-    /// still reads as empty -- and opening it lands on the first option.
-    #[test]
-    fn opening_an_unset_set_selects_the_first_option() {
-        let o = opts(&[("9", "Movie"), ("10", "TV Show")]);
-        let mut e = Editor::new(Control::Enum, None, o);
-        assert_eq!(e.value(), Value::Text(String::new()));
-        assert_eq!(e.choices().unwrap().1, None);
-        e.select_first_if_unset();
-        assert_eq!(e.value(), Value::Text("9".into()));
-        assert_eq!(e.choices().unwrap().1, Some(0));
-        // Idempotent: reopening an already-chosen field must not reset it.
-        e.handle(code(KeyCode::Right));
-        e.select_first_if_unset();
-        assert_eq!(e.value(), Value::Text("10".into()));
+        let mut set = Editor::new(Control::Enum, Some(&Value::Text("Clip".into())), opts(&[("Clip", "Clip")]));
+        set.set_text("nonsense");
+        assert_eq!(set.value(), Value::Text("Clip".into()), "a set has no line to fill");
     }
 
     #[test]
@@ -618,6 +546,23 @@ mod tests {
         assert_eq!(validate_line("2026-08-29", LineKind::Date), Validation::Ok);
         assert!(matches!(validate_line("20260829", LineKind::Date), Validation::Warn(_)));
         assert!(matches!(validate_line("29/08/26", LineKind::Date), Validation::Warn(_)));
+    }
+
+    /// A timestamp is what the container holds and what ⏎ fills in, so it must
+    /// not sit in the field painted as a warning.
+    #[test]
+    fn a_full_timestamp_is_a_valid_date() {
+        for v in [
+            "2026-09-02T14:30:00+07:00",
+            "2026-09-02T14:30:00Z",
+            "2026-09-02T14:30",
+            "2026-09-02T14:30:00.5-05:00",
+        ] {
+            assert_eq!(validate_line(v, LineKind::Date), Validation::Ok, "{v}");
+        }
+        for v in ["2026-09-02T", "2026-09-02T1430", "2026-9-2T14:30:00", "2026-09-02 14:30"] {
+            assert!(matches!(validate_line(v, LineKind::Date), Validation::Warn(_)), "{v}");
+        }
     }
 
     #[test]

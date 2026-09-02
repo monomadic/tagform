@@ -13,7 +13,9 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use crate::config::{Enums, KINDS};
-use crate::model::schema::{Control, FieldDef, FIELDS};
+use crate::model::schema::{
+    self, Control, FieldDef, FIELDS, FOOTAGE, FOOTAGE_HIDDEN,
+};
 use crate::ui::edit::{Editor, Opt, Reaction, Validation};
 use crate::ui::theme;
 use crate::model::value::{Agg, Value};
@@ -821,16 +823,37 @@ impl App {
         self.open_editor();
     }
 
+    /// ⏎ opens a field. A fixed set is the exception: it has no open state at
+    /// all any more, because h/l already step it in place and a mode that
+    /// exists only to press h/l in is a mode nobody needs (§5.7). The keys are
+    /// live wherever the row is focused, so ⏎ says so rather than doing
+    /// nothing silently.
     fn begin_edit(&mut self) {
         match self.rows.get(self.focus) {
             Some(row) if !row.editable() => {
                 self.status = format!("{} is read-only", row.label);
             }
+            Some(row) if row.control == Control::Enum => {
+                self.status = format!("{} · h/l or ←→ to choose", row.label);
+            }
+            // An empty Date opens holding now. A date you meant to be today is
+            // the overwhelmingly common one, and typing it out is the kind of
+            // work a form is for: ⏎ ⏎ sets it, and Esc still backs out.
+            Some(row)
+                if row.control == Control::Date
+                    && !row.is_mixed()
+                    && row.shown().is_none_or(Value::is_empty) =>
+            {
+                self.open_editor();
+                let now = now_stamp();
+                if let Some(ed) = &mut self.editor {
+                    ed.set_text(&now);
+                }
+                self.mode = Mode::Edit;
+                self.status = format!("filled with now · {now}");
+            }
             Some(_) => {
                 self.open_editor();
-                if let Some(ed) = &mut self.editor {
-                    ed.select_first_if_unset();
-                }
                 self.mode = Mode::Edit;
                 self.status.clear();
             }
@@ -1296,12 +1319,43 @@ fn custom_label(key: &str) -> String {
     }
 }
 
+/// Now, as the Date field wants it: a full local ISO 8601 instant, offset and
+/// all. The offset is the point of using local time -- a clip shot at 1am is
+/// dated the day you shot it, not the UTC day, which is the mistake a bare
+/// `now_utc` makes for half the world for part of every day.
+pub fn now_stamp() -> String {
+    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string()
+}
+
+/// The Category the whole selection agrees on, if it agrees on one. A mixed
+/// selection has no profile: reshaping the form around one file's answer would
+/// hide fields that are set on the others.
+fn agreed_category(files: &[FileTags], scope: &[usize], staged: &Staged) -> Option<String> {
+    let def = schema::field_by_id("category")?;
+    let mut it = scope.iter().map(|i| {
+        overlay(files[*i].lookup(def), staged.get(i).and_then(|m| m.get("category")))
+    });
+    let first = it.next()??;
+    it.all(|v| v.as_ref() == Some(&first)).then(|| match first {
+        Value::Text(s) => s,
+        Value::List(l) => l.join(", "),
+    })
+}
+
 fn build_rows(
     files: &[FileTags],
     scope: &[usize],
     staged: &Staged,
     custom_keys: &[String],
 ) -> Vec<Row> {
+    // Footage is the first Category to reshape the form rather than merely
+    // sitting in it (§3.6): a camera clip has no artist, no channel and no URL
+    // to speak of, its people are not actors, and the order it gets filled in
+    // is what-then-when-then-who rather than the publishing order the rest of
+    // the schema is written in.
+    let footage =
+        agreed_category(files, scope, staged).is_some_and(|c| c.eq_ignore_ascii_case(FOOTAGE));
+
     let row = |key: String, label: String, control, def, disk: Vec<Option<Value>>| {
         let eff = scope
             .iter()
@@ -1323,9 +1377,23 @@ fn build_rows(
             if def.footage_only && !edited && disk.iter().all(Option::is_none) {
                 return None;
             }
-            Some(row(def.id.to_string(), def.label.to_string(), def.control, Some(def), disk))
+            // Same escape as above, for the same reason: a hidden row would
+            // hide a staged edit that is still going to be written.
+            if footage && !edited && FOOTAGE_HIDDEN.contains(&def.id) {
+                return None;
+            }
+            let label = match footage.then(|| schema::footage_label(def.id)).flatten() {
+                Some(l) => l,
+                None => def.label,
+            };
+            Some(row(def.id.to_string(), label.to_string(), def.control, Some(def), disk))
         })
         .collect();
+    // Stable, so the fields the profile does not name keep schema order behind
+    // the ones it does.
+    if footage {
+        rows.sort_by_key(|r| r.def.map_or(usize::MAX, |d| schema::footage_rank(d.id)));
+    }
     // Keys are already named by origin ("custom:" atom / "xmp:" tag), which the
     // write plan needs in order to put an edit back where it came from.
     rows.extend(custom_keys.iter().map(|k| {
@@ -1580,6 +1648,133 @@ mod tests {
 
         assert!(app.staged.is_empty(), "{:?}", app.staged);
         assert_eq!(app.status, "wrote 1 of 1");
+    }
+
+    /// One unprobeable file with whatever atoms the test wants, so nothing
+    /// here touches a disk.
+    fn one(atoms: &[(&str, &str)]) -> App {
+        use crate::tags::probe::FileTags;
+        let f = FileTags {
+            path: PathBuf::from("/nonexistent/tagform-test.mov"),
+            atoms: atoms.iter().map(|(k, v)| (k.to_string(), Value::text(*v))).collect(),
+            xmp: BTreeMap::new(),
+        };
+        App::new(vec![f], BTreeMap::new(), false)
+    }
+
+    fn keys(app: &App) -> Vec<&str> {
+        app.rows.iter().map(|r| r.key.as_str()).collect()
+    }
+
+    fn press(app: &mut App, code: KeyCode) {
+        app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    /// Footage is a different form, not the same form with a label on it: the
+    /// fields a camera file has no use for go, and the ones it lives by come
+    /// first.
+    #[test]
+    fn the_footage_category_reshapes_the_form() {
+        let app = one(&[("category", "Footage")]);
+        let k = keys(&app);
+        for hidden in FOOTAGE_HIDDEN {
+            assert!(!k.contains(hidden), "{hidden} should be hidden: {k:?}");
+        }
+        let head: Vec<&str> = k.iter().take(8).copied().collect();
+        assert_eq!(
+            head,
+            ["category", "variant", "date", "actors", "rating", "tags", "title", "description"]
+        );
+        // The fields the profile does not name keep their schema order behind
+        // the ones it does.
+        assert_eq!(k[8..], ["genre", "kind", "origin"]);
+        assert_eq!(row(&app, "actors").label, "People");
+    }
+
+    /// And any other Category leaves it alone -- including none at all, which
+    /// is what most files carry.
+    #[test]
+    fn every_other_category_keeps_the_ordinary_form() {
+        for app in [one(&[]), one(&[("category", "Music Video")])] {
+            let k = keys(&app);
+            assert_eq!(k[..3], ["category", "title", "variant"], "{k:?}");
+            for hidden in FOOTAGE_HIDDEN {
+                assert!(k.contains(hidden), "{hidden} should be shown: {k:?}");
+            }
+            assert_eq!(row(&app, "actors").label, "Actors");
+        }
+    }
+
+    /// Hiding a row must never hide a pending write. Same escape the
+    /// footage-only fields have, for the same reason.
+    #[test]
+    fn a_staged_edit_keeps_its_row_even_under_the_footage_profile() {
+        let mut app = one(&[("category", "Footage")]);
+        assert!(!keys(&app).contains(&"url"));
+        app.set_staged(0, "url", Value::text("https://example.com/a"));
+        assert!(keys(&app).contains(&"url"), "an invisible edit would still be written");
+    }
+
+    /// A selection that disagrees about Category has no profile: reshaping the
+    /// form around one file's answer would hide fields set on the others.
+    #[test]
+    fn a_mixed_category_gets_no_profile() {
+        use crate::tags::probe::FileTags;
+        let mk = |cat: &str| FileTags {
+            path: PathBuf::from(format!("/nonexistent/{cat}.mov")),
+            atoms: BTreeMap::from([("category".to_string(), Value::text(cat))]),
+            xmp: BTreeMap::new(),
+        };
+        let app = App::new(vec![mk("Footage"), mk("Meme")], BTreeMap::new(), false);
+        assert!(keys(&app).contains(&"url"));
+    }
+
+    /// A set has no open state: ⏎ on one says which keys work instead of
+    /// putting the form into a mode whose only key is h/l.
+    #[test]
+    fn enter_never_opens_a_fixed_set() {
+        let mut app = one(&[]);
+        for key in ["category", "variant", "kind"] {
+            focus_on(&mut app, key);
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(app.mode, Mode::Select, "{key} opened a mode");
+        }
+        // And h/l still step it in place, from the mode it never left.
+        focus_on(&mut app, "category");
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(row(&app, "category").shown(), Some(&Value::text(&app.enums.category[0])));
+    }
+
+    /// ⏎ on an empty Date fills in now rather than an empty line to type into.
+    /// The value is staged only once it is accepted, so the field is still an
+    /// edit you can back out of.
+    #[test]
+    fn enter_on_an_empty_date_fills_in_now() {
+        let mut app = one(&[]);
+        focus_on(&mut app, "date");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.mode, Mode::Edit);
+        let now = now_stamp();
+        let shown = app.editor.as_ref().unwrap().display().0;
+        assert_eq!(shown[..10], now[..10], "today's date, in full: {shown}");
+        assert_eq!(app.validation(), Validation::Ok, "{shown} must not paint as a warning");
+        assert!(app.staged.is_empty(), "nothing is staged until it is accepted");
+
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.staged[&0].get("date"), Some(&Value::text(&shown)));
+    }
+
+    /// A Date that already holds something opens holding that, not now --
+    /// overwriting an authored capture time with the moment you pressed ⏎ is
+    /// the one thing this must never do.
+    #[test]
+    fn enter_on_a_filled_date_leaves_it_alone() {
+        let mut app = one(&[("date", "1999-12-31")]);
+        focus_on(&mut app, "date");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.editor.as_ref().unwrap().display().0, "1999-12-31");
+        press(&mut app, KeyCode::Enter);
+        assert!(app.staged.is_empty(), "{:?}", app.staged);
     }
 
     /// Two files whose Title differs -- the shape every multi-file bug shows

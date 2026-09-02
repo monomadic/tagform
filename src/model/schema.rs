@@ -70,7 +70,7 @@ pub static FIELDS: &[FieldDef] = &[
     // First, and alone above the rule the form draws under it: it is not one
     // field among the rest but the answer that decides which of the rest are
     // worth showing. Footage wants a location block; a music video wants an
-    // artist. Nothing keys off it yet -- the position is the promise (§16).
+    // artist. `FOOTAGE_*` below is the first profile to cash that promise in.
     //
     // ilst is None because it has not been measured. `catg` exists in the
     // iTunes set, but docs/CONTAINER.md never tested it, and this table only
@@ -80,6 +80,15 @@ pub static FIELDS: &[FieldDef] = &[
 
     field!("title", "Title", Control::Text,
         mdta: ["title"], read: ["title"], xmp: ["XMP-dc:Title"], ilst: Some("\u{a9}nam")),
+
+    // Which version of the work this file is: the original, an excerpt, or a
+    // remastered/upscaled pass over it. Called `type` on disk until now, which
+    // was both too generic to read and a reserved word in every language that
+    // touches it -- `Enums.type_` was carrying the trailing underscore. Writes
+    // `variant`; still reads `type`, because every file tagged before the
+    // rename has one (DESIGN §3.4).
+    field!("variant", "Variant", Control::Enum,
+        mdta: ["variant"], read: ["variant", "type"], xmp: [], ilst: None),
 
     // yt-dlp writes %(cast,uploader)l to both actors and artist; rename-footage
     // writes the same people to XMP as a true list.
@@ -120,15 +129,6 @@ pub static FIELDS: &[FieldDef] = &[
     // that used to live here moved to Category above.
     field!("genre", "Genre", Control::Text,
         mdta: ["genre"], read: ["genre"], xmp: [], ilst: Some("\u{a9}gen")),
-
-    // Which version of the work this file is: the original, an excerpt, or a
-    // remastered/upscaled pass over it. Called `type` on disk until now, which
-    // was both too generic to read and a reserved word in every language that
-    // touches it -- `Enums.type_` was carrying the trailing underscore. Writes
-    // `variant`; still reads `type`, because every file tagged before the
-    // rename has one (DESIGN §3.4).
-    field!("variant", "Variant", Control::Enum,
-        mdta: ["variant"], read: ["variant", "type"], xmp: [], ilst: None),
 
     // The iTunes media kind (stik).
     field!("kind", "Kind", Control::Enum,
@@ -197,6 +197,37 @@ pub static FIELDS: &[FieldDef] = &[
     },
 ];
 
+/// The Category whose profile reshapes the form (§3.6).
+pub const FOOTAGE: &str = "Footage";
+
+/// Fields a footage clip has no use for. A camera file has no artist, no
+/// channel and no URL -- it was not published anywhere -- and its one prose
+/// field is Description. Hiding them is display only: an unshown key is still
+/// read, still carried in the report, and still written back untouched
+/// (invariant 4).
+pub static FOOTAGE_HIDDEN: &[&str] = &["artist", "url", "channel", "synopsis"];
+
+/// The order a footage clip is filled in: what it is, then when, then who,
+/// then how good, then how to find it again -- and only after all that the
+/// prose, which is the part most clips never get. The remaining fields keep
+/// their schema order below these.
+pub static FOOTAGE_ORDER: &[&str] =
+    &["category", "variant", "date", "actors", "rating", "tags", "title", "description"];
+
+/// Where a footage clip wears a different name. `actors` is the container key
+/// and stays one -- yt-dlp's cast list lands there -- but nobody filming a
+/// street calls the people in it actors.
+pub fn footage_label(id: &str) -> Option<&'static str> {
+    (id == "actors").then_some("People")
+}
+
+/// Position in `FOOTAGE_ORDER`, or past its end for a field it does not name.
+/// Sorting by this and nothing else keeps the unnamed fields in schema order,
+/// because the sort is stable.
+pub fn footage_rank(id: &str) -> usize {
+    FOOTAGE_ORDER.iter().position(|f| *f == id).unwrap_or(FOOTAGE_ORDER.len())
+}
+
 /// Muxer bookkeeping. Hidden from the form, and actively cleared on write —
 /// with `-map_metadata 0` plus `use_metadata_tags`, ffmpeg promotes these to
 /// real readable tags that then accumulate on every rewrite (docs/CONTAINER.md).
@@ -253,6 +284,39 @@ mod tests {
     #[test]
     fn category_leads_the_form() {
         assert_eq!(FIELDS[0].id, "category");
+    }
+
+    /// Variant sits directly under Title: it is a qualifier on the name --
+    /// "the same work, this version of it" -- and reading one without the
+    /// other says less than either does alone.
+    #[test]
+    fn variant_follows_title() {
+        assert_eq!(FIELDS[1].id, "title");
+        assert_eq!(FIELDS[2].id, "variant");
+    }
+
+    /// Every id the footage profile names has to be a real field, or the
+    /// profile would silently hide nothing and order nothing.
+    #[test]
+    fn the_footage_profile_names_only_real_fields() {
+        for id in FOOTAGE_HIDDEN.iter().chain(FOOTAGE_ORDER) {
+            assert!(field_by_id(id).is_some(), "{id} is not a field");
+        }
+        for id in FOOTAGE_HIDDEN {
+            assert!(!FOOTAGE_ORDER.contains(id), "{id} is both hidden and ordered");
+        }
+        assert_eq!(FOOTAGE_ORDER[0], "category", "the answer that picks the profile leads it");
+        assert!(FOOTAGE_HIDDEN.contains(&"artist"));
+    }
+
+    /// The rank is what the sort reads, and an unnamed field must land after
+    /// every named one rather than tying with the first.
+    #[test]
+    fn unnamed_fields_rank_after_the_ordered_ones() {
+        assert_eq!(footage_rank("category"), 0);
+        assert_eq!(footage_rank("description"), FOOTAGE_ORDER.len() - 1);
+        assert!(footage_rank("genre") > footage_rank("description"));
+        assert_eq!(footage_rank("genre"), footage_rank("origin"), "ties keep schema order");
     }
 
     #[test]

@@ -26,7 +26,24 @@ pub const DEFAULT_CATEGORIES: &[&str] = &[
     "Meme",
     "Texture",
 ];
-pub const DEFAULT_VARIANTS: &[&str] = &["Clip", "Enhanced", "Original"];
+pub const DEFAULT_VARIANTS: &[&str] = &["Original", "Enhanced", "Clip"];
+
+/// Variant is offered most-chosen first, not in whatever order the aliases
+/// happen to sit in the config. Almost everything is an Original; a set whose
+/// commonest answer is the one furthest from the cursor charges a keystroke
+/// for the common case and saves nothing on the rare ones. Category is *not*
+/// ordered this way -- its options have no such skew, and the config's order
+/// is meaningful there.
+///
+/// A value the list does not name keeps its config order, behind these.
+pub const VARIANT_ORDER: &[&str] = &["Original", "Enhanced", "Clip"];
+
+/// Stable, so unnamed values keep the order the config gave them.
+fn order_variants(v: &mut [String]) {
+    v.sort_by_key(|x| {
+        VARIANT_ORDER.iter().position(|o| o.eq_ignore_ascii_case(x)).unwrap_or(VARIANT_ORDER.len())
+    });
+}
 
 /// The `stik` media kind: a closed set the Apple ecosystem actually reads.
 pub const KINDS: &[(&str, &str)] = &[
@@ -76,6 +93,7 @@ impl Enums {
         if me.variant.is_empty() {
             me.variant = DEFAULT_VARIANTS.iter().map(|s| s.to_string()).collect();
         }
+        order_variants(&mut me.variant);
         me
     }
 }
@@ -191,11 +209,32 @@ mod tests {
         assert_eq!(e.category, vec!["Adult", "Footage", "Karaoke", "Live Visual"]);
     }
 
+    /// The literals arrive in config order -- clip, master, original -- and
+    /// come out most-chosen first, with "Master" renamed on the way.
     #[test]
-    fn variants_come_from_the_aliases() {
+    fn variants_come_from_the_aliases_but_not_in_their_order() {
         let e = Enums::from_ytdlp_config(SAMPLE);
-        // The alias literal is still "Master"; the form offers "Enhanced".
-        assert_eq!(e.variant, vec!["Clip", "Enhanced", "Original"]);
+        assert_eq!(e.variant, vec!["Original", "Enhanced", "Clip"]);
+    }
+
+    /// A variant the order does not name goes to the back rather than
+    /// displacing Original, and keeps the order the config gave it.
+    #[test]
+    fn an_unnamed_variant_sorts_behind_the_known_ones() {
+        let e = Enums::from_ytdlp_config(
+            "--alias a '--parse-metadata \"Upscale:%(meta_type)s\"'\n\
+             --alias b '--parse-metadata \"Clip:%(meta_type)s\"'\n\
+             --alias c '--parse-metadata \"Proxy:%(meta_type)s\"'",
+        );
+        assert_eq!(e.variant, vec!["Clip", "Upscale", "Proxy"]);
+    }
+
+    /// Category keeps the config's own order: its options have no most-chosen
+    /// answer, and the alias order is meaningful there.
+    #[test]
+    fn categories_keep_the_order_the_config_gave_them() {
+        let e = Enums::from_ytdlp_config(SAMPLE);
+        assert_eq!(e.category[0], "Adult");
     }
 
     /// The alias literal is "Camera Footage"; the form says "Footage".
@@ -237,7 +276,7 @@ mod tests {
     fn const_templates_yield_their_constant() {
         let e = Enums::from_ytdlp_config(CONST_SAMPLE);
         assert_eq!(e.category, vec!["Adult", "Footage", "Live Visual"]);
-        assert_eq!(e.variant, vec!["Clip", "Enhanced"]);
+        assert_eq!(e.variant, vec!["Enhanced", "Clip"]);
     }
 
     #[test]

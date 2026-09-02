@@ -187,9 +187,14 @@ Kind.**
 **Category is first, and drawn alone above a rule.** It is not one field among
 the others: it says what the file *is*, and the fields worth showing follow
 from that answer — a Footage clip wants its location block, a music video wants
-an Artist. Nothing keys off it yet; the position and the rule are the promise
-(§16). `FIELDS[0]` is asserted to be `category`, because the renderer finds the
-group break by id and a field inserted above it would take both.
+an Artist. `Footage` is the first Category to cash that in (§3.6); the rest
+still show the whole form. `FIELDS[0]` is asserted to be `category`, because the
+renderer finds the group break by id and a field inserted above it would take
+both.
+
+**Variant sits directly under Title**, because it qualifies the name rather
+than standing beside it: "the same work, this version of it". Reading either
+without the other says less than the pair does.
 
 **The table is not reproduced here.** `FIELDS` in `src/model/schema.rs` is the
 authority, and `tagform --print-schema` emits it as JSON — every field with its
@@ -538,6 +543,26 @@ Notes that are not optional:
   friends are recognised and refused for the Title field under rule 3;
   `PreservedFileName` already holds them verbatim.
 - Kind (`stik`) defaults to `0` (Home Video) when Category is `Footage`.
+
+**The profile is also a form layout.** ⟨built⟩ Beyond the five value-gated
+fields above, `Category == Footage` — agreed across the whole selection, since
+a mixed selection has no one answer to key off — reshapes the form itself
+(`FOOTAGE_HIDDEN`, `FOOTAGE_ORDER`, `footage_label` in `schema.rs`):
+
+- **Artist, URL, Channel and Synopsis are hidden.** A camera file was not
+  published anywhere, so it has no artist and no channel, and its one prose
+  field is Description. Hiding is display only: the keys are still read, still
+  carried in the report, and still written back untouched (invariant 4). A row
+  carrying a *staged* edit stays visible regardless — the same escape the
+  value-gated fields have, because a hidden row would hide a pending write.
+- **Actors is labelled People.** `actors` is the container key and stays one —
+  yt-dlp's cast list lands there — but nobody filming a street calls the people
+  in it actors.
+- **The order becomes** Category, Variant, Date, Actors, Rating, Tags, Title,
+  Description: what it is, then when, then who, then how good, then how to find
+  it again, and only then the prose most clips never get. Fields the profile
+  does not name keep their schema order behind those, because the sort is
+  stable and keyed on rank alone.
 - Device (`com.apple.quicktime.model`) and the `[RES FPS LENGTH …]` spec block
   are **probed, never authored** — shown in the header line, never editable.
 
@@ -853,22 +878,54 @@ for one control would be exactly the inconsistency the mode split bought.
 
 ### 5.7 Enum
 
-**Built as one fixed set, drawn inline.** Opening a field expands its options
-along the same row it already occupied, with the current one lit — same row,
-same height, so nothing below it reflows:
+**Built, differs: there is no open state at all.** ⟨built, differs⟩ A set is
+always drawn as its set — every option along the row, the current one lit — and
+is stepped in place from Select mode. Category, Variant and Kind all read and
+behave the same way:
 
 ```
-   Variant          Clip                       ← closed
-  ▶Variant           Clip  Enhanced  Original  ← open, "Clip" lit
+  ▍Category         Adult  Footage  Karaoke  Live Visual  Music Video  …
+   Variant          Original  Enhanced  Clip
+   Kind             Home Video  Normal  Audiobook  Music Video  Movie  …
 ```
 
-`←`/`→` or `h`/`l` step and wrap, `⏎` accepts, `⇥` accepts and advances,
-`j`/`k` accept and move a row, `esc` reverts the field. Stepping only moves a
-*pending* value; nothing is staged until it is accepted, which is what lets
-`esc` back out cleanly. In Select mode `h`/`l` step the set without opening it.
-Opening a field that is empty lands on the first option, so there is always
-something lit to step away from — and an unset field still reads as `—` while
-you are merely moving past it.
+`←`/`→` or `h`/`l` step and wrap, and each step stages immediately, the way
+`h`/`l` on Stars already did. `⏎` does not open a set; it says which keys work.
+
+Every cell is ` label `, so a set brings its own left pad and skips the value
+box's, taking that column back as width. Painting both put a set's first option
+one column right of every other row's value — the exact misalignment the pad
+exists to prevent.
+
+**Variant is ordered most-chosen first** (`VARIANT_ORDER` in `config.rs`):
+`Original`, `Enhanced`, `Clip`, regardless of the order the aliases sit in the
+config. Almost everything is an Original, and a set whose commonest answer is
+furthest from the cursor charges a keystroke for the common case to save
+nothing on the rare ones. Category is deliberately not ordered this way: its
+options have no such skew and the config's order is meaningful there.
+
+The earlier design had an open/closed split: `⏎` entered the field, stepping
+moved a *pending* value, `⏎`/`⇥`/`j`/`k` accepted it and `esc` reverted. It
+came out and is not coming back. A mode whose only key is `h`/`l` is not a
+mode, it is a keystroke tax on the two keys that already worked from Select —
+and it cost a third mode badge (SELECT, distinct from NORMAL and EDIT) to
+describe a state the reader could not act differently in. Drawing the set on
+the closed row, which Category already did because its options are the form's
+table of contents, made the open row draw *identically* to the closed one; at
+that point the only thing the mode still did was decide whether the lit cell
+was accent or grey.
+
+What is lost with it is per-field `esc`: a set has no pending value to revert,
+so a mis-step is undone by stepping back, or by `u`. That is the same deal
+Stars has always had.
+
+**No free text, for now.** Typing into a set is rejected outright — every key
+a set does not use is handed straight back, which is what leaves `j`/`k`, `w`,
+`y` and the rest live while a set is focused. What keeps that from losing data
+is that a value already on the file which the list does not know **joins the
+set for that field** — an unfamiliar Category is drawn, lit and steppable, it
+just cannot be typed. Free-text entry comes back later. (Genre is not an
+example of it: it is an ordinary text field, not an open set — see §3.5.2.)
 
 **No free text, for now.** The open/closed split the plan called for is not
 built: typing into a set is rejected outright, and Category and Variant are
@@ -895,9 +952,23 @@ A Checkbox control arrives when a second toggle does.
 
 ### 5.9 Date, Number
 
-Date: accepts `YYYY-MM-DD`, warns and normalises the `YYYYMMDD` form yt-dlp's
-`upload_date` uses, and warns on anything else. ⟨designed⟩ Auto-inserted
-dashes, `↑`/`↓` on the segment under the cursor, and `t` = today are not built.
+Date: accepts `YYYY-MM-DD` and the full ISO 8601 instant
+(`2026-09-02T14:30:00+07:00`), warns and normalises the `YYYYMMDD` form
+yt-dlp's `upload_date` uses, and warns on anything else. The timestamp form is
+accepted because it is what the container actually holds — `XMP-xmp:CreateDate`
+and a phone's `com.apple.quicktime.creationdate` are both instants, not days.
+
+**⏎ on an empty Date fills in now**, in local time, offset and all, and leaves
+the field open: `⏎ ⏎` dates a file today and `esc` backs out. Local rather than
+UTC because a clip shot at 1am is dated the day it was shot, which is the whole
+point of the field; `now_utc` gets that wrong for half the world for part of
+every day. A Date that already holds something opens holding that — overwriting
+an authored capture time with the moment `⏎` was pressed is the one thing this
+must never do.
+
+⟨designed⟩ Auto-inserted dashes and `↑`/`↓` on the segment under the cursor are
+not built. `t` = today is subsumed: `⏎` on an empty field is the same gesture
+with one fewer key to remember, and `t` is the theme key.
 
 ⟨designed⟩ Number is not built; nothing uses it until the Season/Episode fields
 land (§3.2).
@@ -1496,7 +1567,14 @@ in place — trim, collapse, strip — which is why it is `f` for format rather
 than `c` for case, and why faststart moved up to `F` to make room.
 And a control that does not want a key hands it back (§5), so `tab` moves focus
 from inside a field, `j`/`k` move a row on a control with no text to type, and
-`h`/`l` step a set or a rating from either mode.
+`h`/`l` step a set or a rating.
+
+**A fixed set is the one field `enter` does not open** (§5.7). `h`/`l` step it
+in place from Select mode and stage as they go, which is all opening it ever
+did, so there is no third mode and the shortcut strip has only NORMAL and EDIT
+to name. **`enter` on an empty Date** fills the field with the current local
+timestamp and opens it, which is the `t` = today the original design wanted,
+minus a key (§5.9).
 
 On a text field, the emacs/macOS editing keys as well — `⌃A` `⌃E` `⌃B` `⌃F`
 `⌃D` `⌃H` `⌃W` `⌃K` `⌃U`, table in §5.1. They bind only while a field is open,

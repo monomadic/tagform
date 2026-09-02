@@ -17,7 +17,7 @@ use crate::model::schema::Control;
 use crate::model::value::{Agg, Value};
 use crate::tags::plan::FilePlan;
 use crate::ui::app::{App, Mode, Row, WriteProgress, WriteResults};
-use crate::ui::edit::{stars_glyphs, Validation};
+use crate::ui::edit::{stars_glyphs, Opt, Validation};
 use crate::ui::theme as t;
 
 const LABEL_COLS: u16 = 15;
@@ -337,21 +337,21 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
             fg
         };
 
-        // A fixed set expands into the value box while the field is open --
-        // same row, same height, so opening one never reflows the form.
-        let value_spans = match editing.then(|| app.editor.as_ref()?.choices()).flatten() {
-            Some((labels, sel)) => set_spans(&labels, sel, text_w, bg, true),
-            // Category shows its set closed as well: the whole form hangs off
-            // that one answer, so which answers exist is worth the row even
-            // when the field is shut. Same layout either way, so opening it
-            // moves nothing.
-            None if always_shows_its_set(row) => match closed_set(app, row) {
-                Some((labels, sel)) => set_spans(&labels, sel, text_w, bg, focused),
-                None => vec![Span::styled(
-                    t::fit(&raw, text_w),
-                    Style::default().bg(bg).fg(value_fg),
-                )],
-            },
+        // A fixed set is always drawn as its set, laid along the value box
+        // with the current answer lit. There is no open state to draw
+        // differently: h/l step it in place, so the options are the control
+        // and the row never reflows.
+        //
+        // A set brings its own left pad -- every cell is ` label ` -- so it
+        // skips the box's, and takes that column back as width. Painting both
+        // put a set's first option one column right of every other row's
+        // value, which is exactly the misalignment the pad exists to prevent.
+        let set = closed_set(app, row);
+        let lead = if set.is_some() { 0 } else { PAD as usize };
+        let value_spans = match set {
+            Some((labels, sel)) => {
+                set_spans(&labels, sel, text_w + PAD as usize - lead, bg, focused)
+            }
             None => vec![Span::styled(
                 t::fit(&raw, text_w),
                 Style::default().bg(bg).fg(value_fg),
@@ -368,7 +368,7 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
                 label_style,
             ),
             Span::raw(" "),
-            Span::styled(" ".repeat(PAD as usize), Style::default().bg(bg)),
+            Span::styled(" ".repeat(lead), Style::default().bg(bg)),
         ];
         spans.extend(value_spans);
         spans.push(Span::styled(" ".repeat(PAD as usize), Style::default().bg(bg)));
@@ -399,24 +399,34 @@ fn group_break_after(row: &Row) -> bool {
     row.def.is_some_and(|d| d.id == "category")
 }
 
-/// Rows whose set is painted whether the field is open or not -- Category, for
-/// the reason above: its options are the form's table of contents.
-fn always_shows_its_set(row: &Row) -> bool {
-    row.def.is_some_and(|d| d.id == "category")
-}
-
-/// The set to draw for a closed row: its options, and which one the row holds.
-/// `None` when the set is empty (no `--alias` configured), so the row falls
-/// back to the ordinary value box rather than to a blank strip. A mixed row
-/// selects nothing -- there is no single answer to light.
+/// The set to draw for a fixed-set row: its options, and which one the row
+/// holds. `None` for anything that is not a set, and for a set with no options
+/// (no `--alias` configured), so the row falls back to the ordinary value box
+/// rather than to a blank strip. A mixed row selects nothing -- there is no
+/// single answer to light.
+///
+/// A value the set does not know is appended rather than dropped, the same way
+/// `nudge` appends it: an unfamiliar Category has to be visible and steppable,
+/// or the first h would silently replace it.
 fn closed_set(app: &App, row: &Row) -> Option<(Vec<String>, Option<usize>)> {
-    let opts = app.options_for(row);
+    if row.control != Control::Enum {
+        return None;
+    }
+    let mut opts = app.options_for(row);
     if opts.is_empty() {
         return None;
     }
     let sel = match app.shown_value(row) {
-        Some(Value::Text(s)) if !row.is_mixed() || row.staged => {
-            opts.iter().position(|o| o.code == s)
+        Some(Value::Text(s))
+            if !s.trim().is_empty() && (!row.is_mixed() || row.staged) =>
+        {
+            match opts.iter().position(|o| o.code == s) {
+                Some(i) => Some(i),
+                None => {
+                    opts.push(Opt { code: s.clone(), label: s });
+                    Some(opts.len() - 1)
+                }
+            }
         }
         _ => None,
     };
@@ -505,13 +515,10 @@ fn display_row(app: &App, row: &Row) -> Option<String> {
 /// against; a permanent ground is what makes the lit states read as a change
 /// rather than as the bar simply appearing.
 fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
-    let on_a_set = app.mode == Mode::Edit
-        && app.editor.as_ref().and_then(|e| e.choices()).is_some();
-    // A fixed set is still Edit mode internally; it reads as its own mode
-    // because its keys are its own.
-    let (mode_name, mode_fg, bar_bg) = if on_a_set {
-        ("SELECT", t::star(), Some(t::input_bg_focus()))
-    } else if app.mode == Mode::Edit {
+    // There is no third mode any more: a fixed set is stepped from Normal
+    // with h/l and never opens, so the strip has only the two states the app
+    // actually has.
+    let (mode_name, mode_fg, bar_bg) = if app.mode == Mode::Edit {
         ("EDIT", t::staged(), Some(t::input_bg_edit()))
     } else {
         ("NORMAL", t::accent(), Some(t::bar_bg()))
@@ -532,25 +539,20 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
             ("u", "upper case"),
             ("esc", "cancel"),
         ]
-    } else if on_a_set {
-        &[
-            ("hl", "change"),
-            ("⏎", "accept"),
-            ("jk", "accept + move"),
-            ("⇥", "accept + next"),
-            ("esc", "cancel"),
-        ]
     } else if app.mode == Mode::Edit {
         &[
             ("⏎", "save"),
             ("⇥", "save + next"),
-            ("←→", "cycle"),
+            ("←→", "rating"),
             ("esc", "cancel"),
             ("^c", "quit"),
         ]
     } else {
         &[
-            ("jk", "move"),
+            // h and l move along a set rather than between rows, but they are
+            // the same hand's movement keys and a strip that named only two of
+            // the four read as though the other two did nothing.
+            ("hjkl", "move"),
             ("⏎", "edit"),
             ("w", "write"),
             ("r", "rename"),
@@ -942,10 +944,14 @@ mod tests {
         let chosen = app.enums.category[1].clone();
         app.set_staged(0, "category", Value::Text(chosen.clone()));
 
-        let mut term = Terminal::new(TestBackend::new(90, 12)).unwrap();
+        // Wide enough for the whole set: `set_spans` scrolls to keep the
+        // selection in view, so a narrow terminal drops the head of the set
+        // and the first option is no longer the one to look for.
+        let w = 140;
+        let mut term = Terminal::new(TestBackend::new(w, 12)).unwrap();
         term.draw(|fr| draw_fields(fr, fr.area(), &app)).unwrap();
         let buf = term.backend().buffer().clone();
-        let row: String = (0..90).map(|x| buf[(x, 1)].symbol().to_string()).collect();
+        let row: String = (0..w).map(|x| buf[(x, 1)].symbol().to_string()).collect();
 
         assert!(row.contains(&app.enums.category[0]), "{row:?}");
         assert!(row.contains(&chosen), "{row:?}");
@@ -972,15 +978,16 @@ mod tests {
             xmp: BTreeMap::new(),
         };
         let app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
-        let mut term = Terminal::new(TestBackend::new(220, 1)).unwrap();
+        let w = 240;
+        let mut term = Terminal::new(TestBackend::new(w, 1)).unwrap();
         term.draw(|fr| draw_shortcuts(fr, fr.area(), &app)).unwrap();
         let buf = term.backend().buffer().clone();
-        let strip: String = (0..220).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+        let strip: String = (0..w).map(|x| buf[(x, 0)].symbol().to_string()).collect();
 
         // Two spaces of padding plus the one the key carries, so the gap
         // still reads as one column once the terminal draws the glyph wide.
         assert!(strip.contains(" ⌫   clear"), "{strip:?}");
-        assert!(!strip.contains("…"), "the whole strip should fit at 220 cols: {strip:?}");
+        assert!(!strip.contains("…"), "the whole strip should fit at {w} cols: {strip:?}");
         for key in ["o", "b", "f", "F", "t"] {
             assert!(strip.contains(&format!(" {key}  ")), "{key} crowded: {strip:?}");
         }
@@ -1027,4 +1034,6 @@ mod tests {
         assert!(rows[at + 1].contains("the remux did not reproduce"), "{:?}", rows[at + 1]);
         assert!(rows[at + 2].contains("lost:    data/mebx x3"), "{:?}", rows[at + 2]);
     }
+
+
 }

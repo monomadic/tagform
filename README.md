@@ -72,8 +72,8 @@ nothing is listening for the letter w.
 | key | |
 |---|---|
 | `j` / `k`, arrows, `tab` | move between fields (`g` / `G` first / last) |
-| `h` / `l` | cycle a fixed-set field, or nudge a rating, without entering edit mode |
-| `enter` | edit the focused field |
+| `h` / `l` | step a fixed set, or nudge a rating — a set is edited only this way |
+| `enter` | edit the focused field — on an empty date, fill it with now first |
 | `w` | write staged edits (shows a plan first) |
 | `r` | rename the file — or every file in the selection — from the tags on disk, by running `rename-video` |
 | `m` | merge a list field across every file in the selection |
@@ -93,10 +93,10 @@ nothing is listening for the letter w.
 | key | |
 |---|---|
 | (type) | edit the field |
-| `h` / `l`, `←` / `→` | step a fixed set, or adjust a rating |
+| `←` / `→` | adjust a rating |
 | `enter` | save and stop editing |
 | `tab` / `shift-tab` | save and move to the next / previous field |
-| `j` / `k`, `↑` / `↓` | save and move a row — on a set, where there is no text to type |
+| `j` / `k`, `↑` / `↓` | save and move a row — on a control with no text to type |
 | `esc` | cancel this field's edit |
 | `ctrl-c` | quit, from either mode |
 
@@ -136,23 +136,29 @@ cursor.
 
 Twenty fields, in one flat list — no collapsed sections. The five footage
 fields (Location, State, Country, Coordinates, Original name) appear only when
-a file in the selection actually carries them. Anything on disk that no field
+a file in the selection actually carries them.
+
+**Category `Footage` reshapes the form.** Artist, URL, Channel and Synopsis go
+(a camera file was not published anywhere), Actors is labelled **People**, and
+the order becomes Category, Variant, Date, People, Rating, Tags, Title,
+Description — what it is, when, who, how good, how to find it again, and only
+then the prose. Hiding is display only: those keys are still read and still
+written back untouched, and a row carrying a staged edit stays visible. Anything on disk that no field
 claims gets a row of its own at the bottom, atoms and XMP alike, so nothing is
 lost by going unrecognised.
 
-A set draws itself **along the field's own line** while that field is open,
-with the current value lit — so you can see the whole set without cycling
-blind, and opening one never changes the shape of the form:
+A set draws itself **along the field's own line**, always, with the current
+value lit — so you see the whole set without cycling blind:
 
 ```
-   Variant          Clip
-  ▶Variant           Clip  Enhanced  Original
+  ▍Category         Adult  Footage  Karaoke  Live Visual  Music Video  …
+   Variant          Original  Enhanced  Clip
+   Kind             Home Video  Normal  Audiobook  Music Video  Movie  …
 ```
 
-`enter` opens, `h`/`l` step and wrap, `enter` accepts, `tab` accepts and
-advances, `j`/`k` accept and move a row, `esc` reverts. Nothing is staged until
-you accept, which is what makes `esc` clean. Opening an empty field lands on
-the first option; until it is opened, it still reads as `—`.
+`h`/`l` (or `←`/`→`) step and wrap, and each step stages immediately. A set has
+no edit mode: `enter` does not open it, because stepping in place is all
+opening it ever did. Step back or press `u` to undo a mis-step.
 
 Typing into a set is not supported yet — Category and Variant are picked from
 the list, like Kind. A value already on the file that the list does not know
@@ -161,7 +167,9 @@ instead of being lost the first time the field is stepped.
 
 Category and Variant are **not hardcoded** — they are parsed out of
 `~/.config/yt-dlp/config`'s `--alias` lines, so adding an alias there adds a
-dropdown value here.
+dropdown value here. Variant is then reordered `Original`, `Enhanced`, `Clip`,
+most-chosen first, so the commonest answer is the one already under the
+cursor; Category keeps the config's own order, having no such skew.
 
 **Category is what used to be called Genre**: `Adult`, `Footage`, `Karaoke`,
 `Live Visual`, `Music Video`, `Tutorial`, `Meme`, `Texture` — what kind of
