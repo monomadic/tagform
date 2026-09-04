@@ -30,12 +30,17 @@ Not built: the two filename grammars (the rest of milestone 6), seeding
 config file. DESIGN §16 says what is next and why the list is shorter than the
 original plan.
 
-Aggregation works like an mp3 tagger: a field that differs between files reads
-`‹multiple›`, and is left alone unless you set it. `m` **merges** a list field —
+Aggregation works like an mp3 tagger. With more than one file open, the
+aggregate view is **bulk edit mode**: the rule under Category and Variant says so
+and how many files are in the group, an agreed value shows with the file count
+beside it, and a field that differs between files reads `multiple values (N
+files)` and is left alone unless you set it. Opening a field takes the note
+away, and anything saved lands on every file. `m` **merges** a list field —
 the union of every file's values, first-seen order, folded case-insensitively —
 which is the operation you actually want when tagging a batch and which none of
 the scripts this replaces can do. Setting a `‹multiple›` field says how many
 distinct values it is about to flatten, in the confirmation, before it happens.
+A closed set that the files disagree about lights no option.
 
 An edit belongs to the files it was made on. `[` and `]` walk the selection
 without disturbing anything staged elsewhere, and `w` writes every staged edit,
@@ -75,6 +80,7 @@ nothing is listening for the letter w.
 | `h` / `l` | step a fixed set, or nudge a rating — a set is edited only this way |
 | `enter` | edit the focused field — on an empty date, fill it with now first |
 | `w` | write staged edits (shows a plan first) |
+| `ctrl-s` / `cmd-s` | the same, from either mode — commits the open field first (`cmd` needs a terminal with the kitty keyboard protocol) |
 | `r` | rename the file — or every file in the selection — from the tags on disk, by running `rename-video` |
 | `m` | merge a list field across every file in the selection |
 | `i` | inspector — per-file values for the focused field |
@@ -98,6 +104,7 @@ nothing is listening for the letter w.
 | `tab` / `shift-tab` | save and move to the next / previous field |
 | `j` / `k`, `↑` / `↓` | save and move a row — on a control with no text to type |
 | `esc` | cancel this field's edit |
+| `ctrl-s` / `cmd-s` | save the field and write |
 | `ctrl-c` | quit, from either mode |
 
 On a text field, the emacs/macOS editing keys work as they do everywhere else:

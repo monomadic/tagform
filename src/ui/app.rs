@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 
 use crate::config::{Enums, KINDS};
 use crate::model::schema::{
-    self, Control, FieldDef, FIELDS, FOOTAGE, FOOTAGE_HIDDEN,
+    self, Control, FieldDef, ADULT, ADULT_HIDDEN, ADULT_ORDER, CLIP, FIELDS, FOOTAGE,
+    FOOTAGE_HIDDEN,
 };
 use crate::ui::edit::{Editor, Opt, Reaction, Validation};
 use crate::ui::theme;
@@ -589,6 +590,14 @@ impl App {
                 if kept == 1 { "" } else { "s" }
             )
         };
+        // A clean write is the end of the job: the form was opened to make
+        // these edits, and they are on disk. Anything short of that stays up,
+        // with the failures and their reasons, and any key returns to the
+        // editor with the unwritten edits still staged.
+        if results.failed.is_empty() && kept == 0 {
+            self.quit = true;
+            return;
+        }
         self.results = Some(results);
     }
 
@@ -697,6 +706,17 @@ impl App {
                 }
                 _ => {}
             }
+            return;
+        }
+        // Save is the one command that works from either mode: ⌘S where the
+        // terminal reports it (kitty protocol) and ⌃S everywhere. It commits
+        // whatever is half-typed first, so what is written is what is on
+        // screen, and it leaves the form in Select mode behind the dialog.
+        if key.code == KeyCode::Char('s')
+            && key.modifiers.intersects(KeyModifiers::SUPER | KeyModifiers::CONTROL)
+        {
+            self.prepare_write();
+            self.mode = Mode::Select;
             return;
         }
         match self.mode {
@@ -1330,11 +1350,15 @@ pub fn now_stamp() -> String {
 /// The Category the whole selection agrees on, if it agrees on one. A mixed
 /// selection has no profile: reshaping the form around one file's answer would
 /// hide fields that are set on the others.
-fn agreed_category(files: &[FileTags], scope: &[usize], staged: &Staged) -> Option<String> {
-    let def = schema::field_by_id("category")?;
-    let mut it = scope.iter().map(|i| {
-        overlay(files[*i].lookup(def), staged.get(i).and_then(|m| m.get("category")))
-    });
+/// The one value every file in scope shows for a field -- staged edits laid
+/// over disk -- or None when they disagree or none has it. A profile keys off
+/// this: reshaping the form around one file's answer would hide fields set on
+/// the others.
+fn agreed_field(files: &[FileTags], scope: &[usize], staged: &Staged, id: &str) -> Option<String> {
+    let def = schema::field_by_id(id)?;
+    let mut it = scope
+        .iter()
+        .map(|i| overlay(files[*i].lookup(def), staged.get(i).and_then(|m| m.get(id))));
     let first = it.next()??;
     it.all(|v| v.as_ref() == Some(&first)).then(|| match first {
         Value::Text(s) => s,
@@ -1353,8 +1377,14 @@ fn build_rows(
     // to speak of, its people are not actors, and the order it gets filled in
     // is what-then-when-then-who rather than the publishing order the rest of
     // the schema is written in.
-    let footage =
-        agreed_category(files, scope, staged).is_some_and(|c| c.eq_ignore_ascii_case(FOOTAGE));
+    let category = agreed_field(files, scope, staged, "category");
+    let footage = category.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(FOOTAGE));
+    // Adult is the second: no artist, a publishing order that leads with the
+    // channel and the people, and -- for a Clip -- a track number.
+    let adult = category.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(ADULT));
+    let clip = adult
+        && agreed_field(files, scope, staged, "variant")
+            .is_some_and(|v| v.eq_ignore_ascii_case(CLIP));
 
     let row = |key: String, label: String, control, def, disk: Vec<Option<Value>>| {
         let eff = scope
@@ -1382,6 +1412,13 @@ fn build_rows(
             if footage && !edited && FOOTAGE_HIDDEN.contains(&def.id) {
                 return None;
             }
+            if adult && !edited && ADULT_HIDDEN.contains(&def.id) {
+                return None;
+            }
+            // Offered on an adult clip; otherwise only once it holds something.
+            if def.clip_only && !clip && !edited && disk.iter().all(Option::is_none) {
+                return None;
+            }
             let label = match footage.then(|| schema::footage_label(def.id)).flatten() {
                 Some(l) => l,
                 None => def.label,
@@ -1393,6 +1430,8 @@ fn build_rows(
     // the ones it does.
     if footage {
         rows.sort_by_key(|r| r.def.map_or(usize::MAX, |d| schema::footage_rank(d.id)));
+    } else if adult {
+        rows.sort_by_key(|r| r.def.map_or(usize::MAX, |d| schema::profile_rank(ADULT_ORDER, d.id)));
     }
     // Keys are already named by origin ("custom:" atom / "xmp:" tag), which the
     // write plan needs in order to put an edit back where it came from.
@@ -1455,6 +1494,17 @@ fn make_picker(no_thumbnail: bool) -> ratatui_image::picker::Picker {
 
 pub fn run(files: Vec<FileTags>, custom: BTreeMap<String, Agg>, no_thumbnail: bool) -> Result<()> {
     let mut terminal = ratatui::init();
+    // Ask for the kitty keyboard protocol where the terminal has it: without
+    // it ⌘ never reaches a TUI at all, and ⌘S is the save key every other
+    // editor on this platform answers to. Terminals without it still get ⌃S.
+    let enhanced = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
+        && crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            )
+        )
+        .is_ok();
     let picker = make_picker(no_thumbnail);
 
     let mut app = App::new(files, custom, !no_thumbnail);
@@ -1487,6 +1537,9 @@ pub fn run(files: Vec<FileTags>, custom: BTreeMap<String, Agg>, no_thumbnail: bo
         }
     })();
 
+    if enhanced {
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::PopKeyboardEnhancementFlags);
+    }
     ratatui::restore();
     res
 }
@@ -1697,12 +1750,71 @@ mod tests {
     fn every_other_category_keeps_the_ordinary_form() {
         for app in [one(&[]), one(&[("category", "Music Video")])] {
             let k = keys(&app);
-            assert_eq!(k[..3], ["category", "title", "variant"], "{k:?}");
+            assert_eq!(k[..3], ["category", "variant", "title"], "{k:?}");
             for hidden in FOOTAGE_HIDDEN {
                 assert!(k.contains(hidden), "{hidden} should be shown: {k:?}");
             }
             assert_eq!(row(&app, "actors").label, "Actors");
         }
+    }
+
+    /// Adult is the second profile: no Artist row, the publishing order, and
+    /// no Track until the file is a Clip.
+    #[test]
+    fn the_adult_category_reshapes_the_form() {
+        let app = one(&[("category", "Adult")]);
+        let k = keys(&app);
+        assert!(!k.contains(&"artist"), "{k:?}");
+        assert!(!k.contains(&"track"), "not a clip: {k:?}");
+        assert_eq!(
+            k[..13],
+            [
+                "category", "variant", "title", "channel", "actors", "rating", "url", "tags",
+                "date", "description", "genre", "synopsis", "origin"
+            ]
+        );
+        assert_eq!(k[13..], ["kind"]);
+
+        let app = one(&[("category", "Adult"), ("variant", "Clip")]);
+        let k = keys(&app);
+        assert_eq!(k[..4], ["category", "variant", "title", "track"], "{k:?}");
+        assert_eq!(row(&app, "track").label, "Track");
+    }
+
+    /// Choosing Clip in the form, not just on disk, brings Track in -- and
+    /// a track number already on a file shows regardless of the profile.
+    #[test]
+    fn track_follows_the_staged_variant_and_its_own_value() {
+        let mut app = one(&[("category", "Adult")]);
+        assert!(!keys(&app).contains(&"track"));
+        app.set_staged(0, "variant", Value::text("Clip"));
+        assert!(keys(&app).contains(&"track"), "{:?}", keys(&app));
+
+        let app = one(&[("category", "Music Video"), ("track", "3")]);
+        assert!(keys(&app).contains(&"track"), "{:?}", keys(&app));
+        assert!(!keys(&one(&[("category", "Music Video")])).contains(&"track"));
+    }
+
+    /// ⌃S / ⌘S is save from either mode: it commits the open field first,
+    /// so the plan holds what was on screen, and leaves Edit mode behind.
+    #[test]
+    fn save_hotkey_commits_the_open_field_and_prepares_the_write() {
+        let mut app = one(&[]);
+        app.focus = app.rows.iter().position(|r| r.key == "title").unwrap();
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.mode, Mode::Edit);
+        for c in "hi".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        app.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert_eq!(app.mode, Mode::Select);
+        assert_eq!(app.staged_count(), 1);
+        assert!(app.pending.is_some(), "{}", app.status);
+
+        let mut app = one(&[]);
+        app.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SUPER));
+        assert!(app.pending.is_none());
+        assert_eq!(app.status, "nothing to write");
     }
 
     /// Hiding a row must never hide a pending write. Same escape the

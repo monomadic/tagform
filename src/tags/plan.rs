@@ -41,6 +41,7 @@ pub const EXIFTOOL_KEY_NAMES: &[(&str, &str)] = &[
     ("synopsis", "SynopsisK"),
     ("origin", "Origin"),
     ("location", "Location"),
+    ("track", "TrackK"),
 ];
 
 pub fn exiftool_name(key: &str) -> Option<&'static str> {

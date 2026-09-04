@@ -248,6 +248,12 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
     // Every row is laid out, then a window of it is drawn: a group rule is a
     // line with no row of its own, so the focused row's position is no longer
     // its index and scrolling has to count lines rather than fields.
+    // Bulk is the aggregate view over more than one file: every edit made
+    // here lands on all of them, and the form says so -- on the rule, and
+    // beside every value.
+    let n_files = format!("{} files", app.files.len());
+    let bulk = (app.view.is_none() && app.files.len() > 1)
+        .then(|| format!("bulk edit mode - {n_files}"));
     let mut lines: Vec<Line> = Vec::new();
     let mut cursor_line: Option<(u16, usize)> = None;
     let mut focus_line = 0usize;
@@ -315,6 +321,12 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
                 Validation::Ok => t::value(),
             };
             (text, fg)
+        } else if bulk.is_some() && row.is_mixed() {
+            // The files disagree: there is no one value to draw, and the count
+            // says how many answers the edit is about to replace. Same colour
+            // as the count beside an agreed value, so the two read as one
+            // kind of note.
+            (format!("multiple values ({})", n_files), t::muted())
         } else {
             match display_row(app, row).filter(|v| !v.is_empty()) {
                 Some(v) if staged => (v, t::staged()),
@@ -327,6 +339,13 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
                 None if staged => ("—".into(), t::staged()),
                 None => ("—".into(), t::value_empty()),
             }
+        };
+        // Beside an agreed value in bulk view: how many files it stands for,
+        // which is also how many a save will land on. Gone while the field is
+        // open, so the text being typed has the whole box.
+        let count_hint = match (&bulk, editing, &row.eff) {
+            (Some(_), false, Agg::Same { .. }) => Some(n_files.clone()),
+            _ => None,
         };
         // Star colour belongs to stars. An empty rating draws the same "—" as
         // every other empty field and must look like one.
@@ -352,10 +371,24 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
             Some((labels, sel)) => {
                 set_spans(&labels, sel, text_w + PAD as usize - lead, bg, focused)
             }
-            None => vec![Span::styled(
-                t::fit(&raw, text_w),
-                Style::default().bg(bg).fg(value_fg),
-            )],
+            None => match count_hint {
+                // The count is dropped, not the value, when the box is too
+                // narrow for both.
+                Some(hint) if text_w > hint.width() + 6 => {
+                    let w = text_w - hint.width() - 2;
+                    vec![
+                        Span::styled(t::fit(&raw, w), Style::default().bg(bg).fg(value_fg)),
+                        Span::styled(
+                            format!("  {hint}"),
+                            Style::default().bg(bg).fg(t::muted()),
+                        ),
+                    ]
+                }
+                _ => vec![Span::styled(
+                    t::fit(&raw, text_w),
+                    Style::default().bg(bg).fg(value_fg),
+                )],
+            },
         };
 
         let mut spans = vec![
@@ -374,10 +407,7 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
         spans.push(Span::styled(" ".repeat(PAD as usize), Style::default().bg(bg)));
         lines.push(Line::from(spans));
         if group_break_after(row) {
-            lines.push(Line::from(Span::styled(
-                "\u{2500}".repeat(inner.width as usize),
-                Style::default().fg(t::rule()),
-            )));
+            lines.push(group_rule(inner.width as usize, bulk.as_deref()));
         }
     }
 
@@ -391,12 +421,32 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-/// Category is drawn alone above a rule. It is not one field among the others:
-/// it says what the file *is*, and which of the fields below it are worth
-/// showing at all (DESIGN §3.5, §16). A form where that choice sits eighth,
-/// indistinguishable from Tags, hides the one answer everything else follows.
+/// Category and Variant are drawn together above a rule. They are not fields
+/// among the others: they say what the file *is* and which version of it this
+/// is, and which of the fields below are worth showing at all (DESIGN §3.5,
+/// §16). A form where that choice sits eighth, indistinguishable from Tags,
+/// hides the one answer everything else follows.
 fn group_break_after(row: &Row) -> bool {
-    row.def.is_some_and(|d| d.id == "category")
+    row.def.is_some_and(|d| d.id == "variant")
+}
+
+/// The rule under Category and Variant. In bulk view it carries the heading
+/// that says every edit below it is about to land on the whole selection.
+fn group_rule(width: usize, heading: Option<&str>) -> Line<'static> {
+    let rule = |n: usize| Span::styled("\u{2500}".repeat(n), Style::default().fg(t::rule()));
+    match heading {
+        Some(h) if h.width() + 4 <= width => {
+            let text = format!(" {h} ");
+            let left = (width - text.width()) / 2;
+            let right = width - text.width() - left;
+            Line::from(vec![
+                rule(left),
+                Span::styled(text, Style::default().fg(t::muted()).add_modifier(Modifier::BOLD)),
+                rule(right),
+            ])
+        }
+        _ => Line::from(rule(width)),
+    }
 }
 
 /// The set to draw for a fixed-set row: its options, and which one the row
@@ -873,6 +923,7 @@ fn file_label(p: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
     fn portrait_gets_a_taller_band_than_landscape() {
@@ -900,7 +951,7 @@ mod tests {
     /// counted in lines: this is the test that fails if the group break is
     /// added back into the field loop without adjusting the scroll.
     #[test]
-    fn category_is_drawn_first_and_the_rule_follows_it() {
+    fn category_and_variant_are_drawn_first_and_the_rule_follows_them() {
         use crate::tags::probe::FileTags;
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
@@ -922,8 +973,75 @@ mod tests {
         };
         // y=0 is the block's top border; the form starts at y=1.
         assert!(line(1).contains("Category"), "{:?}", line(1));
-        assert!(line(2).trim_end().chars().all(|c| c == '\u{2500}'), "{:?}", line(2));
-        assert!(line(3).contains("Title"), "{:?}", line(3));
+        assert!(line(2).contains("Variant"), "{:?}", line(2));
+        assert!(line(3).trim_end().chars().all(|c| c == '\u{2500}'), "{:?}", line(3));
+        assert!(line(4).contains("Title"), "{:?}", line(4));
+    }
+
+    fn two_files(a: &[(&str, &str)], b: &[(&str, &str)]) -> crate::ui::app::App {
+        use crate::tags::probe::FileTags;
+        use std::collections::BTreeMap;
+        let mk = |name: &str, kv: &[(&str, &str)]| FileTags {
+            path: std::path::PathBuf::from(format!("/tmp/tagform-render-{name}.mp4")),
+            atoms: kv.iter().map(|(k, v)| (k.to_string(), Value::text(*v))).collect(),
+            xmp: BTreeMap::new(),
+        };
+        crate::ui::app::App::new(vec![mk("a", a), mk("b", b)], BTreeMap::new(), false)
+    }
+
+    fn screen(app: &crate::ui::app::App, w: u16, h: u16) -> Vec<String> {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|fr| draw_fields(fr, fr.area(), app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect()
+    }
+
+    /// Bulk view says what it is and how far an edit reaches: the heading on
+    /// the rule, the count beside an agreed value, and "multiple values"
+    /// where the files disagree. Opening the field takes the note away so the
+    /// typing has the box.
+    #[test]
+    fn bulk_view_labels_the_rule_and_every_value_with_the_count() {
+        let mut app = two_files(
+            &[("title", "Same"), ("channel", "One")],
+            &[("title", "Same"), ("channel", "Two")],
+        );
+        let lines = screen(&app, 80, 20);
+        let rule = &lines[3];
+        assert!(rule.contains("bulk edit mode - 2 files"), "{rule:?}");
+        assert!(rule.starts_with('\u{2500}') && rule.trim_end().ends_with('\u{2500}'), "{rule:?}");
+        let title = lines.iter().find(|l| l.contains("Title")).unwrap();
+        assert!(title.contains("Same") && title.contains("2 files"), "{title:?}");
+        let channel = lines.iter().find(|l| l.contains("Channel")).unwrap();
+        assert!(channel.contains("multiple values (2 files)"), "{channel:?}");
+
+        // Open Title: the count goes, the value stays.
+        app.focus = app.rows.iter().position(|r| r.key == "title").unwrap();
+        app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let lines = screen(&app, 80, 20);
+        let title = lines.iter().find(|l| l.contains("Title")).unwrap();
+        assert!(title.contains("Same") && !title.contains("2 files"), "{title:?}");
+
+        // A single file, or one file of the selection, is not bulk.
+        app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.on_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+        let lines = screen(&app, 80, 20);
+        assert!(!lines.iter().any(|l| l.contains("files")), "{lines:?}");
+    }
+
+    /// A set the files disagree about lights nothing: highlighting one file's
+    /// answer would claim an agreement that is not there.
+    #[test]
+    fn a_mixed_set_lights_no_option() {
+        let app = two_files(&[("category", "Adult")], &[("category", "Meme")]);
+        let row = app.rows.iter().find(|r| r.key == "category").unwrap();
+        let (_, sel) = closed_set(&app, row).unwrap();
+        assert_eq!(sel, None);
+        let agreed = two_files(&[("category", "Meme")], &[("category", "Meme")]);
+        let row = agreed.rows.iter().find(|r| r.key == "category").unwrap();
+        assert!(closed_set(&agreed, row).unwrap().1.is_some());
     }
 
     /// Category's set is painted on the closed row, and the value it holds is

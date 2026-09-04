@@ -46,6 +46,11 @@ pub struct FieldDef {
     /// Part of the footage profile: shown only when the value is actually
     /// present in the selection, not gated on any other field (DESIGN §3.6).
     pub footage_only: bool,
+    /// Part of the adult-clip profile: shown when the selection agrees it is
+    /// an Adult Clip, or when the value is present -- a track number on a
+    /// file that is no longer tagged as a clip is still a value, and hiding it
+    /// would hide a key the write carries (invariant 4).
+    pub clip_only: bool,
 }
 
 macro_rules! field {
@@ -54,7 +59,7 @@ macro_rules! field {
         FieldDef {
             id: $id, label: $label, control: $control,
             mdta: &[$($m),*], read: &[$($r),*], xmp: &[$($x),*],
-            ilst: $ilst, footage_only: false,
+            ilst: $ilst, footage_only: false, clip_only: false,
         }
     };
 }
@@ -78,17 +83,32 @@ pub static FIELDS: &[FieldDef] = &[
     field!("category", "Category", Control::Enum,
         mdta: ["category"], read: ["category"], xmp: [], ilst: None),
 
-    field!("title", "Title", Control::Text,
-        mdta: ["title"], read: ["title"], xmp: ["XMP-dc:Title"], ilst: Some("\u{a9}nam")),
-
     // Which version of the work this file is: the original, an excerpt, or a
     // remastered/upscaled pass over it. Called `type` on disk until now, which
     // was both too generic to read and a reserved word in every language that
     // touches it -- `Enums.type_` was carrying the trailing underscore. Writes
     // `variant`; still reads `type`, because every file tagged before the
     // rename has one (DESIGN §3.4).
+    //
+    // Directly under Category, above the same rule: the two closed sets
+    // together say what the file is and which version of it this is, and the
+    // open fields below the rule describe that thing.
     field!("variant", "Variant", Control::Enum,
         mdta: ["variant"], read: ["variant", "type"], xmp: [], ilst: None),
+
+    field!("title", "Title", Control::Text,
+        mdta: ["title"], read: ["title"], xmp: ["XMP-dc:Title"], ilst: Some("\u{a9}nam")),
+
+    // A clip's number within the work it was cut from. Only the adult-clip
+    // profile shows it unprompted; anywhere else it appears once it holds a
+    // value. `track` under mdta, not the iTunes `trkn` pair -- that atom is a
+    // binary (n, total) tuple ffmpeg synthesises from a `track` tag, and it
+    // has not been measured (invariant 1).
+    FieldDef {
+        id: "track", label: "Track", control: Control::Text,
+        mdta: &["track"], read: &["track"], xmp: &[], ilst: None,
+        footage_only: false, clip_only: true,
+    },
 
     // yt-dlp writes %(cast,uploader)l to both actors and artist; rename-footage
     // writes the same people to XMP as a true list.
@@ -162,7 +182,7 @@ pub static FIELDS: &[FieldDef] = &[
     FieldDef {
         id: "location", label: "Location", control: Control::Text,
         mdta: &[], read: &[],
-        xmp: &["XMP-iptcExt:LocationCreatedCity"], ilst: None, footage_only: true,
+        xmp: &["XMP-iptcExt:LocationCreatedCity"], ilst: None, footage_only: true, clip_only: false,
     },
     // Written by the camera, never by hand. rename-footage --geocode is what
     // turns these into the place name above.
@@ -173,7 +193,7 @@ pub static FIELDS: &[FieldDef] = &[
     FieldDef {
         id: "coordinates", label: "Coordinates", control: Control::ReadOnly,
         mdta: &[], read: &["location", "location-eng"],
-        xmp: &[], ilst: None, footage_only: true,
+        xmp: &[], ilst: None, footage_only: true, clip_only: false,
     },
     // Write-once: the only surviving copy of a camera's own IMG_4855.MOV.
     // rename-footage --geocode writes the city as one field of an IPTC block and
@@ -183,17 +203,17 @@ pub static FIELDS: &[FieldDef] = &[
     FieldDef {
         id: "location_state", label: "State", control: Control::Text,
         mdta: &[], read: &[],
-        xmp: &["XMP-iptcExt:LocationCreatedProvinceState"], ilst: None, footage_only: true,
+        xmp: &["XMP-iptcExt:LocationCreatedProvinceState"], ilst: None, footage_only: true, clip_only: false,
     },
     FieldDef {
         id: "location_country", label: "Country", control: Control::Text,
         mdta: &[], read: &[],
-        xmp: &["XMP-iptcExt:LocationCreatedCountryName"], ilst: None, footage_only: true,
+        xmp: &["XMP-iptcExt:LocationCreatedCountryName"], ilst: None, footage_only: true, clip_only: false,
     },
     FieldDef {
         id: "preserved_name", label: "Original name", control: Control::ReadOnly,
         mdta: &[], read: &[], xmp: &["XMP-xmpMM:PreservedFileName"],
-        ilst: None, footage_only: true,
+        ilst: None, footage_only: true, clip_only: false,
     },
 ];
 
@@ -221,11 +241,35 @@ pub fn footage_label(id: &str) -> Option<&'static str> {
     (id == "actors").then_some("People")
 }
 
-/// Position in `FOOTAGE_ORDER`, or past its end for a field it does not name.
-/// Sorting by this and nothing else keeps the unnamed fields in schema order,
-/// because the sort is stable.
+/// Position in `FOOTAGE_ORDER`; see `profile_rank`.
 pub fn footage_rank(id: &str) -> usize {
-    FOOTAGE_ORDER.iter().position(|f| *f == id).unwrap_or(FOOTAGE_ORDER.len())
+    profile_rank(FOOTAGE_ORDER, id)
+}
+
+/// The second Category with a profile of its own (§3.6).
+pub const ADULT: &str = "Adult";
+
+/// The Variant that adds a track number to an adult file: a clip is one cut
+/// of a longer work, and the number says which.
+pub const CLIP: &str = "Clip";
+
+/// An adult file is published under a channel and credits its actors; there
+/// is no separate artist. Same display-only rule as `FOOTAGE_HIDDEN`.
+pub static ADULT_HIDDEN: &[&str] = &["artist"];
+
+/// The order an adult file is filled in. Track sits with Title because it
+/// qualifies it -- "this work, cut N". Kind and the footage fields are not
+/// named and keep schema order behind these.
+pub static ADULT_ORDER: &[&str] = &[
+    "category", "variant", "title", "track", "channel", "actors", "rating", "url", "tags",
+    "date", "description", "genre", "synopsis", "origin",
+];
+
+/// Position in a profile's order, or past its end for a field it does not
+/// name. Sorting by this and nothing else keeps the unnamed fields in schema
+/// order, because the sort is stable.
+pub fn profile_rank(order: &[&str], id: &str) -> usize {
+    order.iter().position(|f| *f == id).unwrap_or(order.len())
 }
 
 /// Muxer bookkeeping. Hidden from the form, and actively cleared on write —
@@ -286,13 +330,29 @@ mod tests {
         assert_eq!(FIELDS[0].id, "category");
     }
 
-    /// Variant sits directly under Title: it is a qualifier on the name --
-    /// "the same work, this version of it" -- and reading one without the
-    /// other says less than either does alone.
+    /// Variant sits directly under Category, above the rule the form draws
+    /// under the pair: the two closed sets say what the file is, and the
+    /// open fields below describe it.
     #[test]
-    fn variant_follows_title() {
-        assert_eq!(FIELDS[1].id, "title");
-        assert_eq!(FIELDS[2].id, "variant");
+    fn variant_follows_category() {
+        assert_eq!(FIELDS[1].id, "variant");
+        assert_eq!(FIELDS[2].id, "title");
+    }
+
+    /// Same check as the footage profile: a name that is not a field would
+    /// hide nothing and order nothing, silently.
+    #[test]
+    fn the_adult_profile_names_only_real_fields() {
+        for id in ADULT_HIDDEN.iter().chain(ADULT_ORDER) {
+            assert!(field_by_id(id).is_some(), "{id} is not a field");
+        }
+        for id in ADULT_HIDDEN {
+            assert!(!ADULT_ORDER.contains(id), "{id} is both hidden and ordered");
+        }
+        assert_eq!(ADULT_ORDER[..2], ["category", "variant"]);
+        assert!(ADULT_ORDER.contains(&"track"));
+        assert!(field_by_id("track").unwrap().clip_only);
+        assert!(profile_rank(ADULT_ORDER, "kind") > profile_rank(ADULT_ORDER, "origin"));
     }
 
     /// Every id the footage profile names has to be a real field, or the
