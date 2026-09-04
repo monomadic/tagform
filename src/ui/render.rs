@@ -369,7 +369,7 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
         let lead = if set.is_some() { 0 } else { PAD as usize };
         let value_spans = match set {
             Some((labels, sel)) => {
-                set_spans(&labels, sel, text_w + PAD as usize - lead, bg, focused)
+                set_spans(&labels, sel, text_w + PAD as usize - lead, bg, focused, staged)
             }
             None => match count_hint {
                 // The count is dropped, not the value, when the box is too
@@ -490,13 +490,17 @@ fn closed_set(app: &App, row: &Row) -> Option<(Vec<String>, Option<usize>)> {
 /// the one you were on.
 /// `lit` is whether the row is the one you are on: an open or focused set lights
 /// its selection in accent, a set sitting quietly further down the form marks
-/// it without competing with the caret for attention.
+/// it without competing with the caret for attention. `staged` outranks both:
+/// a selection that is about to be written is drawn the way a staged text
+/// value is -- staged green on the box's own ground, bold -- so the edit reads
+/// on the value as well as on the label, focused or not.
 fn set_spans(
     labels: &[String],
     sel: Option<usize>,
     width: usize,
     bg: ratatui::style::Color,
     lit: bool,
+    staged: bool,
 ) -> Vec<Span<'static>> {
     let cell = |i: usize| format!(" {} ", labels[i]);
     let mut first = 0usize;
@@ -518,14 +522,15 @@ fn set_spans(
         used += text.width();
         spans.push(Span::styled(
             text,
-            match (Some(i) == sel, lit) {
-                (true, true) => {
+            match (Some(i) == sel, staged, lit) {
+                (true, true, _) => Style::default().bg(bg).fg(t::staged()).add_modifier(Modifier::BOLD),
+                (true, false, true) => {
                     Style::default().bg(t::accent()).fg(t::badge_fg()).add_modifier(Modifier::BOLD)
                 }
-                (true, false) => {
+                (true, false, false) => {
                     Style::default().bg(t::rule()).fg(t::value()).add_modifier(Modifier::BOLD)
                 }
-                (false, _) => Style::default().bg(bg).fg(t::muted()),
+                (false, _, _) => Style::default().bg(bg).fg(t::muted()),
             },
         ));
     }
@@ -1078,6 +1083,53 @@ mod tests {
         let at = row.find(&chosen).unwrap() as u16;
         assert!(buf[(at, 1)].style().add_modifier.contains(Modifier::BOLD), "{row:?}");
         assert!(!buf[(2 + LABEL_COLS, 1)].style().add_modifier.contains(Modifier::BOLD));
+        // It is a staged edit, so the chosen cell is drawn in the staged
+        // colour the way a staged text value is -- on the label *and* on the
+        // value, not the label alone.
+        assert_eq!(buf[(at, 1)].style().fg, Some(t::staged()), "{row:?}");
+        assert_eq!(buf[(1, 1)].style().fg, Some(t::staged()), "label {row:?}");
+    }
+
+    /// A set whose selection came from disk keeps the focus accent, so the
+    /// staged colour means "will be written" and nothing else.
+    #[test]
+    fn an_unstaged_enum_selection_is_not_drawn_staged() {
+        use crate::tags::probe::FileTags;
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use std::collections::BTreeMap;
+
+        // The set's members live on the app, so one is built empty to read
+        // them, and the real one with the choice already on disk.
+        let app = crate::ui::app::App::new(
+            vec![FileTags {
+                path: std::path::PathBuf::from("/tmp/tagform-render-test.mp4"),
+                atoms: BTreeMap::new(),
+                xmp: BTreeMap::new(),
+            }],
+            BTreeMap::new(),
+            false,
+        );
+        let chosen = app.enums.category[1].clone();
+        let mut atoms = BTreeMap::new();
+        atoms.insert("category".to_string(), Value::Text(chosen.clone()));
+        let app = crate::ui::app::App::new(
+            vec![FileTags {
+                path: std::path::PathBuf::from("/tmp/tagform-render-test.mp4"),
+                atoms,
+                xmp: BTreeMap::new(),
+            }],
+            BTreeMap::new(),
+            false,
+        );
+
+        let w = 140;
+        let mut term = Terminal::new(TestBackend::new(w, 12)).unwrap();
+        term.draw(|fr| draw_fields(fr, fr.area(), &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let row: String = (0..w).map(|x| buf[(x, 1)].symbol().to_string()).collect();
+        let at = row.find(&chosen).unwrap() as u16;
+        assert_ne!(buf[(at, 1)].style().fg, Some(t::staged()), "{row:?}");
     }
 
     /// The strip is one line and its keys are a fixed vocabulary, so a hint
