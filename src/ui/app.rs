@@ -13,6 +13,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use crate::config::{Enums, KINDS};
+use crate::fetch;
 use crate::model::schema::{
     self, Control, FieldDef, ADULT, ADULT_HIDDEN, ADULT_ORDER, CLIP, FIELDS, FOOTAGE,
     FOOTAGE_HIDDEN,
@@ -174,6 +175,9 @@ pub enum Msg {
     Wrote(Box<WriteResults>),
     /// One outcome per file a `rename-video` run was given, by file index.
     Renamed(Vec<(usize, Result<Outcome, String>)>),
+    /// One result per file a `yt-dlp` fetch was given, by file index: the
+    /// field values its URL yielded, or why it yielded none.
+    Fetched(Vec<(usize, Result<Vec<(&'static str, Value)>, String>)>),
 }
 
 /// Staged edits, keyed by file index then by row key.
@@ -209,6 +213,10 @@ pub struct App {
     /// and while it does, the paths in `files` are the ones about to change,
     /// which is why `w` and a second `r` are held off until it lands.
     pub renaming: bool,
+    /// A `yt-dlp` fetch is in flight (§5.5). Off the UI thread because a
+    /// page extraction is seconds of network, and held to one at a time so
+    /// two fetches cannot race each other onto the same field.
+    pub fetching: bool,
     /// Live position of the running write. The write happens on its own thread
     /// precisely so this can be painted while it runs -- done inline, the event
     /// loop cannot redraw and a multi-gigabyte remux looks like a hang.
@@ -274,6 +282,7 @@ impl App {
             results: None,
             writing: false,
             renaming: false,
+            fetching: false,
             progress: None,
             editor: None,
             mode: Mode::Select,
@@ -382,6 +391,7 @@ impl App {
                 }
                 Msg::Wrote(r) => self.finish_write(*r),
                 Msg::Renamed(r) => self.finish_rename(r),
+                Msg::Fetched(r) => self.finish_fetch(r),
             }
         }
     }
@@ -465,6 +475,11 @@ impl App {
         // middle of changing.
         if self.renaming {
             self.status = "rename in progress".into();
+            return;
+        }
+        // The fetch is about to stage edits; a plan built now would miss them.
+        if self.fetching {
+            self.status = "fetch in progress".into();
             return;
         }
         if self.staged.is_empty() {
@@ -677,6 +692,91 @@ impl App {
         };
     }
 
+    /// `d` over the URL field: ask yt-dlp what the page says and stage it
+    /// onto the other fields (§5.5). Per file in scope, each from its own URL,
+    /// so a batch of downloads seeds itself in one key. The URL used is the
+    /// one shown -- a URL just typed and not yet written counts, which is the
+    /// common case: paste the page, press `d`, get the form filled.
+    fn fetch_tags(&mut self) {
+        self.commit_editor();
+        if self.fetching {
+            return;
+        }
+        let Some(row) = self.rows.get(self.focus) else { return };
+        if row.key != "url" {
+            self.status = "fetch works from the URL field".into();
+            return;
+        }
+        let jobs: Vec<(usize, String)> = self
+            .scope()
+            .into_iter()
+            .filter_map(|i| {
+                let disk = disk_value(&self.files[i], "url");
+                let url = overlay(disk, self.staged.get(&i).and_then(|m| m.get("url")))?;
+                match url {
+                    Value::Text(s) if !s.trim().is_empty() => Some((i, s.trim().to_string())),
+                    _ => None,
+                }
+            })
+            .collect();
+        let Some((first, _)) = jobs.first() else {
+            self.status = "no URL to fetch from".into();
+            return;
+        };
+        self.status = match jobs.len() {
+            1 => format!("fetching tags for {}", file_name(&self.files[*first].path)),
+            n => format!("fetching tags for {n} files"),
+        };
+        self.fetching = true;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let out = jobs
+                .iter()
+                // One page down must not cost the rest of the batch its tags.
+                .map(|(i, url)| (*i, fetch::fetch(url).map_err(|e| format!("{e:#}"))))
+                .collect();
+            let _ = tx.send(Msg::Fetched(out));
+        });
+    }
+
+    /// Stage what the pages said, as one undoable step. A field a page did not
+    /// answer is not in its list and so is not touched -- the existing value,
+    /// staged or on disk, stays. A field it did answer is replaced: the point
+    /// of pressing `d` is to take the page's word for it, and `u` takes it
+    /// back in one key if the page was wrong.
+    fn finish_fetch(&mut self, out: Vec<(usize, Result<Vec<(&'static str, Value)>, String>)>) {
+        self.fetching = false;
+        let total = out.len();
+        let before = self.staged.clone();
+        let mut filled = 0usize;
+        let mut files = 0usize;
+        let mut note = String::new();
+        for (i, r) in out {
+            match r {
+                Ok(fields) => {
+                    files += 1;
+                    for (id, value) in fields {
+                        filled += self.place(&[i], id, &value, false);
+                    }
+                }
+                Err(e) => note = e,
+            }
+        }
+        if before != self.staged {
+            self.undo.push(before);
+            self.redo.clear();
+        }
+        self.rebuild_rows();
+        let n_fields = |n: usize| format!("{n} field{}", if n == 1 { "" } else { "s" });
+        self.status = match (files, total) {
+            (0, _) => note,
+            (1, 1) if filled == 0 => "nothing new: the page agrees with the file".into(),
+            (1, 1) => format!("fetched {}", n_fields(filled)),
+            (n, t) if n == t => format!("fetched {} across {n} files", n_fields(filled)),
+            (n, t) => format!("fetched {} across {n} of {t} files: {note}", n_fields(filled)),
+        };
+    }
+
     /// Route by mode. Select moves and commands; Edit types.
     pub fn on_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press {
@@ -822,6 +922,7 @@ impl App {
             (KeyCode::Char('u'), false) => self.undo(),
             (KeyCode::Char('r'), true) => self.redo(),
             (KeyCode::Char('r'), false) => self.rename_files(),
+            (KeyCode::Char('d'), false) => self.fetch_tags(),
             (KeyCode::Backspace, _) => self.clear_focused(),
             (KeyCode::Char('w'), false) => self.prepare_write(),
             (KeyCode::Char('t'), false) => {
@@ -963,9 +1064,30 @@ impl App {
     /// With `only_empty`, files that already show something keep it. That is
     /// the backfill: fill the gaps, disturb nothing.
     fn stage_on(&mut self, targets: &[usize], key: &str, value: &Value, only_empty: bool) -> usize {
-        let Some(row) = self.rows.iter().find(|r| r.key == key) else { return 0 };
-        let (control, opts) = (row.control, self.options_for(row));
         let before = self.staged.clone();
+        let n = self.place(targets, key, value, only_empty);
+        if before != self.staged {
+            self.undo.push(before);
+            self.redo.clear();
+        }
+        n
+    }
+
+    /// `stage_on` without the undo entry, so a caller placing several values
+    /// at once can record them as one step.
+    ///
+    /// The control is taken from the row where there is one, and from the
+    /// schema otherwise -- a fetch may land a value on a field the current
+    /// profile hides, and the value still has to be compared through the
+    /// right control.
+    fn place(&mut self, targets: &[usize], key: &str, value: &Value, only_empty: bool) -> usize {
+        let (control, opts) = match self.rows.iter().find(|r| r.key == key) {
+            Some(row) => (row.control, self.options_for(row)),
+            None => match schema::field_by_id(key) {
+                Some(def) => (def.control, Vec::new()),
+                None => return 0,
+            },
+        };
         let mut n = 0;
         for i in targets {
             let Some(file) = self.files.get(*i) else { continue };
@@ -990,10 +1112,6 @@ impl App {
             n += 1;
         }
         self.staged.retain(|_, edits| !edits.is_empty());
-        if before != self.staged {
-            self.undo.push(before);
-            self.redo.clear();
-        }
         n
     }
 
@@ -1721,6 +1839,54 @@ mod tests {
 
     fn press(app: &mut App, code: KeyCode) {
         app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    fn shown(app: &App, id: &str) -> Option<Value> {
+        app.rows.iter().find(|r| r.key == id).and_then(|r| r.shown().cloned())
+    }
+
+    /// A fetch takes the page's word for the fields it answered and leaves
+    /// every other field alone -- and the whole of it is one undo step.
+    #[test]
+    fn a_fetch_fills_what_the_page_answered_and_keeps_the_rest() {
+        let mut app = one(&[("title", "Old Title"), ("channel", "Old Channel")]);
+        app.finish_fetch(vec![(
+            0,
+            Ok(vec![("title", Value::text("New Title")), ("tags", Value::List(vec!["a".into()]))]),
+        )]);
+        assert_eq!(shown(&app, "title"), Some(Value::text("New Title")));
+        assert_eq!(shown(&app, "channel"), Some(Value::text("Old Channel")));
+        assert_eq!(shown(&app, "tags"), Some(Value::List(vec!["a".into()])));
+        assert_eq!(app.status, "fetched 2 fields");
+        press(&mut app, KeyCode::Char('u'));
+        assert!(app.staged.is_empty(), "{:?}", app.staged);
+        assert_eq!(shown(&app, "title"), Some(Value::text("Old Title")));
+        assert_eq!(shown(&app, "tags"), None);
+    }
+
+    /// A page that failed reports why, and stages nothing.
+    #[test]
+    fn a_failed_fetch_stages_nothing() {
+        let mut app = one(&[("title", "T")]);
+        app.finish_fetch(vec![(0, Err("Video unavailable".into()))]);
+        assert!(app.staged.is_empty());
+        assert_eq!(app.status, "Video unavailable");
+    }
+
+    /// `d` is the URL field's key: elsewhere it says so, and on an empty URL
+    /// it has nothing to ask -- neither starts yt-dlp.
+    #[test]
+    fn fetch_only_starts_from_a_url() {
+        let mut app = one(&[("title", "T")]);
+        app.jump(0);
+        press(&mut app, KeyCode::Char('d'));
+        assert!(!app.fetching);
+        assert_eq!(app.status, "fetch works from the URL field");
+        let url = app.rows.iter().position(|r| r.key == "url").unwrap();
+        app.jump(url);
+        press(&mut app, KeyCode::Char('d'));
+        assert!(!app.fetching);
+        assert_eq!(app.status, "no URL to fetch from");
     }
 
     /// Footage is a different form, not the same form with a label on it: the

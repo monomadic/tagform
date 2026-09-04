@@ -59,6 +59,7 @@ Use the map below instead of searching the tree.
 ```
 src/main.rs         CLI, --print-json / --print-schema, exit codes
 src/config.rs       the yt-dlp --alias parse (Category/Variant sets)
+src/fetch.rs        `d`: yt-dlp -J on the URL field → field values (no download)
 src/thumb.rs        thumbnail extraction, cache, ratatui-image
 src/model/
   schema.rs         FIELDS table — field → mdta/read/xmp/ilst keys. Start here.

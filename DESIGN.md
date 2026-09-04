@@ -845,15 +845,20 @@ Text plus a `url::Url` parse on every keystroke:
 The table above is built exactly as written, down to the message text
 (`not a URL: …`).
 
-⟨designed⟩ `⌃O` (open), `⌃Y` (yank), the `https://` prefix fix-up and — the one
-that matters — **fetch** are not built. Fetch and the fix-up both need keys
-that are not `⌃F`, which is forward-one-character (§5.1). Fetch runs
-`yt-dlp --skip-download
---dump-single-json` against the URL, via the shared cache `media-audit` and
-`ytq` already use, and offers to fill Title, Actors, Channel, Description, Tags
-and Date from the result with a per-field diff, so nothing is silently
-overwritten. It is `media-refresh-tags` as an interaction instead of a script,
-and it is the headline feature of milestone 7.
+⟨designed⟩ `⌃O` (open), `⌃Y` (yank) and the `https://` prefix fix-up are not
+built. The fix-up needs a key that is not `⌃F`, which is forward-one-character
+(§5.1).
+
+⟨built, differs⟩ **Fetch** is `d` in Select mode over the URL field
+(`src/fetch.rs`), not a control-level key: it runs `yt-dlp -J --skip-download`
+against the URL and fills Title, Actors, Channel, Description, Tags and Date
+from the result, mapped exactly as the yt-dlp config's `--parse-metadata`
+lines map them at download time. No shared cache, and no per-field diff
+dialog: the values land as *staged* edits, so the diff is the form itself —
+the `●` marks, `u` to take the whole fetch back in one step, and the plan `w`
+shows before anything is written. A field the page does not answer is left
+exactly as it was. In a multi-file scope each file is fetched from its own
+URL. It is `media-refresh-tags` as an interaction instead of a script.
 
 Recognising a URL is already embedded is why the URL field reads five aliases
 (§4.2): files in this library carry it as `comment` (old `media-write-tags`
@@ -1786,7 +1791,7 @@ sequence worth restating here.
 | # | Remaining | |
 |---|---|---|
 | **6** | The Footage profile: XMP fields ✅, `PreservedFileName` ✅, the second filename grammar ⬜ (§9.4). | ◐ |
-| **7** | Seeding: `--from-filename`, `--fetch`, completion history. | ⬜ |
+| **7** | Seeding: fetch ✅ (`d` on the URL field, §5.5), `--from-filename` ⬜, completion history ⬜. | ◐ |
 | **8** | Headless `--set`/`--apply`, the remaining §3.2 fields, config file, `--compat both`. | ⬜ |
 
 Milestone 6 turned out to be two independent halves, and the important one is
@@ -1809,8 +1814,9 @@ now the most valuable:
 2. **Filename work** (the rest of 6) — the two grammars, parsing as well as
    composing. This is the last piece that unlocks something the old scripts
    could do and `tagform` cannot.
-3. **Seeding** (7) — `--fetch` and completion. The largest ergonomic wins
-   available, and both are additive: nothing about the existing form changes.
+3. **Seeding** (7) — fetch is built, as a key rather than a flag (§5.5);
+   completion is not. Both are additive: nothing about the existing form
+   changes.
 4. **A fixture suite** (§14) — ✅ **built**, and it was the cheapest risk
    reduction in the project: eleven tests over containers generated at test
    time, guarding XMP survival, the round-trip, the failure paths and the

@@ -6,6 +6,7 @@
 //! behaviour the design rests on.
 
 mod config;
+mod fetch;
 mod model;
 mod tags;
 mod thumb;
@@ -219,6 +220,8 @@ Keys — the form is modal.
     enter             edit the focused field; on an empty date, fill in now
     w                 write staged edits (shows a plan to confirm first)
     r                 rename the file(s) in view from their tags (rename-video)
+    d                 on the URL field: fetch the page's tags with yt-dlp (no download)
+                      and stage them onto the other fields; unanswered fields are kept
     m                 merge a list field across every file in the selection
     i                 inspector: per-file values for the focused field
     ] / [             next / previous file         a       all files
