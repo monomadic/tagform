@@ -605,14 +605,8 @@ impl App {
                 if kept == 1 { "" } else { "s" }
             )
         };
-        // A clean write is the end of the job: the form was opened to make
-        // these edits, and they are on disk. Anything short of that stays up,
-        // with the failures and their reasons, and any key returns to the
-        // editor with the unwritten edits still staged.
-        if results.failed.is_empty() && kept == 0 {
-            self.quit = true;
-            return;
-        }
+        // The results stay up whether the write was clean or not: any key
+        // returns to the editor, with any unwritten edits still staged.
         self.results = Some(results);
     }
 
