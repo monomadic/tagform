@@ -1555,10 +1555,13 @@ better: `j`/`k` move and `enter` opens a field, so single-letter commands are
 free — `w` can mean write precisely because nothing is listening for the letter
 `w` until you press `enter`.
 
-**The full keymap lives in [README.md](README.md) and in `--help`**, which is
-generated from the same source the program dispatches on. A third copy here
-would be a third thing to forget to update; what belongs in this document is
-why the map has the shape it does.
+**The full keymap lives in one table, `src/ui/keymap.rs`**, which `--help`
+prints and `?` paints as an overlay in the form. It used to be two hand-written
+copies and `?` would have made a third; the table is what stopped that. The
+shortcut strip stays an abbreviation written by hand, because a single line has
+room for a mode's commands and not for forty bindings — which is the reason `?`
+exists. [README.md](README.md) keeps a reader's copy. What belongs in *this*
+document is why the map has the shape it does.
 
 Two rules do the work. `enter` opens a field and `esc` or `enter` closes it, so
 Select mode's letters are never ambiguous — `w` write, `m` merge, `i`
@@ -1585,9 +1588,13 @@ On a text field, the emacs/macOS editing keys as well — `⌃A` `⌃E` `⌃B` `
 `⌃D` `⌃H` `⌃W` `⌃K` `⌃U`, table in §5.1. They bind only while a field is open,
 which is exactly why the mode split makes them affordable.
 
+**`?` opens the key map** over the form, the way the write plan does: a
+dialog owns every key while it is up, so reading the map cannot edit the file
+behind it. Two columns where the terminal is wide enough and one where it is
+not, scrolled with `j`/`k` when it does not fit, and any other key closes it.
+
 ⟨designed⟩ Unbound, each waiting on its feature: `⌃Space` (completion, §5.1),
-`⌃O` / `⌃Y` (open / yank), `⌃G` / `⌃⇧G` (thumbnail seek, §8), `?` (key help —
-the shortcut strip and `--help` cover it for now).
+`⌃O` / `⌃Y` (open / yank), `⌃G` / `⌃⇧G` (thumbnail seek, §8).
 
 ⟨designed⟩ Two features have **lost the key they were reserved for**, since
 the editing bindings have the stronger claim on a text field: the `$EDITOR`

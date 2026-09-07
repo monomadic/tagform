@@ -197,6 +197,18 @@ pub struct App {
     /// None = aggregate view over every file; Some(i) = that one file.
     pub view: Option<usize>,
     pub inspector: bool,
+    /// The key-map overlay (§11). A screen of its own rather than a longer
+    /// shortcut strip: the strip has room for a mode's commands, not for the
+    /// forty bindings the form actually has.
+    pub help: bool,
+    /// First line of the map on screen, so the overlay survives a terminal
+    /// too short to hold it whole.
+    pub help_scroll: u16,
+    /// The furthest that scroll can usefully go, which only the painter knows
+    /// -- it depends on the height of the box and on whether the map fell into
+    /// one column or two. Set on every paint so `j` at the bottom stops rather
+    /// than counting up invisibly and leaving `k` unresponsive.
+    pub help_max: std::cell::Cell<u16>,
     pub status: String,
     pub enums: Enums,
     /// Ride the faststart flag along on any remux we are already doing. On by
@@ -275,6 +287,9 @@ impl App {
             focus: 0,
             view: None,
             inspector: false,
+            help: false,
+            help_scroll: 0,
+            help_max: std::cell::Cell::new(0),
             status: String::new(),
             enums: Enums::load(),
             faststart: true,
@@ -789,6 +804,25 @@ impl App {
             self.results = None;
             return;
         }
+        // The key map owns every key while it is up, the same way a dialog
+        // does -- otherwise reading it would edit the form behind it. Only
+        // scrolling stays live; anything else closes it.
+        if self.help {
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.help_scroll = (self.help_scroll + 1).min(self.help_max.get())
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.help_scroll = self.help_scroll.saturating_sub(1)
+                }
+                _ => {
+                    self.help = false;
+                    self.help_scroll = 0;
+                    self.status.clear();
+                }
+            }
+            return;
+        }
         // A dialog owns every key while it is up: a stray character must not
         // leak into a form field behind a prompt asking to write.
         if self.pending.is_some() {
@@ -923,6 +957,12 @@ impl App {
                 self.status = format!("theme: {}", theme::cycle());
             }
             (KeyCode::Char('f'), false) => self.begin_format(),
+            (KeyCode::Char('?'), false) => {
+                self.commit_editor();
+                self.help = true;
+                self.help_scroll = 0;
+                self.status.clear();
+            }
             (KeyCode::Char('F'), false) => {
                 self.faststart = !self.faststart;
                 self.status = format!("faststart {}", if self.faststart { "on" } else { "off" });

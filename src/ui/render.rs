@@ -8,7 +8,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 use ratatui_image::{protocol::StatefulProtocol, StatefulImage};
 use unicode_width::UnicodeWidthStr;
@@ -18,6 +18,7 @@ use crate::model::value::{Agg, Value};
 use crate::tags::plan::FilePlan;
 use crate::ui::app::{App, Mode, Row, WriteProgress, WriteResults};
 use crate::ui::edit::{stars_glyphs, Opt, Validation};
+use crate::ui::keymap::{key_width, KEYMAP};
 use crate::ui::theme as t;
 
 const LABEL_COLS: u16 = 15;
@@ -60,7 +61,7 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
     draw_badge_bar(f, chunks[0], app);
 
     // A dialog takes everything below the header: it is the whole message.
-    if app.pending.is_some() || app.results.is_some() || app.progress.is_some() {
+    if app.help || app.pending.is_some() || app.results.is_some() || app.progress.is_some() {
         let top = chunks[2].y;
         let body = Rect {
             x: area.x,
@@ -68,7 +69,9 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
             width: area.width,
             height: area.height.saturating_sub(top.saturating_sub(area.y)),
         };
-        if let Some(p) = &app.progress {
+        if app.help {
+            draw_help(f, body, app);
+        } else if let Some(p) = &app.progress {
             draw_progress(f, body, p);
         } else if let Some(plans) = &app.pending {
             draw_confirm(f, body, app, plans);
@@ -163,20 +166,28 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
         .map(|d| d.to_string_lossy().to_string())
         .unwrap_or_default();
     let summary = app.media.get(idx).map(|m| m.summary()).unwrap_or_default();
-    let pad = if has_thumb { "  " } else { " " };
+    // The indent is a block padding, not a prefix on the string: a long
+    // filename wraps, and a wrapped line has to keep the indent the first one
+    // had or the header loses its left edge.
+    let pad = if has_thumb { 2 } else { 1 };
 
     let lines = vec![
         Line::from(Span::styled(
-            format!("{pad}{name}"),
+            name,
             Style::default().fg(t::header_fg()).add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
-            format!("{pad}{}", if summary.is_empty() { "probing…".into() } else { summary }),
+            if summary.is_empty() { "probing…".into() } else { summary },
             Style::default().fg(t::muted()),
         )),
-        Line::from(Span::styled(format!("{pad}{dir}"), Style::default().fg(t::path()))),
+        Line::from(Span::styled(dir, Style::default().fg(t::path()))),
     ];
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), cols[1]);
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(Block::new().padding(Padding::left(pad)))
+            .wrap(Wrap { trim: false }),
+        cols[1],
+    );
 }
 
 /// The answer to "what does ‹multiple› actually contain" -- the thing the old
@@ -710,6 +721,10 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
         ]
     } else {
         &[
+            // Help leads the strip and never falls off it: the list below is
+            // truncated to fit the terminal, so the one key that can find
+            // every other key has to be the first one in it.
+            ("?", "help"),
             // h and l move along a set rather than between rows, but they are
             // the same hand's movement keys and a strip that named only two of
             // the four read as though the other two did nothing.
@@ -774,6 +789,136 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
             None => strip,
         },
         area,
+    );
+}
+
+/// One section of the key map as painted rows, each with the width it
+/// occupies, so two of them can be set side by side without measuring styled
+/// spans twice.
+fn help_section(
+    s: &crate::ui::keymap::Section,
+    keyw: usize,
+    descw: usize,
+    colw: usize,
+) -> Vec<(Vec<Span<'static>>, usize)> {
+    let mut out: Vec<(Vec<Span<'static>>, usize)> = vec![(
+        vec![Span::styled(
+            format!(" {} ", s.title),
+            Style::default().bg(t::accent()).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
+        )],
+        s.title.width() + 2,
+    )];
+    // Indented one column so the note sits under the badge's text rather than
+    // under its left edge, and measured against the whole column: it is prose,
+    // and truncating it to the description column would cut it mid-clause.
+    out.push((
+        vec![Span::styled(
+            format!(" {}", t::fit(s.note, colw.saturating_sub(1))),
+            Style::default().fg(t::muted()),
+        )],
+        colw,
+    ));
+    out.push((vec![], 0));
+    for k in s.binds {
+        let pad = " ".repeat(keyw - key_width(k.keys));
+        out.push((
+            vec![
+                Span::styled(
+                    format!(" {}{pad} ", k.keys),
+                    Style::default().bg(t::rule()).fg(t::accent()).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!(" {}", t::fit(k.what, descw)), Style::default().fg(t::value())),
+            ],
+            keyw + 3 + descw,
+        ));
+    }
+    out.push((vec![], 0));
+    out
+}
+
+/// The whole map, in two columns where the terminal is wide enough for them
+/// and one where it is not, scrolled by `help_scroll` so a short terminal can
+/// still reach the end of it. Sections are never split across the two columns:
+/// a heading in one column and its keys in the other is worse than an uneven
+/// pair of columns.
+fn draw_help(f: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(t::accent()))
+        .padding(Padding::horizontal(1));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let keyw = KEYMAP.iter().flat_map(|s| s.binds.iter()).map(|k| key_width(k.keys)).max().unwrap_or(0);
+    let total = inner.width as usize;
+    // Two columns need the key legend twice, a readable description twice, and
+    // a gutter between them; below that the one-column form reads better than
+    // two squeezed ones.
+    let gutter = 4usize;
+    let two = total >= (keyw + 3 + 34) * 2 + gutter;
+    let colw = if two { (total - gutter) / 2 } else { total };
+    let descw = colw.saturating_sub(keyw + 3).max(8);
+
+    let sections: Vec<Vec<(Vec<Span<'static>>, usize)>> =
+        KEYMAP.iter().map(|s| help_section(s, keyw, descw, colw)).collect();
+
+    let mut lines: Vec<Line> = Vec::new();
+    if two {
+        // Fill the left column until it holds about half the rows, so the two
+        // are balanced whatever the table grows into.
+        let all: usize = sections.iter().map(Vec::len).sum();
+        let mut left: Vec<(Vec<Span<'static>>, usize)> = Vec::new();
+        let mut right: Vec<(Vec<Span<'static>>, usize)> = Vec::new();
+        for sec in sections {
+            if left.len() + sec.len() / 2 <= all / 2 && right.is_empty() {
+                left.extend(sec);
+            } else {
+                right.extend(sec);
+            }
+        }
+        for i in 0..left.len().max(right.len()) {
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            let used = match left.get(i) {
+                Some((s, w)) => {
+                    spans.extend(s.clone());
+                    *w
+                }
+                None => 0,
+            };
+            if let Some((s, _)) = right.get(i) {
+                spans.push(Span::raw(" ".repeat(colw + gutter - used.min(colw + gutter))));
+                spans.extend(s.clone());
+            }
+            lines.push(Line::from(spans));
+        }
+    } else {
+        for sec in sections {
+            for (spans, _) in sec {
+                lines.push(Line::from(spans));
+            }
+        }
+    }
+
+    // Clamp the scroll to what is left below, so pressing j at the bottom does
+    // not scroll the map off the top of its own box.
+    let body_h = inner.height.saturating_sub(1);
+    let max_scroll = (lines.len() as u16).saturating_sub(body_h);
+    app.help_max.set(max_scroll);
+    let scroll = app.help_scroll.min(max_scroll);
+    let foot = if max_scroll > 0 {
+        "  j k ↑ ↓  scroll      any other key  back to the form"
+    } else {
+        "  any key  back to the form"
+    };
+
+    let body = Rect { height: body_h, ..inner };
+    f.render_widget(Paragraph::new(lines).scroll((scroll, 0)), body);
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            foot,
+            Style::default().fg(t::value()).add_modifier(Modifier::BOLD),
+        ))),
+        Rect { y: inner.y + body_h, height: 1, ..inner },
     );
 }
 
@@ -1320,7 +1465,9 @@ mod tests {
             xmp: BTreeMap::new(),
         };
         let app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
-        let w = 240;
+        // Wide enough for the whole vocabulary including the help key, which
+        // leads the strip and so is never the hint that gets dropped.
+        let w = 256;
         let mut term = Terminal::new(TestBackend::new(w, 1)).unwrap();
         term.draw(|fr| draw_shortcuts(fr, fr.area(), &app)).unwrap();
         let buf = term.backend().buffer().clone();
@@ -1330,6 +1477,7 @@ mod tests {
         // still reads as one column once the terminal draws the glyph wide.
         assert!(strip.contains(" ⌫   clear"), "{strip:?}");
         assert!(!strip.contains("…"), "the whole strip should fit at {w} cols: {strip:?}");
+        assert!(strip.starts_with(" NORMAL   ?  help "), "help must lead the strip: {strip:?}");
         for key in ["o", "b", "f", "F", "t"] {
             assert!(strip.contains(&format!(" {key}  ")), "{key} crowded: {strip:?}");
         }
@@ -1378,4 +1526,84 @@ mod tests {
     }
 
 
+}
+
+#[cfg(test)]
+mod help_tests {
+    use super::*;
+    use crate::tags::probe::FileTags;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use std::collections::BTreeMap;
+
+    fn app() -> App {
+        App::new(
+            vec![FileTags {
+                path: std::path::PathBuf::from("/tmp/tagform-help.mp4"),
+                atoms: BTreeMap::new(),
+                xmp: BTreeMap::new(),
+            }],
+            BTreeMap::new(),
+            false,
+        )
+    }
+
+    fn paint(w: u16, h: u16, scroll: u16) -> Vec<String> {
+        let mut a = app();
+        a.help = true;
+        a.help_scroll = scroll;
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|fr| draw_help(fr, fr.area(), &a)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect())
+            .collect()
+    }
+
+    /// Every binding in the table has to reach the screen, or the screen is
+    /// not the key map -- it is a subset that looks like one.
+    #[test]
+    fn every_binding_is_painted_somewhere() {
+        let wide = paint(160, 40, 0).join("\n");
+        for k in KEYMAP.iter().flat_map(|s| s.binds.iter()) {
+            assert!(wide.contains(k.keys), "{:?} missing from the map: {wide}", k.keys);
+        }
+        for s in KEYMAP {
+            assert!(wide.contains(s.title), "{:?} heading missing", s.title);
+        }
+    }
+
+    /// A terminal too short for the map must still be able to reach the end of
+    /// it, and must say so -- an overlay that silently cuts off at `f` looks
+    /// like a map with no undo in it.
+    #[test]
+    fn a_short_terminal_scrolls_and_says_so() {
+        let top = paint(72, 24, 0).join("\n");
+        assert!(top.contains("scroll"), "{top}");
+        assert!(!top.contains("clear the line"), "the whole map cannot fit in 24 rows");
+        let bottom = paint(72, 24, 200).join("\n");
+        assert!(bottom.contains("clear the line"), "scrolled to the end: {bottom}");
+    }
+
+    /// Where the map fits whole there is nothing to scroll, and offering the
+    /// keys anyway is a lie about what the screen does.
+    #[test]
+    fn a_tall_terminal_offers_no_scroll() {
+        let all = paint(160, 40, 0).join("\n");
+        assert!(all.contains("any key  back to the form"), "{all}");
+        assert!(!all.contains("scroll"), "{all}");
+    }
+
+    /// `?` opens it, the next key closes it, and nothing leaks into the form
+    /// behind it -- `w` over the map must not stage a write.
+    #[test]
+    fn the_question_mark_opens_and_the_next_key_closes() {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let mut a = app();
+        a.on_key(KeyEvent::from(KeyCode::Char('?')));
+        assert!(a.help);
+        a.on_key(KeyEvent::from(KeyCode::Char('w')));
+        assert!(!a.help);
+        assert!(a.pending.is_none(), "w over the map reached the form behind it");
+    }
 }

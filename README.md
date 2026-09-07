@@ -92,6 +92,7 @@ nothing is listening for the letter w.
 | `y` / `p` | yank the focused field / paste into it |
 | `f` | format menu — then `c` capitalize, `t` title, `l` lower, `u` upper |
 | `t` | cycle the colour scheme |
+| `?` | the key map — every binding in the form, on a screen of its own |
 | `F` | toggle MOV faststart on the write (on by default) |
 | `q` / `esc` | quit (asks if edits are staged) |
 
@@ -126,7 +127,10 @@ gets them, chips included, since a list is one joined line underneath.
 The form paints its own chrome: a filled `tagform` badge heads the screen, every
 field shows a coloured editable region whether or not it is focused, the focused
 field is marked `▍` (`▶` while editing) and a staged one `●`, and a shortcut
-strip along the bottom lists the keys that are live in the current mode.
+strip along the bottom lists the keys that are live in the current mode, led by
+`?` — which opens the full key map, so the strip only ever has to be an
+abbreviation. The map and `--help` render the same table
+([src/ui/keymap.rs](src/ui/keymap.rs)); neither transcribes the other.
 Colours are true-colour throughout, in seven schemes — `synthwave`, `c64`,
 `midnight`, `gruvbox`, `nord`, `rose-pine`, `amber` — cycled with `t` or picked
 with `--theme=NAME`. Three of them are retro (`synthwave`, `c64`, and `amber`,

@@ -84,7 +84,7 @@ fn run() -> Result<()> {
             "--no-thumbnail" => no_thumbnail = true,
             a if a.starts_with("--theme=") => theme = Some(a[8..].to_string()),
             "-h" | "--help" => {
-                println!("{USAGE}");
+                println!("{}", usage());
                 return Ok(());
             }
             a if a.starts_with('-') => bail!("unknown option: {a}"),
@@ -105,7 +105,7 @@ fn run() -> Result<()> {
     }
 
     if paths.is_empty() {
-        bail!("no files given\n\n{USAGE}");
+        bail!("no files given\n\n{}", usage());
     }
     let files: Vec<FileTags> = paths.iter().map(|p| probe(p)).collect::<Result<_>>()?;
 
@@ -202,53 +202,23 @@ fn custom_keys(files: &[FileTags]) -> BTreeMap<String, Agg> {
         .collect()
 }
 
-const USAGE: &str = "\
+const USAGE_HEAD: &str = "\
 Usage: tagform [OPTIONS] FILE...
 
   --print-json     dump the aggregated tag model and exit
   --print-schema   dump the field schema as JSON and exit (takes no files)
   --no-thumbnail   do not render a thumbnail
-  --theme=NAME     colour scheme; `c` cycles them at runtime
+  --theme=NAME     colour scheme; `t` cycles them at runtime
   -h, --help       show this message
 
-Keys — the form is modal.
+Keys — the form is modal. `?` shows this map inside the form.";
 
-  SELECT (default)
-    j / k, arrows     move between fields          g / G   first / last
-    h / l             step a fixed set (Category, Variant, Kind) or a rating;
-                      a set is drawn along its own line and edited only this way
-    enter             edit the focused field; on an empty date, fill in now
-    w                 write staged edits (shows a plan to confirm first)
-    r                 rename the file(s) in view from their tags (rename-video)
-    d                 on the URL field: fetch the page's tags with yt-dlp (no download)
-                      and stage them onto the other fields; unanswered fields are kept
-    m                 merge a list field across every file in the selection
-    i                 inspector: per-file values for the focused field
-    ] / [             next / previous file         a       all files
-    o                 overwrite the focused field on every open file
-    b                 backfill it into only the files where it is still empty
-    u / ctrl-r        undo / redo                  backspace  clear the field
-    y / p             yank the focused field / paste into it
-    f                 format menu: then c capitalize, t title, l lower, u upper
-    t                 cycle the colour scheme
-    F                 toggle MOV faststart on the write   [on]
-    q / esc           quit (asks if edits are staged)
-
-  EDIT
-    (type)            edit the field
-    left / right      adjust a rating
-    tab / shift-tab   accept and move to the next / previous field
-    enter             save and stop editing
-    esc               cancel this field's edit
-    ctrl-c            quit from anywhere
-
-  EDIT, on a text field — the usual emacs/macOS keys
-    ctrl-a / ctrl-e   start / end of line
-    ctrl-b / ctrl-f   back / forward one character
-    ctrl-d / ctrl-h   delete the character right / left
-    ctrl-w            delete the word behind the cursor
-    ctrl-k            delete to end of line
-    ctrl-u            clear the line
-
+const USAGE_TAIL: &str = "
 Edits are staged until `w`; the original is only replaced by a
 result that has been read back and verified.";
+
+/// `--help` and the in-form `?` overlay render the same table (DESIGN §11);
+/// only the framing around it is written here.
+fn usage() -> String {
+    format!("{USAGE_HEAD}\n{}{USAGE_TAIL}", ui::keymap::usage())
+}
