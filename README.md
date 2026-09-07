@@ -127,13 +127,23 @@ The form paints its own chrome: a filled `tagform` badge heads the screen, every
 field shows a coloured editable region whether or not it is focused, the focused
 field is marked `▍` (`▶` while editing) and a staged one `●`, and a shortcut
 strip along the bottom lists the keys that are live in the current mode.
-Colours are true-colour throughout, in four schemes — `midnight`, `gruvbox`,
-`nord`, `rose-pine` — cycled with `t` or picked with `--theme=NAME`. A test
+Colours are true-colour throughout, in seven schemes — `synthwave`, `c64`,
+`midnight`, `gruvbox`, `nord`, `rose-pine`, `amber` — cycled with `t` or picked
+with `--theme=NAME`. Three of them are retro (`synthwave`, `c64`, and `amber`,
+a phosphor monitor), and the first in the list is what the form comes up in. A test
 computes WCAG contrast for every text colour in every scheme against that
 scheme's own background and fails below 3:1, and checks that a custom-key label
 is a different *hue* from an ordinary one rather than a dimmer shade. Both
 guards exist because both mistakes were made: 16-colour `DarkGray` labels, and
 a file path drawn in a divider colour at 1.4:1.
+
+Every scheme also carries a **tag ring**: list and `#hashtag` values draw one
+colour per entry rather than one colour for the whole string, hashed from the
+tag's own text so `#pov` is the same colour in every file and every row it
+appears in. That stability is the point — a column of tag sets in the per-file
+inspector is scanned for a missing colour rather than read word by word. The
+ring is held to the same contrast floor as the rest of the theme, and to a
+pairwise ΔE so two tags never differ by a shade you would mistake for meaning.
 
 Controls: text, multi-line text, lists drawn as chips, `#hashtags`, URL
 (validated, `not a URL: …`), dates, a 0–5 star row, fixed sets (Category,

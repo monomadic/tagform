@@ -1125,8 +1125,8 @@ keys live in the current mode.
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-The chrome as built — badge, focus and staged markers, the four colour
-schemes — is described in [README.md](README.md). The one part that is a design
+The chrome as built — badge, focus and staged markers, the colour schemes and
+the per-tag colour ring — is described in [README.md](README.md). The one part that is a design
 decision rather than a description: a test computes WCAG contrast for every
 text colour in every scheme against that scheme's own background and fails
 below 3:1, and checks that a custom-key label differs in *hue* from an ordinary

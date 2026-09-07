@@ -58,13 +58,108 @@ pub struct Palette {
     pub rule: Color,
     pub star: Color,
     pub path: Color,
+
+    /// The ring a tag's colour is drawn from. Not a gradient and not a
+    /// severity scale: neighbouring hues that a row of them reads as *many*
+    /// rather than as one long string. Kept per-scheme so a tag looks like it
+    /// belongs to the theme it is drawn in, and long enough that a typical
+    /// tag set collides rarely -- but a collision is cosmetic, so length is
+    /// traded against every entry clearing the contrast and hue tests below.
+    pub tags: &'static [Color],
 }
 
 const fn c(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb(r, g, b)
 }
 
+/// Every scheme, in the order `t` cycles them. The order is not arbitrary:
+/// the first is what the form comes up in, so the list opens with the schemes
+/// worth meeting first and settles into the quieter ones.
+///
+/// Three of them are retro. Each takes its ground and its accents from a real
+/// display rather than from a mood board -- an 80s neon poster, a C64's blue
+/// screen, an amber phosphor monitor -- and is then pulled far enough to clear
+/// the contrast floor the tests below enforce, which none of the originals did.
 pub static PALETTES: &[Palette] = &[
+    // Neon on deep indigo. The one scheme here where the accents are meant to
+    // look emitted rather than printed, so the ring runs hot -- and where the
+    // muted greys have to be pushed up hard to survive beside them.
+    Palette {
+        name: "synthwave",
+        page: c(0x1b, 0x10, 0x30),
+        bar_bg: c(0x2a, 0x1f, 0x4a),
+        header_bg: c(0x33, 0x25, 0x5c),
+        badge_bg: c(0xff, 0x7e, 0xdb),
+        badge_fg: c(0x1b, 0x10, 0x30),
+        header_fg: c(0xf0, 0xe6, 0xff),
+        input_bg: c(0x24, 0x1a, 0x3f),
+        input_bg_focus: c(0x32, 0x25, 0x52),
+        input_bg_edit: c(0x45, 0x2f, 0x6b),
+        input_bg_readonly: c(0x1e, 0x14, 0x36),
+        label: c(0xa9, 0x9b, 0xd0),
+        label_focus: c(0xfe, 0xde, 0x5d),
+        label_custom: c(0x36, 0xf9, 0xf6),
+        value: c(0xf0, 0xe6, 0xff),
+        value_empty: c(0x8a, 0x7a, 0xb8),
+        mixed: c(0xb0, 0xa2, 0xd8),
+        accent: c(0xff, 0x7e, 0xdb),
+        staged: c(0x72, 0xf1, 0xb8),
+        warn: c(0xff, 0x8b, 0x39),
+        error: c(0xfe, 0x6c, 0x77),
+        muted: c(0x9d, 0x8e, 0xcb),
+        rule: c(0x3d, 0x2d, 0x63),
+        star: c(0xfe, 0xde, 0x5d),
+        path: c(0xa9, 0x9b, 0xd0),
+        tags: &[
+            c(0xff, 0x7e, 0xdb),
+            c(0x36, 0xf9, 0xf6),
+            c(0x72, 0xf1, 0xb8),
+            c(0xfe, 0xde, 0x5d),
+            c(0xff, 0x8b, 0x39),
+            c(0xb9, 0x67, 0xff),
+            c(0xf9, 0x7e, 0x72),
+        ],
+    },
+    // The C64 boot screen: light blue on blue, with the rest of the machine's
+    // 16 colours as the ring. The hardware palette itself is too dark against
+    // that ground to read as text, so the accents here are the same hues
+    // lifted until they do -- the look, not a bit-exact clone.
+    Palette {
+        name: "c64",
+        page: c(0x22, 0x1a, 0x5c),
+        bar_bg: c(0x2e, 0x24, 0x72),
+        header_bg: c(0x3a, 0x2f, 0x85),
+        badge_bg: c(0xbf, 0xce, 0x72),
+        badge_fg: c(0x22, 0x1a, 0x5c),
+        header_fg: c(0xd9, 0xd2, 0xff),
+        input_bg: c(0x2a, 0x20, 0x69),
+        input_bg_focus: c(0x36, 0x2c, 0x7d),
+        input_bg_edit: c(0x45, 0x3a, 0x92),
+        input_bg_readonly: c(0x25, 0x1d, 0x61),
+        label: c(0xa7, 0x9c, 0xe0),
+        label_focus: c(0xbf, 0xce, 0x72),
+        label_custom: c(0xe8, 0x8a, 0x7a),
+        value: c(0xe8, 0xe4, 0xff),
+        value_empty: c(0x8b, 0x80, 0xc8),
+        mixed: c(0xb3, 0xa9, 0xe8),
+        accent: c(0x8a, 0xd4, 0xdb),
+        staged: c(0x94, 0xe0, 0x89),
+        warn: c(0xe8, 0xa3, 0x3d),
+        error: c(0xe8, 0x7a, 0x7a),
+        muted: c(0x9a, 0x8f, 0xd4),
+        rule: c(0x45, 0x3a, 0x92),
+        star: c(0xbf, 0xce, 0x72),
+        path: c(0xa7, 0x9c, 0xe0),
+        tags: &[
+            c(0x8a, 0xd4, 0xdb),
+            c(0x94, 0xe0, 0x89),
+            c(0xbf, 0xce, 0x72),
+            c(0xe8, 0xa3, 0x3d),
+            c(0xe8, 0x8a, 0x7a),
+            c(0xd0, 0x92, 0xdc),
+            c(0xe8, 0xe4, 0xff),
+        ],
+    },
     Palette {
         name: "midnight",
         page: c(0x0d, 0x0f, 0x14),
@@ -91,6 +186,16 @@ pub static PALETTES: &[Palette] = &[
         rule: c(0x2a, 0x2f, 0x3c),
         star: c(0xe0, 0xaf, 0x68),
         path: c(0x7d, 0x87, 0x9e),
+        tags: &[
+            c(0x7a, 0xa2, 0xf7),
+            c(0x7d, 0xcf, 0xff),
+            c(0x73, 0xda, 0xca),
+            c(0x9e, 0xce, 0x6a),
+            c(0xe0, 0xaf, 0x68),
+            c(0xff, 0x9e, 0x64),
+            c(0xf7, 0x76, 0x8e),
+            c(0xbb, 0x9a, 0xf7),
+        ],
     },
     // Matches the gruvbox leaf already ships a theme for.
     Palette {
@@ -119,6 +224,16 @@ pub static PALETTES: &[Palette] = &[
         rule: c(0x50, 0x49, 0x45),
         star: c(0xfa, 0xbd, 0x2f),
         path: c(0xa8, 0x99, 0x84),
+        tags: &[
+            c(0x8e, 0xc0, 0x7c),
+            c(0xb8, 0xbb, 0x26),
+            c(0xfa, 0xbd, 0x2f),
+            c(0xfe, 0x80, 0x19),
+            c(0xfb, 0x49, 0x34),
+            c(0xd3, 0x86, 0x9b),
+            c(0x83, 0xa5, 0x98),
+            c(0xd5, 0xc4, 0xa1),
+        ],
     },
     Palette {
         name: "nord",
@@ -146,6 +261,17 @@ pub static PALETTES: &[Palette] = &[
         rule: c(0x43, 0x4c, 0x5e),
         star: c(0xeb, 0xcb, 0x8b),
         path: c(0x9a, 0xa5, 0xb8),
+        tags: &[
+            c(0x88, 0xc0, 0xd0),
+            c(0xa3, 0xbe, 0x8c),
+            c(0xeb, 0xcb, 0x8b),
+            c(0xd0, 0x87, 0x70),
+            // Aurora red lifted toward rose. At its native #bf616a it is
+            // 2.5:1 on a focused row -- which is the row you read tags on --
+            // and lifting it straight collides with the orange above.
+            c(0xd9, 0x73, 0x8f),
+            c(0xb4, 0x8e, 0xad),
+        ],
     },
     Palette {
         name: "rose-pine",
@@ -173,6 +299,54 @@ pub static PALETTES: &[Palette] = &[
         rule: c(0x35, 0x31, 0x4d),
         star: c(0xf6, 0xc1, 0x77),
         path: c(0x9c, 0x97, 0xb8),
+        tags: &[
+            c(0x9c, 0xcf, 0xd8),
+            c(0xa3, 0xd2, 0xa5),
+            c(0xf6, 0xc1, 0x77),
+            c(0xc4, 0xa7, 0xe7),
+            c(0xeb, 0x6f, 0x92),
+            c(0xeb, 0xbc, 0xba),
+            c(0xe0, 0xde, 0xf4),
+        ],
+    },
+    // The amber CRT, whose whole gamut was one phosphor. The tag ring stays
+    // inside it: warm hues only, separated by lightness and by how far each
+    // sits toward red or green, because a cool tag here would read as a bug
+    // in the monitor rather than as a colour choice.
+    Palette {
+        name: "amber",
+        page: c(0x17, 0x11, 0x0a),
+        bar_bg: c(0x2a, 0x20, 0x10),
+        header_bg: c(0x3a, 0x2c, 0x14),
+        badge_bg: c(0xff, 0xb0, 0x00),
+        badge_fg: c(0x17, 0x11, 0x0a),
+        header_fg: c(0xff, 0xd9, 0xa0),
+        input_bg: c(0x22, 0x1a, 0x0e),
+        input_bg_focus: c(0x32, 0x26, 0x12),
+        input_bg_edit: c(0x45, 0x33, 0x0f),
+        input_bg_readonly: c(0x1b, 0x14, 0x09),
+        label: c(0xc6, 0x9a, 0x55),
+        label_focus: c(0xff, 0xd7, 0x5f),
+        label_custom: c(0xff, 0x6f, 0x59),
+        value: c(0xff, 0xcf, 0x8f),
+        value_empty: c(0xa8, 0x7c, 0x44),
+        mixed: c(0xc8, 0xa3, 0x70),
+        accent: c(0xff, 0xb0, 0x00),
+        staged: c(0xc8, 0xd0, 0x5a),
+        warn: c(0xff, 0x8c, 0x42),
+        error: c(0xff, 0x5f, 0x56),
+        muted: c(0xb0, 0x88, 0x4c),
+        rule: c(0x4a, 0x36, 0x18),
+        star: c(0xff, 0xd7, 0x5f),
+        path: c(0xc2, 0x96, 0x58),
+        tags: &[
+            c(0xff, 0xb0, 0x00),
+            c(0xff, 0xd7, 0x5f),
+            c(0xff, 0x8c, 0x42),
+            c(0xff, 0x6f, 0x59),
+            c(0xe8, 0xc9, 0xa0),
+            c(0xc8, 0xd0, 0x5a),
+        ],
     },
 ];
 
@@ -206,6 +380,37 @@ pub fn cycle() -> &'static str {
 
 pub fn names() -> Vec<&'static str> {
     PALETTES.iter().map(|p| p.name).collect()
+}
+
+/// The colour a tag is drawn in, in the active scheme.
+///
+/// Hashed from the tag's own text, not from its position in the list. Position
+/// is cheaper but wrong: inserting a tag at the front would repaint every tag
+/// after it, and the same `#pov` would be a different colour in the next file
+/// -- so the colour would carry no information at all. Hashed, it is stable
+/// across files, across rows and across runs, which is what makes scanning a
+/// column of tag sets for "the one missing #pov" work.
+///
+/// Case- and sigil-insensitive, so `#POV` and `pov` cannot land apart.
+pub fn tag_colour(tag: &str) -> Color {
+    let ring = active().tags;
+    ring[tag_index(tag, ring.len())]
+}
+
+/// The hash itself, against a ring length rather than against the live
+/// scheme. Split out so the tests can check every palette without switching
+/// the active one: `ACTIVE` is global, the suite runs threaded, and a test
+/// that cycles schemes underneath a test that asserts a colour is a race --
+/// which is exactly how this one first failed.
+fn tag_index(tag: &str, ring: usize) -> usize {
+    // FNV-1a. Not for security -- for a spread that does not clump on the
+    // short, similar, shared-prefix strings tags actually are.
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in tag.trim().trim_start_matches('#').bytes() {
+        h ^= b.to_ascii_lowercase() as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (h % ring as u64) as usize
 }
 
 macro_rules! colour {
@@ -380,6 +585,101 @@ mod tests {
                 assert!(ratio >= 4.5, "{}: {name} mode badge is {ratio:.2}:1", p.name);
             }
         }
+    }
+
+    /// A tag colour is text on the same surfaces every other colour lands on,
+    /// so it gets the same floor. Worth stating separately: the ring is the
+    /// one place in the theme where the temptation is to pick for vibrancy
+    /// and check legibility afterwards.
+    #[test]
+    fn every_tag_colour_in_every_scheme_is_readable() {
+        for p in PALETTES {
+            for (i, colour) in p.tags.iter().enumerate() {
+                // Every ground a tag is actually drawn on. `input_bg_edit`
+                // is absent because an open row draws the editor's plain text
+                // and not chips at all, and holding the ring to the lightest
+                // surface in the theme would cost hues it never lands on.
+                for (surface_name, surface) in [
+                    ("page", p.page),
+                    ("field", p.input_bg_readonly),
+                    ("input", p.input_bg),
+                    ("focused input", p.input_bg_focus),
+                ] {
+                    let ratio = contrast(*colour, surface);
+                    assert!(
+                        ratio >= 3.0,
+                        "{}: tag colour {i} is {ratio:.2}:1 against the {surface_name}",
+                        p.name
+                    );
+                }
+            }
+        }
+    }
+
+    /// The ring only does its job if adjacent draws look unrelated. Two tags a
+    /// shade apart are worse than two tags the same colour: the eye reads the
+    /// difference as meaning something and there is nothing there to mean.
+    #[test]
+    fn tag_colours_are_mutually_distinguishable() {
+        for p in PALETTES {
+            assert!(p.tags.len() >= 5, "{}: a ring under five collides constantly", p.name);
+            for (i, a) in p.tags.iter().enumerate() {
+                for (j, b) in p.tags.iter().enumerate().skip(i + 1) {
+                    let d = delta_e(*a, *b);
+                    assert!(d >= 20.0, "{}: tags {i} and {j} are only ΔE {d:.1} apart", p.name);
+                }
+            }
+        }
+    }
+
+    /// The property the whole scheme rests on: a tag's colour follows the tag,
+    /// not where it happens to sit. Without this the colour is decoration; with
+    /// it, a column of tag sets is scannable.
+    #[test]
+    fn a_tag_keeps_its_colour_regardless_of_case_sigil_or_position() {
+        for p in PALETTES {
+            let n = p.tags.len();
+            let i = tag_index("pov", n);
+            assert_eq!(i, tag_index("#pov", n), "{}", p.name);
+            assert_eq!(i, tag_index("POV", n), "{}", p.name);
+            assert_eq!(i, tag_index(" #PoV ", n), "{}", p.name);
+            assert!(tag_index("anything at all", n) < n, "{}", p.name);
+        }
+    }
+
+    /// A hash that clumps would hand a real tag set one or two colours and
+    /// look like a bug. Checked on tags shaped like the ones this tool sees --
+    /// short, lowercase, often sharing a prefix.
+    #[test]
+    fn the_hash_spreads_realistic_tags_across_the_ring() {
+        let tags = [
+            "pov", "solo", "outdoor", "indoor", "vertical", "handheld", "gimbal",
+            "night", "closeup", "wide", "b-roll", "interview", "timelapse", "drone",
+        ];
+        for p in PALETTES {
+            let n = p.tags.len();
+            let mut seen: Vec<usize> = Vec::new();
+            for t in tags {
+                let i = tag_index(t, n);
+                if !seen.contains(&i) {
+                    seen.push(i);
+                }
+            }
+            assert!(
+                seen.len() * 2 >= n,
+                "{}: {} tags landed on only {} of {n} colours",
+                p.name,
+                tags.len(),
+                seen.len()
+            );
+        }
+    }
+
+    /// The live path, once, on whatever scheme is active -- the test above
+    /// covers the hash, this covers the wiring from it to a real ring.
+    #[test]
+    fn a_tag_colour_comes_out_of_the_active_ring() {
+        assert!(active().tags.contains(&tag_colour("pov")));
     }
 
     /// A custom-key label must be a different *hue* from an ordinary one, not a

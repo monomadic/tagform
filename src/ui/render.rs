@@ -195,26 +195,47 @@ fn draw_inspector(f: &mut Frame, area: Rect, app: &App) {
         Agg::Mixed { values } => {
             for (i, v) in values.iter().enumerate() {
                 let file = scope.get(i).copied().unwrap_or(i);
-                let shown = match v {
-                    Some(Value::Text(s)) => s.clone(),
-                    Some(Value::List(l)) => l.join(" · "),
-                    None => "—".into(),
-                };
-                let style = if app.file_is_staged(file, &row.key) {
+                let edited = app.file_is_staged(file, &row.key);
+                let style = if edited {
                     Style::default().fg(t::staged())
                 } else if v.is_some() {
                     Style::default().fg(t::value())
                 } else {
                     Style::default().fg(t::value_empty())
                 };
-                lines.push(Line::from(vec![
-                    Span::raw(" "),
-                    Span::styled(t::fit(&shown, 34), style),
-                    Span::styled(
-                        app.files.get(file).map(|f| file_label(&f.path)).unwrap_or_default(),
-                        Style::default().fg(t::muted()),
-                    ),
-                ]));
+                // Chips here for the same reason as on the row, but the
+                // payoff is larger: this pane is a column of one field across
+                // every file, so a tag missing from one of them is a gap in a
+                // colour rather than a word to find twice.
+                let mut spans = vec![Span::raw(" ")];
+                match v {
+                    Some(Value::List(l))
+                        if !l.is_empty()
+                            && matches!(row.control, Control::List | Control::HashTags) =>
+                    {
+                        let sigil = if edited { t::staged() } else { t::muted() };
+                        spans.extend(tag_spans(
+                            l,
+                            row.control == Control::HashTags,
+                            34,
+                            ratatui::style::Color::Reset,
+                            sigil,
+                        ));
+                    }
+                    _ => {
+                        let shown = match v {
+                            Some(Value::Text(s)) => s.clone(),
+                            Some(Value::List(l)) => l.join(" · "),
+                            None => "—".into(),
+                        };
+                        spans.push(Span::styled(t::fit(&shown, 34), style));
+                    }
+                }
+                spans.push(Span::styled(
+                    app.files.get(file).map(|f| file_label(&f.path)).unwrap_or_default(),
+                    Style::default().fg(t::muted()),
+                ));
+                lines.push(Line::from(spans));
             }
         }
         Agg::Same { .. } => lines.push(Line::from(Span::styled(
@@ -367,28 +388,42 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
         // value, which is exactly the misalignment the pad exists to prevent.
         let set = closed_set(app, row);
         let lead = if set.is_some() { 0 } else { PAD as usize };
+        // Chips replace the flat string only where the flat string was all
+        // there was to say: an open row is showing the editor's text, and a
+        // mixed row in bulk is showing a count of disagreements, not a list.
+        let chips = (!editing && !(bulk.is_some() && row.is_mixed()))
+            .then(|| tag_list(row))
+            .flatten();
         let value_spans = match set {
             Some((labels, sel)) => {
                 set_spans(&labels, sel, text_w + PAD as usize - lead, bg, focused, staged)
             }
-            None => match count_hint {
+            None => {
                 // The count is dropped, not the value, when the box is too
                 // narrow for both.
-                Some(hint) if text_w > hint.width() + 6 => {
-                    let w = text_w - hint.width() - 2;
-                    vec![
-                        Span::styled(t::fit(&raw, w), Style::default().bg(bg).fg(value_fg)),
-                        Span::styled(
-                            format!("  {hint}"),
-                            Style::default().bg(bg).fg(t::muted()),
-                        ),
-                    ]
+                let hint = count_hint.filter(|h| text_w > h.width() + 6);
+                let body_w = match &hint {
+                    Some(h) => text_w - h.width() - 2,
+                    None => text_w,
+                };
+                let mut spans = match chips {
+                    Some((items, hash)) => {
+                        let sigil = if staged { t::staged() } else { t::muted() };
+                        tag_spans(&items, hash, body_w, bg, sigil)
+                    }
+                    None => vec![Span::styled(
+                        t::fit(&raw, body_w),
+                        Style::default().bg(bg).fg(value_fg),
+                    )],
+                };
+                if let Some(h) = hint {
+                    spans.push(Span::styled(
+                        format!("  {h}"),
+                        Style::default().bg(bg).fg(t::muted()),
+                    ));
                 }
-                _ => vec![Span::styled(
-                    t::fit(&raw, text_w),
-                    Style::default().bg(bg).fg(value_fg),
-                )],
-            },
+                spans
+            }
         };
 
         let mut spans = vec![
@@ -538,6 +573,77 @@ fn set_spans(
         spans.push(Span::styled(" ".repeat(width - used), Style::default().bg(bg)));
     }
     spans
+}
+
+/// A list value drawn as chips: one colour per entry rather than one colour
+/// for the whole string.
+///
+/// `Tags` is the field this exists for. `#pov #solo #outdoor #handheld` in a
+/// single foreground is one long word that has to be *read* to be counted;
+/// the same set in six colours is counted at a glance, and the colour follows
+/// the tag rather than its position, so the same tag is the same colour in
+/// every file (`theme::tag_colour`). That is what makes a column of tag sets
+/// comparable -- "these two files disagree" becomes a colour that is missing.
+///
+/// The separator carries the row's state instead of the words: `staged` green
+/// on the sigils says the row is about to be written, without flattening the
+/// tags back into one colour on exactly the row you are working on.
+fn tag_spans(
+    items: &[String],
+    hash: bool,
+    width: usize,
+    bg: ratatui::style::Color,
+    sigil_fg: ratatui::style::Color,
+) -> Vec<Span<'static>> {
+    let sigil = |first: bool| match (hash, first) {
+        (true, _) => "#".to_string(),
+        (false, true) => String::new(),
+        (false, false) => " · ".to_string(),
+    };
+    let mut spans = Vec::new();
+    let mut used = 0usize;
+    for (i, item) in items.iter().enumerate() {
+        let lead = if hash && i > 0 { " " } else { "" };
+        let sig = format!("{lead}{}", sigil(i == 0));
+        let cost = sig.width() + item.width();
+        // No room for the next chip: say how many are hidden rather than
+        // truncating one mid-word, which reads as a corrupted tag.
+        if used + cost > width {
+            let rest = format!(" +{}", items.len() - i);
+            if used + rest.width() <= width {
+                spans.push(Span::styled(rest.clone(), Style::default().bg(bg).fg(t::muted())));
+                used += rest.width();
+            }
+            break;
+        }
+        used += cost;
+        if !sig.is_empty() {
+            spans.push(Span::styled(sig, Style::default().bg(bg).fg(sigil_fg)));
+        }
+        spans.push(Span::styled(
+            item.clone(),
+            Style::default().bg(bg).fg(t::tag_colour(item)),
+        ));
+    }
+    if used < width {
+        spans.push(Span::styled(" ".repeat(width - used), Style::default().bg(bg)));
+    }
+    spans
+}
+
+/// The chips to draw for a row, or `None` for anything that is not a list --
+/// including an empty one, which falls back to the ordinary em dash rather
+/// than to a blank box.
+fn tag_list(row: &Row) -> Option<(Vec<String>, bool)> {
+    let hash = match row.control {
+        Control::HashTags => true,
+        Control::List => false,
+        _ => return None,
+    };
+    match row.shown()? {
+        Value::List(l) if !l.is_empty() => Some((l.clone(), hash)),
+        _ => None,
+    }
 }
 
 /// An unfocused row shows the staged edit if there is one, else what is on disk.
@@ -982,6 +1088,71 @@ mod tests {
         assert!(line(2).contains("Variant"), "{:?}", line(2));
         assert!(line(3).trim_end().chars().all(|c| c == '\u{2500}'), "{:?}", line(3));
         assert!(line(4).contains("Title"), "{:?}", line(4));
+    }
+
+    /// The point of the chips: adjacent tags are different colours, and the
+    /// same tag is the same colour wherever it appears. A single-colour value
+    /// string passes neither.
+    #[test]
+    fn tags_are_drawn_one_colour_each_and_the_colour_follows_the_tag() {
+        let items: Vec<String> =
+            ["pov", "solo", "outdoor"].iter().map(|s| s.to_string()).collect();
+        let spans = tag_spans(&items, true, 40, t::input_bg(), t::muted());
+        let colours: Vec<_> = spans
+            .iter()
+            .filter(|s| items.iter().any(|i| i == s.content.as_ref()))
+            .map(|s| s.style.fg.unwrap())
+            .collect();
+        assert_eq!(colours.len(), 3, "every tag draws as its own span");
+        assert!(colours[0] != colours[1] || colours[1] != colours[2], "all three matched");
+        // Same tag, different list, different position: same colour.
+        let other: Vec<String> = vec!["outdoor".into()];
+        let again = tag_spans(&other, true, 40, t::input_bg(), t::muted());
+        let outdoor = again.iter().find(|s| s.content == "outdoor").unwrap().style.fg;
+        assert_eq!(Some(colours[2]), outdoor);
+    }
+
+    /// The sigils carry the row's state so the tags do not have to. A staged
+    /// row must still read as staged without collapsing back to one colour.
+    #[test]
+    fn a_staged_tag_row_marks_its_sigils_and_keeps_its_colours() {
+        let items: Vec<String> = vec!["pov".into(), "solo".into()];
+        let sigils = |v: &[Span<'static>]| -> Vec<_> {
+            v.iter().filter(|s| s.content.trim() == "#").map(|s| s.style.fg).collect()
+        };
+        let words = |v: &[Span<'static>]| -> Vec<_> {
+            v.iter()
+                .filter(|s| items.iter().any(|i| i == s.content.as_ref()))
+                .map(|s| s.style.fg)
+                .collect()
+        };
+        let staged = tag_spans(&items, true, 40, t::input_bg(), t::staged());
+        assert_eq!(sigils(&staged), vec![Some(t::staged()); 2], "sigils say staged");
+        let plain = tag_spans(&items, true, 40, t::input_bg(), t::muted());
+        assert_eq!(words(&staged), words(&plain), "staged must not flatten the hues");
+        assert_eq!(words(&plain).len(), 2);
+    }
+
+    /// A chip is never cut mid-word: half a tag is a different tag. The
+    /// overflow is a count instead, and the box still fills its exact width.
+    #[test]
+    fn an_overlong_tag_set_counts_the_rest_instead_of_truncating_one() {
+        let items: Vec<String> =
+            ["pov", "solo", "outdoor", "handheld"].iter().map(|s| s.to_string()).collect();
+        let spans = tag_spans(&items, true, 16, t::input_bg(), t::muted());
+        let drawn: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(drawn.width(), 16, "{drawn:?}");
+        assert!(drawn.contains("+2"), "{drawn:?}");
+        assert!(!drawn.contains("outdo "), "a tag was cut mid-word: {drawn:?}");
+    }
+
+    #[test]
+    fn a_list_that_fits_is_padded_to_the_box_and_not_counted() {
+        let items: Vec<String> = vec!["pov".into()];
+        let spans = tag_spans(&items, true, 20, t::input_bg(), t::muted());
+        let drawn: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(drawn.width(), 20);
+        assert!(!drawn.contains('+'), "{drawn:?}");
     }
 
     fn two_files(a: &[(&str, &str)], b: &[(&str, &str)]) -> crate::ui::app::App {
