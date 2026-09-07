@@ -693,7 +693,7 @@ A row therefore carries the aggregate *as displayed* — disk with the edits lai
 over it — and a staged clear reads as absent rather than as an empty string,
 because absent is what the write will leave behind.
 
-`o` overwrites the focused field on every open file and `b` backfills it into
+`O` overwrites the focused field on every open file and `b` backfills it into
 only the files where it is still empty. The aggregate view already reaches every
 file; these are the same reach from a single-file view, where the value worth
 spreading is usually the one just typed onto one file. Backfill is the one of
@@ -1566,7 +1566,10 @@ document is why the map has the shape it does.
 Two rules do the work. `enter` opens a field and `esc` or `enter` closes it, so
 Select mode's letters are never ambiguous — `w` write, `m` merge, `i`
 inspector, `F` faststart, `t` theme, `y`/`p` yank and paste, `]`/`[`/`a` for
-the selection, `o`/`b` to push a field out to every file (§4.3). `f` is the one
+the selection, `O`/`b` to push a field out to every file (§4.3), `o` to hand
+the file to the desktop player. `c` is a second name for `y`, because half the
+world learned that key as copy; the two are the same command and the map says
+so rather than hiding one of them. `f` is the one
 exception: it arms a one-shot **format** menu (`c` capitalize, `t` title, `l`
 lower, `u` upper) because four more top-level letters would collide with
 commands that already own them, and the shortcut strip repaints to say which
@@ -1593,8 +1596,14 @@ dialog owns every key while it is up, so reading the map cannot edit the file
 behind it. Two columns where the terminal is wide enough and one where it is
 not, scrolled with `j`/`k` when it does not fit, and any other key closes it.
 
+⟨built, differs⟩ Open and yank got plain letters rather than the reserved
+`⌃O`/`⌃Y`: Select mode has the letters free, and a modifier for a command that
+is not text editing was the original one-mode design leaking through. Opening
+took `o`, which pushed overwrite-all up to `O` — the pair reads as the same
+command shouted, which is what overwriting every file is.
+
 ⟨designed⟩ Unbound, each waiting on its feature: `⌃Space` (completion, §5.1),
-`⌃O` / `⌃Y` (open / yank), `⌃G` / `⌃⇧G` (thumbnail seek, §8).
+`⌃G` / `⌃⇧G` (thumbnail seek, §8).
 
 ⟨designed⟩ Two features have **lost the key they were reserved for**, since
 the editing bindings have the stronger claim on a text field: the `$EDITOR`

@@ -45,7 +45,7 @@ A closed set that the files disagree about lights no option.
 An edit belongs to the files it was made on. `[` and `]` walk the selection
 without disturbing anything staged elsewhere, and `w` writes every staged edit,
 including one made on a file you have since walked away from — the confirmation
-says which files each edit lands on. `o` **overwrites** the focused field on every
+says which files each edit lands on. `O` **overwrites** the focused field on every
 open file; `b` **backfills** it into only the files where that field is still
 empty, which is the one-key way to give a batch a Channel or a Category without
 overwriting the files that already have their own.
@@ -86,11 +86,12 @@ nothing is listening for the letter w.
 | `m` | merge a list field across every file in the selection |
 | `i` | inspector — per-file values for the focused field |
 | `]` / `[` / `a` | next file / previous file / all files |
-| `o` / `b` | overwrite the focused field on every file / backfill it into only the files where it is empty |
+| `o` | open the file in whatever the desktop plays it with |
+| `O` / `b` | overwrite the focused field on every file / backfill it into only the files where it is empty |
 | `u` / `ctrl-r` | undo / redo |
 | `backspace` | clear the focused field |
-| `y` / `p` | yank the focused field / paste into it |
-| `f` | format menu — then `c` capitalize, `t` title, `l` lower, `u` upper |
+| `y` (or `c`) / `p` | yank the focused field / paste into it |
+| `f` | format menu — then `c` capitalize, `t` title (the little words stay lowered), `l` lower, `u` upper |
 | `t` | cycle the colour scheme |
 | `?` | the key map — every binding in the form, on a screen of its own |
 | `F` | toggle MOV faststart on the write (on by default) |

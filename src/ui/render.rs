@@ -737,7 +737,8 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
             ("i", "inspect"),
             ("][", "file"),
             ("a", "all files"),
-            ("o", "overwrite"),
+            ("o", "open"),
+            ("O", "overwrite"),
             ("b", "backfill"),
             ("u", "undo"),
             // The glyph is one column wide by the width tables and wider than

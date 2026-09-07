@@ -101,14 +101,47 @@ impl Case {
             Case::Capitalize => upper_first(&s.to_lowercase()),
             Case::Title => {
                 let lower = s.to_lowercase();
+                let words: Vec<&str> = lower.split_inclusive(char::is_whitespace).collect();
+                let last = words.iter().rposition(|w| !bare(w).is_empty()).unwrap_or(0);
                 let mut out = String::with_capacity(lower.len());
-                for word in lower.split_inclusive(char::is_whitespace) {
-                    out.push_str(&upper_first(word));
+                // The first word of the title, and the first after a colon --
+                // both open a phrase, and a phrase never opens lowered.
+                let mut opens = true;
+                for (i, word) in words.iter().enumerate() {
+                    if bare(word).is_empty() {
+                        out.push_str(word);
+                        continue;
+                    }
+                    if opens || i == last || !MINOR_WORDS.contains(&bare(word)) {
+                        out.push_str(&upper_first(word));
+                    } else {
+                        out.push_str(word);
+                    }
+                    opens = word.trim_end().ends_with(':');
                 }
                 out
             }
         }
     }
+}
+
+/// The words title case leaves lowered when they land inside a title:
+/// articles, the coordinating conjunctions, and the short prepositions. The
+/// first word and the last are capitalized whatever they are, so "The Long
+/// Way" and "Something To Aim For" both survive.
+///
+/// Verbs are not here however short they are -- a lowered `is` reads as a
+/// typo, which is the reason the list is a list and not a length rule.
+const MINOR_WORDS: &[&str] = &[
+    "a", "an", "and", "as", "at", "but", "by", "for", "from", "if", "in", "into", "nor", "of",
+    "off", "on", "onto", "or", "over", "per", "so", "the", "to", "up", "upon", "via", "with",
+    "yet",
+];
+
+/// A word with its punctuation and trailing space taken off, which is the form
+/// `MINOR_WORDS` is written in: `"(and "` → `"and"`.
+fn bare(word: &str) -> &str {
+    word.trim_matches(|c: char| !c.is_alphanumeric())
 }
 
 /// Uppercase the first alphabetic character and leave the rest alone, so
@@ -934,7 +967,7 @@ impl App {
                 self.inspector = !self.inspector;
                 self.status.clear();
             }
-            (KeyCode::Char('y'), false) => self.yank(),
+            (KeyCode::Char('y') | KeyCode::Char('c'), false) => self.yank(),
             (KeyCode::Char('p'), false) => self.paste(),
             (KeyCode::Char(']'), false) => self.cycle_file(1),
             (KeyCode::Char('['), false) => self.cycle_file(-1),
@@ -945,7 +978,8 @@ impl App {
                 self.status = "aggregate view".into();
             }
             (KeyCode::Char('m'), false) => self.merge_focused(),
-            (KeyCode::Char('o'), false) => self.copy_out(false),
+            (KeyCode::Char('o'), false) => self.open_file(),
+            (KeyCode::Char('O'), false) => self.copy_out(false),
             (KeyCode::Char('b'), false) => self.copy_out(true),
             (KeyCode::Char('u'), false) => self.undo(),
             (KeyCode::Char('r'), true) => self.redo(),
@@ -1149,8 +1183,42 @@ impl App {
         n
     }
 
+    /// `o` hands the file to the desktop -- `open` on macOS, `xdg-open`
+    /// elsewhere. Tagging is a claim about what a file holds, and the one
+    /// check the form cannot make is whether the footage is the footage you
+    /// think it is.
+    ///
+    /// Spawned and never waited on: the launcher returns long before the
+    /// player does, and this thread owes the event loop a repaint in the
+    /// meantime. The aggregate view has no one file to open, so it names the
+    /// key that picks one rather than opening an arbitrary member of the
+    /// selection.
+    fn open_file(&mut self) {
+        let idx = match self.view {
+            Some(i) => i,
+            None if self.files.len() == 1 => 0,
+            None => {
+                self.status = "no single file in view -- pick one with ] first".into();
+                return;
+            }
+        };
+        let path = self.files[idx].path.clone();
+        let tool = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        let spawned = std::process::Command::new(tool)
+            .arg("--")
+            .arg(&path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        self.status = match spawned {
+            Ok(_) => format!("opened {}", file_name(&path)),
+            Err(e) => format!("{tool}: {e}"),
+        };
+    }
+
     /// Push the focused field out to every open file — over whatever they
-    /// hold (`o`, overwrite all), or into only the ones where it is still
+    /// hold (`O`, overwrite all), or into only the ones where it is still
     /// empty (`b`, backfill).
     ///
     /// The aggregate view already reaches every file; this is the same reach
@@ -1768,6 +1836,21 @@ mod tests {
     fn the_capital_lands_on_the_letter_not_the_punctuation() {
         assert_eq!(Case::Title.apply("\"foo\" (bar)"), "\"Foo\" (Bar)");
         assert_eq!(Case::Capitalize.apply("  spaced"), "  Spaced");
+    }
+
+    /// The point of the minor-word list: a title reads as a title, not as a
+    /// row of capitals. First and last word are exempt whatever they are.
+    #[test]
+    fn title_case_leaves_the_little_words_lowered() {
+        assert_eq!(Case::Title.apply("the cat in the hat"), "The Cat in the Hat");
+        assert_eq!(Case::Title.apply("what it is for"), "What It Is For");
+        assert_eq!(Case::Title.apply("a day at the beach (and a night)"), "A Day at the Beach (and a Night)");
+    }
+
+    /// A colon starts a new phrase, and a phrase never opens lowered.
+    #[test]
+    fn title_case_capitalizes_after_a_colon() {
+        assert_eq!(Case::Title.apply("part two: the long way home"), "Part Two: The Long Way Home");
     }
 
     #[test]
