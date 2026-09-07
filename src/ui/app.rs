@@ -960,6 +960,7 @@ impl App {
             }
             (KeyCode::Char('h'), false) | (KeyCode::Left, _) => self.nudge(-1),
             (KeyCode::Char('l'), false) | (KeyCode::Right, _) => self.nudge(1),
+            (KeyCode::Char(c @ '0'..='5'), false) => self.set_stars(c as u8 - b'0'),
             (KeyCode::Char('g'), false) => self.jump(0),
             (KeyCode::Char('G'), false) => self.jump(self.rows.len().saturating_sub(1)),
             (KeyCode::Enter, _) => self.begin_edit(),
@@ -1112,6 +1113,20 @@ impl App {
             None => n - 1,
         } as usize;
         self.stage(key, Value::Text(opts[next].code.clone()));
+    }
+
+    /// A rating is the one fixed set small enough to name every member on the
+    /// keyboard, so on a Stars row the digits say the value outright: 3 is
+    /// three stars from wherever the row stands. h/l still nudge; this is the
+    /// same edit without the counting. On any other row the digit is not ours
+    /// and falls through to nothing.
+    fn set_stars(&mut self, n: u8) {
+        let Some(row) = self.rows.get(self.focus) else { return };
+        if row.control != Control::Stars {
+            return;
+        }
+        let key = row.key.clone();
+        self.stage(key, Value::Text(n.to_string()));
     }
 
     /// Stage a value the way an edit would, undo entry and all, on every file
@@ -1988,6 +2003,29 @@ mod tests {
         app.finish_fetch(vec![(0, Err("Video unavailable".into()))]);
         assert!(app.staged.is_empty());
         assert_eq!(app.status, "Video unavailable");
+    }
+
+    /// Five stars is five keys away by nudging and one key away by naming.
+    /// The digit belongs to the rating row alone -- anywhere else it stages
+    /// nothing rather than typing into a field nobody opened.
+    #[test]
+    fn a_digit_sets_the_rating_and_leaves_other_rows_alone() {
+        let mut app = one(&[("rating", "2")]);
+        let rating = app.rows.iter().position(|r| r.key == "rating").unwrap();
+        app.jump(rating);
+        press(&mut app, KeyCode::Char('5'));
+        assert_eq!(shown(&app, "rating"), Some(Value::Text("5".into())));
+        press(&mut app, KeyCode::Char('0'));
+        assert_eq!(shown(&app, "rating"), Some(Value::Text("0".into())));
+        // Back to what disk holds: nothing left staged to write.
+        press(&mut app, KeyCode::Char('2'));
+        assert!(app.staged.is_empty());
+
+        let title = app.rows.iter().position(|r| r.key == "title").unwrap();
+        app.jump(title);
+        press(&mut app, KeyCode::Char('3'));
+        assert!(app.staged.is_empty());
+        assert_eq!(app.mode, Mode::Select);
     }
 
     /// `d` is the URL field's key: elsewhere it says so, and on an empty URL

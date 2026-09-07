@@ -34,6 +34,7 @@ pub const KEYMAP: &[Section] = &[
             b("j k ↑ ↓ ⇥", "move between fields"),
             b("g G", "first / last field"),
             b("h l ← →", "step a fixed set, or nudge a rating"),
+            b("0-5", "on a rating: jump straight to that many stars"),
             b("⏎", "edit the focused field — on an empty date, fill in now"),
             b("w", "write staged edits (shows a plan to confirm first)"),
             b("^s", "write from either mode, committing the open field first"),
@@ -61,7 +62,7 @@ pub const KEYMAP: &[Section] = &[
         note: "a field is open; keys the control does not want fall through",
         binds: &[
             b("(type)", "edit the field"),
-            b("← →", "adjust a rating"),
+            b("← → 0-5", "adjust a rating, or set it outright"),
             b("⏎", "save and stop editing"),
             b("⇥ ⇧⇥", "save and move to the next / previous field"),
             b("j k ↑ ↓", "save and move a row, on a control with no text to type"),

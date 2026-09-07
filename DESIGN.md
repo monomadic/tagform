@@ -877,9 +877,13 @@ The control from `media-set-rating`, made reusable:
 entering an edit at all. Renders five glyphs always (filled + hollow), which is
 the exact form the filename grammar parses back.
 
-⟨designed⟩ `0`–`5` to set directly and `j`/`k` for clear/full are not bound:
-in the modal design (§11) those keys move between rows, and taking them back
-for one control would be exactly the inconsistency the mode split bought.
+⟨built, differs⟩ `0`–`5` set the rating outright, from Select mode as well as
+from an open editor. The objection recorded here was that those keys already
+mean something in the modal design (§11) — but that is true of `j`/`k`, which
+move between rows, and not of the digits, which are bound to nothing else in
+either mode. A five-member set is small enough to name every member on the
+keyboard, and on any row that is not a Stars row the digit stages nothing. The
+`j`/`k` half of the rejection stands.
 
 ### 5.7 Enum
 

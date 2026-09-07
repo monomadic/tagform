@@ -78,6 +78,7 @@ nothing is listening for the letter w.
 |---|---|
 | `j` / `k`, arrows, `tab` | move between fields (`g` / `G` first / last) |
 | `h` / `l` | step a fixed set, or nudge a rating — a set is edited only this way |
+| `0`–`5` | on a rating: jump straight to that many stars |
 | `enter` | edit the focused field — on an empty date, fill it with now first |
 | `w` | write staged edits (shows a plan first) |
 | `ctrl-s` / `cmd-s` | the same, from either mode — commits the open field first (`cmd` needs a terminal with the kitty keyboard protocol) |
@@ -102,7 +103,7 @@ nothing is listening for the letter w.
 | key | |
 |---|---|
 | (type) | edit the field |
-| `←` / `→` | adjust a rating |
+| `←` / `→`, `0`–`5` | adjust a rating, or set it outright |
 | `enter` | save and stop editing |
 | `tab` / `shift-tab` | save and move to the next / previous field |
 | `j` / `k`, `↑` / `↓` | save and move a row — on a control with no text to type |
