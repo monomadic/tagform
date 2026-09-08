@@ -13,7 +13,7 @@ is the main way to waste a context window here. Budget them like this:
 
 | File | | How to use it |
 |---|---|---|
-| `README.md` | ~140 lines | **Read in full, once.** Status, keymap, and the three container facts the design rests on. |
+| `README.md` | ~300 lines | **Read in full, once.** Tour, keymap, and the three container facts the design rests on. Skip the screenshots. |
 | `DESIGN.md` | ~1500 lines | **Never read whole.** One section at a time — see below. |
 | `docs/CONTAINER.md` | ~250 lines | Read §1 only, and only when touching the write path. Measured ffmpeg/exiftool behaviour. |
 

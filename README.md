@@ -1,76 +1,158 @@
-# tagform
+<h1 align="center">tagform</h1>
 
-A form-based metadata tagger for MP4/MOV — labelled fields with typed editors,
-validation, enums, star rows and tag chips, instead of a list of key/value
-strings. Replaces `mp4-tui-tagger`.
+<p align="center">
+  A form-based metadata tagger for MP4 and MOV, in the terminal.<br>
+  Labelled fields, typed editors, star ratings and tag chips — not a list of key/value strings.
+</p>
 
-- **[DESIGN.md](DESIGN.md)** — the design. Written ahead of the code, so it marks
-  what is not built (`⟨designed⟩`) and what shipped differently
-  (`⟨built, differs⟩`). §16 has the current direction.
-- **[docs/CONTAINER.md](docs/CONTAINER.md)** — what ffmpeg and exiftool
-  *actually* write. Measured. Read this before changing the write path.
-- **[AGENTS.md](AGENTS.md)** — orientation for coding agents.
+<p align="center">
+  <a href="https://www.rust-lang.org"><img alt="Rust" src="https://img.shields.io/badge/rust-2021-orange?logo=rust"></a>
+  <img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
+  <img alt="Status" src="https://img.shields.io/badge/status-milestone%206%20of%208-yellowgreen">
+</p>
 
-## Status
+<p align="center">
+  <img src="docs/screenshots/form.png" alt="tagform editing a single file" width="860">
+</p>
 
-**Milestones 0–5 done; 6 mostly done.** Probe → model → aggregate → typed
-controls → verified write, across a whole selection. Edits stage until `w`,
-which shows a plan to confirm; the original is only ever replaced by a result
-that has been read back and checked.
+`tagform` opens one file or a whole batch, shows every tag as a proper form
+control, and writes the result back **without destroying anything it did not
+touch**. It reads atoms and XMP together, picks a safe write backend from the
+file's own contents, and never replaces an original until the new file has
+been read back and verified.
 
-XMP is read, written, and preserved — which is the whole reason this tool
-exists, since an ffmpeg remux destroys XMP silently and `rename-footage` puts
-everything there. The writer picks a backend from the file's contents and
-verifies the result before replacing anything. Most files now take a **native
-container rewrite** (DESIGN §9.5) that adds keys, keeps XMP, and keeps the
-timed-metadata tracks an iPhone clip carries — none of which the remux can do.
+## Why
 
-Not built: composing the two filename grammars in-process (the rest of
-milestone 6 — parsing them is `i f`), the rest of seeding (completion — `i u`
-is the fetch), headless `--set`/`--apply`, and a config file. DESIGN §16 says what is next and why the list is shorter than the
-original plan.
+Tagging video is harder than tagging music, and most tools quietly get it
+wrong:
 
-Aggregation works like an mp3 tagger. With more than one file open, the
-aggregate view is **bulk edit mode**: the rule under Category and Variant says so
-and how many files are in the group, an agreed value shows with the file count
-beside it, and a field that differs between files reads `multiple values (N
-files)` and is left alone unless you set it. Opening a field takes the note
-away, and anything saved lands on every file. `m` **merges** a list field —
-the union of every file's values, first-seen order, folded case-insensitively —
-which is the operation you actually want when tagging a batch and which none of
-the scripts this replaces can do. Setting a `‹multiple›` field says how many
-distinct values it is about to flatten, in the confirmation, before it happens.
-A closed set that the files disagree about lights no option.
+- **ffmpeg's default path drops half your keys.** It writes iTunes `ilst`
+  atoms, which have no slot for `actors`, `channel`, `rating` or the source
+  URL. `tagform` writes `mdta` keys, which hold anything.
+- **An ffmpeg remux destroys XMP.** Silently, with no flag to stop it. If a
+  camera or `exiftool` put people, places and ratings in XMP, a remux throws
+  them away. `tagform` detects XMP and chooses a writer that keeps it.
+- **iPhone clips carry timed-metadata tracks** for orientation and Live
+  Photos. A remux cannot carry them. `tagform`'s native container rewrite can.
+- **Batch tagging is what you actually do.** Open twenty clips from one show
+  and `tagform` behaves like an mp3 tagger: agreed values show once, differing
+  values say so, and one key fills, merges or overwrites a field across the lot.
 
-An edit belongs to the files it was made on. `[` and `]` walk the selection
-without disturbing anything staged elsewhere, and `w` writes every staged edit,
-including one made on a file you have since walked away from — the confirmation
-says which files each edit lands on. `O` **overwrites** the focused field on every
-open file; `b` **backfills** it into only the files where that field is still
-empty, which is the one-key way to give a batch a Channel or a Category without
-overwriting the files that already have their own.
+## Install
+
+You need `ffmpeg`, `ffprobe` and `exiftool` on your `PATH`, and a Rust
+toolchain.
 
 ```bash
-cargo run -- FILE...                  # the form
-cargo run -- --print-json FILE...     # the model, as JSON
-cargo run -- --print-schema           # the field schema, as JSON
-cargo test
-cargo build --release                 # binary to target/release/tagform
+cargo install --git https://github.com/monomadic/tagform
 ```
 
-The full CLI is five options: `--print-json`, `--print-schema`,
-`--no-thumbnail`, `--theme=NAME`, `--help`. Everything else is a key inside the
-form.
+Or build from a checkout:
 
-`--print-schema` is where the metadata vocabulary is documented — every field
-with the keys it **writes** (`mdta`), the aliases it **understands** on read,
-its XMP tag and its iTunes atom. It is emitted from `FIELDS` in
-[src/model/schema.rs](src/model/schema.rs), which is the single authority; no
-document keeps a copy.
+```bash
+cargo build --release   # binary at target/release/tagform
+```
 
-The form is **modal**. Select mode moves and commands; Edit mode types. That is
-what frees the single-letter keys — `w` can mean write because in Select mode
-nothing is listening for the letter w.
+`assets/tagform.exiftool.cfg` is a required runtime asset: without it exiftool
+refuses to write this library's custom `Keys:` tags. Keep it next to the binary
+or where the source tree left it.
+
+Optional: `yt-dlp` backs the `i u` import, and `rename-video` backs the `r`
+rename. Nothing else needs them.
+
+## Quick start
+
+```bash
+tagform clip.mp4                 # open one file
+tagform show/*.mp4               # open a batch — bulk edit mode
+tagform --print-json clip.mp4    # what tagform sees, as JSON
+tagform --print-schema           # every field and the keys it reads/writes
+```
+
+Inside the form: `j`/`k` move, `enter` edits, `h`/`l` step a set or nudge a
+rating, `w` writes, `?` shows every key. That is enough to start.
+
+## A tour
+
+### Typed controls, not strings
+
+Text, multi-line text, lists drawn as chips, `#hashtags`, validated URLs,
+dates, a 0–5 star row, and fixed sets that draw all their options on the
+field's own line with the current one lit. Every tag in a list gets its own
+colour, hashed from its text, so `#live` is the same colour in every file.
+
+<p align="center">
+  <img src="docs/screenshots/edit.png" alt="editing the Title field" width="860">
+</p>
+
+The form is **modal**, like vim: Select mode moves and commands, Edit mode
+types. That frees the single-letter keys — `w` can mean *write* because in
+Select mode nothing is listening for the letter w. Text fields take the
+emacs/macOS editing keys (`ctrl-a`, `ctrl-e`, `ctrl-w`, `ctrl-k`, …).
+
+### Bulk edit across a whole selection
+
+Open more than one file and the form becomes the aggregate. A field the files
+agree on shows once with the count beside it; one they disagree on reads
+`multiple values (3 files)` and is left alone unless you set it.
+
+<p align="center">
+  <img src="docs/screenshots/merge.png" alt="three files open, Tags merged" width="860">
+</p>
+
+- `m` **merges** a list field: the union of every file's values, first-seen
+  order, case-folded. Here Tags became the union of three files' hashtags.
+- `O` **overwrites** the focused field on every open file.
+- `b` **backfills** it into only the files where it is still empty — the
+  one-key way to give a batch a Channel without clobbering the ones that
+  already have their own.
+- `[` / `]` walk the selection file by file. Edits belong to the files they
+  were made on, and `w` writes all of them at once.
+
+### Nothing is written blind
+
+`w` shows a plan first: which fields change, which files they land on, which
+backend writes each one and why, and what a `multiple values` field is about
+to flatten.
+
+<p align="center">
+  <img src="docs/screenshots/plan.png" alt="the write plan" width="860">
+</p>
+
+The original is **never modified until a verified replacement exists**. The
+writer builds a sibling temp file, proves its duration, tags and layout, and
+only then renames it over the original. Any failure leaves the original
+untouched. Keys no field claims are carried through unchanged.
+
+### Import from the web or the filename
+
+`i` opens the import band. `u` fetches the page behind the URL field with
+`yt-dlp` (metadata only, nothing is downloaded) and stages Title, Actors,
+Channel, Description, Tags and Date. `f` parses the filename instead:
+`#tags`, `★` stars, and `Actor, Actor (Channel) - Title`, filling only the
+fields that are still empty.
+
+### Help is one key away
+
+`?` opens the full key map, which is rendered from the same table as `--help`.
+
+<p align="center">
+  <img src="docs/screenshots/help.png" alt="the key map" width="860">
+</p>
+
+### Seven colour schemes
+
+`synthwave` (default), `c64`, `midnight`, `gruvbox`, `nord`, `rose-pine` and
+`amber`. Cycle with `t` or pick with `--theme=NAME`. Every scheme is held to a
+WCAG 3:1 contrast floor by a test, including the focused-row fill and the tag
+ring.
+
+<p align="center">
+  <img src="docs/screenshots/themes.png" alt="gruvbox, nord, amber and c64" width="860">
+</p>
+
+## Keys
 
 **Select** (default)
 
@@ -83,7 +165,7 @@ nothing is listening for the letter w.
 | `w` | write staged edits (shows a plan first) |
 | `ctrl-s` / `cmd-s` | the same, from either mode — commits the open field first (`cmd` needs a terminal with the kitty keyboard protocol) |
 | `r` | rename the file — or every file in the selection — from the tags on disk, by running `rename-video` |
-| `i` | import — the header band shows the two sources with what each would bring, then `u` fetches the page behind the URL field with `yt-dlp` (metadata only, no download) and stages Title, Actors, Channel, Description, Tags and Date, or `f` reads the filename: `#tags`, `★` stars, and `Actor, Actor (Channel) - Title`, with an optional leading timestamp and `[meta]` blocks ignored. A fetch takes the page's word; a filename fills only the fields that are still empty. `u` takes either back in one step |
+| `i` | import — then `u` fetches the page behind the URL field with `yt-dlp`, or `f` reads the filename. A fetch takes the page's word; a filename fills only the fields that are still empty. `u` takes either back in one step |
 | `m` | merge a list field across every file in the selection |
 | `I` | inspector — per-file values for the focused field |
 | `]` / `[` (or `ctrl-n` / `ctrl-p`) / `a` | next file / previous file / all files |
@@ -111,152 +193,101 @@ nothing is listening for the letter w.
 | `ctrl-s` / `cmd-s` | save the field and write |
 | `ctrl-c` | quit, from either mode |
 
-On a text field, the emacs/macOS editing keys work as they do everywhere else:
+Text fields also take `ctrl-a` / `ctrl-e` (start / end), `ctrl-b` / `ctrl-f`
+(back / forward), `ctrl-d` / `ctrl-h` (delete right / left), `ctrl-w` (delete
+word), `ctrl-k` (delete to end) and `ctrl-u` (clear line). They bind only
+while a field is open, so Select mode's single letters are untouched.
 
-| key | |
-|---|---|
-| `ctrl-a` / `ctrl-e` | start / end of line |
-| `ctrl-b` / `ctrl-f` | back / forward one character |
-| `ctrl-d` / `ctrl-h` | delete the character right / left |
-| `ctrl-w` | delete the word behind the cursor |
-| `ctrl-k` | delete to end of line |
-| `ctrl-u` | clear the line |
+## The fields
 
-They bind only while a field is open, so Select mode's single-letter commands
-are untouched — which is what the mode split is for. Every text-backed control
-gets them, chips included, since a list is one joined line underneath.
+Twenty fields in one flat list. The five footage fields (Location, State,
+Country, Coordinates, Original name) appear only when a file in the selection
+carries them. Anything on disk that no field claims gets a row of its own at
+the bottom, atoms and XMP alike.
 
-The form paints its own chrome: a filled `tagform` badge heads the screen, every
-field shows a coloured editable region whether or not it is focused, the focused
-field is marked `▍` (`▶` while editing) and a staged one `●`, and a shortcut
-strip along the bottom lists the keys that are live in the current mode, led by
-`?` — which opens the full key map, so the strip only ever has to be an
-abbreviation. The map and `--help` render the same table
-([src/ui/keymap.rs](src/ui/keymap.rs)); neither transcribes the other.
-Colours are true-colour throughout, in seven schemes — `synthwave`, `c64`,
-`midnight`, `gruvbox`, `nord`, `rose-pine`, `amber` — cycled with `t` or picked
-with `--theme=NAME`. Three of them are retro (`synthwave`, `c64`, and `amber`,
-a phosphor monitor), and the first in the list is what the form comes up in. A test
-computes WCAG contrast for every text colour in every scheme against that
-scheme's own background and fails below 3:1, and checks that a custom-key label
-is a different *hue* from an ordinary one rather than a dimmer shade. Both
-guards exist because both mistakes were made: 16-colour `DarkGray` labels, and
-a file path drawn in a divider colour at 1.4:1. The focused row is filled
-across its whole width — label included, not just its input box — so the row
-you are on is found without hunting for the marker; the fill is checked as a
-text surface by the same contrast test, which is what caught three greys that
-read on the page and not on the band.
+`--print-schema` is where the vocabulary is documented: every field with the
+keys it **writes** (`mdta`), the aliases it **understands** on read, its XMP
+tag and its iTunes atom. It is emitted from `FIELDS` in
+[src/model/schema.rs](src/model/schema.rs), the single authority.
 
-Every scheme also carries a **tag ring**: list and `#hashtag` values draw one
-colour per entry rather than one colour for the whole string, hashed from the
-tag's own text so `#pov` is the same colour in every file and every row it
-appears in. That stability is the point — a column of tag sets in the per-file
-inspector is scanned for a missing colour rather than read word by word. The
-ring is held to the same contrast floor as the rest of the theme, and to a
-pairwise ΔE so two tags never differ by a shade you would mistake for meaning.
-
-Controls: text, multi-line text, lists drawn as chips, `#hashtags`, URL
-(validated, `not a URL: …`), dates, a 0–5 star row, fixed sets (Category,
-Variant and Kind — the last stored as the `stik` integer but shown as "Movie"),
-and read-only fields for things a camera wrote. Chips are a *rendering*: a list
-edits as its comma-joined text and re-splits on commit, so there is no per-chip
-cursor.
-
-Twenty fields, in one flat list — no collapsed sections. The five footage
-fields (Location, State, Country, Coordinates, Original name) appear only when
-a file in the selection actually carries them.
+**Read is deliberately wider than write.** A URL may arrive as `comment`,
+`purl`, `source_url`, `webpage_url` or `original_url`; a write emits only the
+canonical set. That asymmetry is what makes `tagform` idempotent.
 
 **Category `Footage` reshapes the form.** Artist, URL, Channel and Synopsis go
 (a camera file was not published anywhere), Actors is labelled **People**, and
 the order becomes Category, Variant, Date, People, Rating, Tags, Title,
-Description — what it is, when, who, how good, how to find it again, and only
-then the prose. Hiding is display only: those keys are still read and still
-written back untouched, and a row carrying a staged edit stays visible. Anything on disk that no field
-claims gets a row of its own at the bottom, atoms and XMP alike, so nothing is
-lost by going unrecognised.
+Description. Hiding is display only: those keys are still read and written
+back untouched.
 
-A set draws itself **along the field's own line**, always, with the current
-value lit — so you see the whole set without cycling blind:
-
-```
-  ▍Category         Adult  Footage  Karaoke  Live Visual  Music Video  …
-   Variant          Original  Enhanced  Clip
-   Kind             Home Video  Normal  Audiobook  Music Video  Movie  …
-```
-
-`h`/`l` (or `←`/`→`) step and wrap, and each step stages immediately. A set has
-no edit mode: `enter` does not open it, because stepping in place is all
-opening it ever did. Step back or press `u` to undo a mis-step.
-
-**The rating is a set too**, of six values, and behaves like one: `h`/`l` nudge
-it, `0`–`5` name it outright, `j`/`k` still leave the row, and `enter` opens
-nothing. It used to have a mode whose only keys were the ones that already
-worked outside it.
-
-Typing into a set is not supported yet — Category and Variant are picked from
-the list, like Kind. A value already on the file that the list does not know
-**joins the set for that field**, so an unfamiliar Category stays selectable
-instead of being lost the first time the field is stepped.
-
-Category and Variant are **not hardcoded** — they are parsed out of
+**Category and Variant are not hardcoded.** They are parsed out of
 `~/.config/yt-dlp/config`'s `--alias` lines, so adding an alias there adds a
-dropdown value here. Variant is then reordered `Original`, `Enhanced`, `Clip`,
-most-chosen first, so the commonest answer is the one already under the
-cursor; Category keeps the config's own order, having no such skew.
+value here. A value already on a file that the list does not know joins the
+set for that field rather than being lost. Older spellings (`Camera Footage`,
+`Media`, `Master`, `VJ Clip`) read as their current names and are rewritten
+only when the field is edited.
 
-**Category is what used to be called Genre**: `Adult`, `Footage`, `Karaoke`,
-`Live Visual`, `Music Video`, `Tutorial`, `Meme`, `Texture` — what kind of
-thing the file is, which was never a style and was sitting on the one key Plex,
-Jellyfin and Music.app read as one. Genre is still there, on `genre`/`©gen`,
-now an ordinary text field holding the style those players expect. Nothing
-migrates: the two keys are independent.
-
-A value stored under an older name reads as its current one — `Camera Footage`
-shows as `Footage`, `Media` as `Adult`, `Master` as `Enhanced`, `VJ Clip` as
-`Live Visual` — on files as well as in the dropdown, so a renamed option
-replaces the old spelling instead of sitting beside it. Old files keep their
-stored value until the field is edited.
-
-Two things it already does that the scripts it replaces could not: it reads XMP
-and atoms together, so a `rename-footage` clip shows its people, location and
-rating; and `--print-json` reports `ilst_lossy` — the fields on these files that
-have no iTunes atom at all, i.e. exactly what an iTunes-compatible write would
-drop. (That write mode is not built. The measurement is the prerequisite for
-it — DESIGN §2.1.)
-
-Milestone 0 (the container experiment) is done and reshaped the design; its
-findings are in `docs/CONTAINER.md` and reproducible with
-`tests/container-experiment.sh`.
+**Category is what used to be called Genre**: what kind of thing the file is.
+Genre is still there, on `genre`/`©gen`, as an ordinary text field holding the
+style that Plex, Jellyfin and Music.app read.
 
 ## The three things to know
 
-**1. This library is `mdta`, not iTunes.** `~/.config/yt-dlp/config` sets
-`-movflags use_metadata_tags` globally, so tags live in `moov/udta/meta` under
-the `mdta` handler with arbitrary key names. The default ffmpeg path writes
-iTunes `ilst` atoms instead and **silently drops** `actors`, `type` (now `variant`), `channel`,
-`rating`, `origin`, `source_url`, `webpage_url`, `purl` and `yt_dlp_id` — 9 of
-20 keys. The two boxes are mutually exclusive.
+These were measured, not assumed — the numbers are in
+[docs/CONTAINER.md](docs/CONTAINER.md) and reproducible with
+`tests/container-experiment.sh`.
 
-**2. `rename-footage` puts everything in XMP, and ffprobe cannot see it.**
-People, tags, channel, location, rating and `PreservedFileName` are XMP written
-by exiftool. A reader using ffprobe alone concludes a footage file has no
-metadata at all. So `tagform` always runs both readers.
+**1. This library is `mdta`, not iTunes.** Tags live in `moov/udta/meta` under
+the `mdta` handler with arbitrary key names. The default ffmpeg path writes
+iTunes `ilst` atoms instead and **silently drops** `actors`, `variant`,
+`channel`, `rating`, `origin`, `source_url`, `webpage_url`, `purl` and
+`yt_dlp_id` — 9 of 20 keys. The two layouts are mutually exclusive.
+
+**2. XMP is invisible to ffprobe.** People, tags, channel, location and rating
+written by exiftool live in XMP, and a reader using ffprobe alone concludes
+the file has no metadata at all. `tagform` always runs both readers.
 
 **3. An ffmpeg remux destroys XMP** — totally, silently, with no flag to
-prevent it — **and it cannot carry an iPhone clip's timed-metadata tracks**
-either: the video's orientation and its Live Photo data go with them
-(docs/CONTAINER.md §6). That is why the writer chooses its backend from the
-file's *contents* and never from a preference: exiftool in place for a plain
-update, otherwise a native rewrite of the container that adds keys while
-keeping both. ffmpeg remains the fallback for the layouts the native writer
-declines. There is deliberately **no flag to override the choice** — every such
-flag is a flag that lets you destroy XMP.
+prevent it — **and cannot carry an iPhone clip's timed-metadata tracks**. That
+is why the writer chooses its backend from the file's *contents*, never from a
+preference: exiftool in place for a plain update, otherwise a native rewrite of
+the container that adds keys while keeping both. ffmpeg remains the fallback
+for the layouts the native writer declines. There is deliberately **no flag
+to override the choice** — every such flag is a flag that lets you destroy XMP.
 
-## Dependencies
+## Status
 
-`ffmpeg`/`ffprobe` and `exiftool`, both required at runtime.
-`rename-video` is optional: it backs the `r` key and nothing else, and
-`yt-dlp` likewise backs only `i u`.
-`assets/tagform.exiftool.cfg` is a required runtime asset too: without it
-exiftool refuses to write this library's custom `Keys:` tags (`Sorry, Keys:Actors doesn't exist or isn't writable`) —
-the same wall `rename-footage` hit before it retreated to XMP.
+**Milestones 0–5 done; 6 mostly done.** Probe → model → aggregate → typed
+controls → verified write, across a whole selection, with XMP read, written
+and preserved.
+
+Not built yet: composing the two filename grammars in-process (parsing them is
+`i f`), the rest of seeding, headless `--set`/`--apply`, and a config file.
+[DESIGN.md](DESIGN.md) §16 says what is next and why.
+
+The CLI is five options: `--print-json`, `--print-schema`, `--no-thumbnail`,
+`--theme=NAME`, `--help`. Everything else is a key inside the form.
+
+## Development
+
+```bash
+cargo test                        # unit tests, plus a write-path suite on generated containers
+cargo run -- FILE...              # the form
+cargo run -- --print-json FILE... # the model as JSON — the fastest way to inspect a file
+```
+
+`cargo test` needs `ffmpeg` and `exiftool` on `PATH`; it generates its own
+fixtures in a temp directory. The screenshots above are regenerated with
+[docs/screenshots/capture.sh](docs/screenshots/capture.sh), which drives the
+binary through a pseudo-terminal.
+
+- **[DESIGN.md](DESIGN.md)** — the design, written ahead of the code. It marks
+  what is not built (`⟨designed⟩`) and what shipped differently
+  (`⟨built, differs⟩`).
+- **[docs/CONTAINER.md](docs/CONTAINER.md)** — what ffmpeg and exiftool
+  *actually* write, measured. Read before changing the write path.
+- **[AGENTS.md](AGENTS.md)** — orientation for coding agents.
+
+## License
+
+MIT.
