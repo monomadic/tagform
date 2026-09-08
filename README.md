@@ -25,9 +25,9 @@ verifies the result before replacing anything. Most files now take a **native
 container rewrite** (DESIGN §9.5) that adds keys, keeps XMP, and keeps the
 timed-metadata tracks an iPhone clip carries — none of which the remux can do.
 
-Not built: the two filename grammars (the rest of milestone 6), the rest of
-seeding (`--from-filename`, completion — `d` on the URL field is the fetch),
-headless `--set`/`--apply`, and a config file. DESIGN §16 says what is next and why the list is shorter than the
+Not built: composing the two filename grammars in-process (the rest of
+milestone 6 — parsing them is `i f`), the rest of seeding (completion — `i u`
+is the fetch), headless `--set`/`--apply`, and a config file. DESIGN §16 says what is next and why the list is shorter than the
 original plan.
 
 Aggregation works like an mp3 tagger. With more than one file open, the
@@ -83,9 +83,9 @@ nothing is listening for the letter w.
 | `w` | write staged edits (shows a plan first) |
 | `ctrl-s` / `cmd-s` | the same, from either mode — commits the open field first (`cmd` needs a terminal with the kitty keyboard protocol) |
 | `r` | rename the file — or every file in the selection — from the tags on disk, by running `rename-video` |
-| `d` | on the URL field: fetch the page's tags with `yt-dlp` (metadata only, no download) and stage them onto Title, Actors, Channel, Description, Tags and Date — a field the page does not answer keeps its value; `u` takes the whole fetch back |
+| `i` | import — the header band shows the two sources with what each would bring, then `u` fetches the page behind the URL field with `yt-dlp` (metadata only, no download) and stages Title, Actors, Channel, Description, Tags and Date, or `f` reads the filename: `#tags`, `★` stars, and `Actor, Actor (Channel) - Title`, with an optional leading timestamp and `[meta]` blocks ignored. A fetch takes the page's word; a filename fills only the fields that are still empty. `u` takes either back in one step |
 | `m` | merge a list field across every file in the selection |
-| `i` | inspector — per-file values for the focused field |
+| `I` | inspector — per-file values for the focused field |
 | `]` / `[` / `a` | next file / previous file / all files |
 | `o` | open the file in whatever the desktop plays it with |
 | `O` / `b` | overwrite the focused field on every file / backfill it into only the files where it is empty |
@@ -247,7 +247,7 @@ flag is a flag that lets you destroy XMP.
 
 `ffmpeg`/`ffprobe` and `exiftool`, both required at runtime.
 `rename-video` is optional: it backs the `r` key and nothing else, and
-`yt-dlp` likewise backs only `d`.
+`yt-dlp` likewise backs only `i u`.
 `assets/tagform.exiftool.cfg` is a required runtime asset too: without it
 exiftool refuses to write this library's custom `Keys:` tags (`Sorry, Keys:Actors doesn't exist or isn't writable`) —
 the same wall `rename-footage` hit before it retreated to XMP.

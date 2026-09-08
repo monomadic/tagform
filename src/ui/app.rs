@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::{Enums, KINDS};
 use crate::fetch;
+use crate::model::filename;
 use crate::model::schema::{
     self, field_by_id, Control, FieldDef, ADULT, ADULT_HIDDEN, ADULT_ORDER, CLIP, FIELDS, FOOTAGE,
     FOOTAGE_HIDDEN,
@@ -214,6 +215,20 @@ pub enum Msg {
     Fetched(Vec<(usize, Result<Vec<(&'static str, Value)>, String>)>),
 }
 
+/// The import menu's preview of one file: what each source has to offer.
+pub struct ImportPreview {
+    /// How many files the import would run over.
+    pub files: usize,
+    /// The URL the fetch would ask, if the file has one.
+    pub url: Option<String>,
+    /// The filename without its extension -- what the parser is given.
+    pub stem: String,
+    /// Fields the name carries that are empty on the file: label and value.
+    pub fills: Vec<(String, Value)>,
+    /// Fields the name carries that the file already holds, so are kept.
+    pub keeps: Vec<String>,
+}
+
 /// Staged edits, keyed by file index then by row key.
 pub type Staged = BTreeMap<usize, BTreeMap<String, Value>>;
 
@@ -231,6 +246,12 @@ pub struct App {
     /// None = aggregate view over every file; Some(i) = that one file.
     pub view: Option<usize>,
     pub inspector: bool,
+    /// The import menu is up in the header band (§5.5, §9.4): a choice of
+    /// where to seed the form from -- the page behind the URL field, or the
+    /// filename -- with a preview of what each would bring. Modal for one
+    /// keystroke, like the format menu, and painted where the inspector
+    /// paints because both are answers about the file rather than the form.
+    pub import_menu: bool,
     /// The key-map overlay (§11). A screen of its own rather than a longer
     /// shortcut strip: the strip has room for a mode's commands, not for the
     /// forty bindings the form actually has.
@@ -321,6 +342,7 @@ impl App {
             focus: 0,
             view: None,
             inspector: false,
+            import_menu: false,
             help: false,
             help_scroll: 0,
             help_max: std::cell::Cell::new(0),
@@ -763,19 +785,16 @@ impl App {
         };
     }
 
-    /// `d` over the URL field: ask yt-dlp what the page says and stage it
-    /// onto the other fields (§5.5). Per file in scope, each from its own URL,
-    /// so a batch of downloads seeds itself in one key. The URL used is the
-    /// one shown -- a URL just typed and not yet written counts, which is the
-    /// common case: paste the page, press `d`, get the form filled.
+    /// `i` then `u`: ask yt-dlp what the page behind the URL field says and
+    /// stage it onto the other fields (§5.5). Per file in scope, each from
+    /// its own URL, so a batch of downloads seeds itself in one key. The URL
+    /// used is the one shown -- a URL just typed and not yet written counts,
+    /// which is the common case: paste the page, press `i u`, get the form
+    /// filled. It does not matter which field is focused: the source is the
+    /// URL field, not the cursor.
     fn fetch_tags(&mut self) {
         self.commit_editor();
         if self.fetching {
-            return;
-        }
-        let Some(row) = self.rows.get(self.focus) else { return };
-        if row.key != "url" {
-            self.status = "fetch works from the URL field".into();
             return;
         }
         let jobs: Vec<(usize, String)> = self
@@ -817,6 +836,45 @@ impl App {
     /// back in one key if the page was wrong.
     fn finish_fetch(&mut self, out: Vec<(usize, Result<Vec<(&'static str, Value)>, String>)>) {
         self.fetching = false;
+        self.stage_import("fetched", "the page agrees with the file", out, false);
+    }
+
+    /// `i` then `f`: read the fields the filename carries (§9.4) and stage
+    /// them into the fields that are still empty. Only the empty ones, unlike
+    /// the fetch: a page is an authority worth taking the word of, but a name
+    /// was composed *from* tags, so where the container disagrees with it the
+    /// container is the newer of the two. Per file in scope, each from its
+    /// own name. Synchronous -- there is nothing to wait on.
+    fn import_filename(&mut self) {
+        self.commit_editor();
+        let out = self
+            .scope()
+            .into_iter()
+            .map(|i| {
+                let fields = filename::parse_path(&self.files[i].path);
+                let r = if fields.is_empty() {
+                    Err(format!("nothing recognised in {}", file_name(&self.files[i].path)))
+                } else {
+                    Ok(fields)
+                };
+                (i, r)
+            })
+            .collect();
+        self.stage_import("imported", "every field the name carries is already set", out, true);
+    }
+
+    /// Stage what a source said about each file, as one undoable step, and
+    /// say what happened. A field a source did not answer is not in its list
+    /// and so is not touched. With `only_empty`, a field that already shows
+    /// a value keeps it -- the filename rule; without, the source's value
+    /// replaces it -- the fetch's rule, where `u` takes the whole step back.
+    fn stage_import(
+        &mut self,
+        verb: &str,
+        agrees: &str,
+        out: Vec<(usize, Result<Vec<(&'static str, Value)>, String>)>,
+        only_empty: bool,
+    ) {
         let total = out.len();
         let before = self.staged.clone();
         let mut filled = 0usize;
@@ -827,7 +885,7 @@ impl App {
                 Ok(fields) => {
                     files += 1;
                     for (id, value) in fields {
-                        filled += self.place(&[i], id, &value, false);
+                        filled += self.place(&[i], id, &value, only_empty);
                     }
                 }
                 Err(e) => note = e,
@@ -841,11 +899,42 @@ impl App {
         let n_fields = |n: usize| format!("{n} field{}", if n == 1 { "" } else { "s" });
         self.status = match (files, total) {
             (0, _) => note,
-            (1, 1) if filled == 0 => "nothing new: the page agrees with the file".into(),
-            (1, 1) => format!("fetched {}", n_fields(filled)),
-            (n, t) if n == t => format!("fetched {} across {n} files", n_fields(filled)),
-            (n, t) => format!("fetched {} across {n} of {t} files: {note}", n_fields(filled)),
+            (1, 1) if filled == 0 => format!("nothing new: {agrees}"),
+            (1, 1) => format!("{verb} {}", n_fields(filled)),
+            (n, t) if n == t => format!("{verb} {} across {n} files", n_fields(filled)),
+            (n, t) => format!("{verb} {} across {n} of {t} files: {note}", n_fields(filled)),
         };
+    }
+
+    /// What the import menu shows beside each source, for the file in view
+    /// (the first in scope, in the aggregate). Computed here rather than in
+    /// the painter so the preview and the import cannot disagree about what
+    /// the name says.
+    pub fn import_preview(&self) -> ImportPreview {
+        let idx = self.current_file();
+        let scope = self.scope();
+        let url = self.files.get(idx).and_then(|f| {
+            let disk = disk_value(f, "url");
+            match overlay(disk, self.staged.get(&idx).and_then(|m| m.get("url")))? {
+                Value::Text(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+                _ => None,
+            }
+        });
+        let path = self.files.get(idx).map(|f| f.path.clone()).unwrap_or_default();
+        let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let mut fills = Vec::new();
+        let mut keeps = Vec::new();
+        for (id, value) in filename::parse_path(&path) {
+            let label = key_label(id);
+            let disk = self.files.get(idx).and_then(|f| disk_value(f, id));
+            let now = overlay(disk, self.staged.get(&idx).and_then(|m| m.get(id)));
+            if now.is_some_and(|v| !v.is_empty()) {
+                keeps.push(label);
+            } else {
+                fills.push((label, value));
+            }
+        }
+        ImportPreview { files: scope.len(), url, stem, fills, keeps }
     }
 
     /// Route by mode. Select moves and commands; Edit types.
@@ -980,6 +1069,17 @@ impl App {
             }
             return;
         }
+        // The import menu owns the next key the same way: `u` and `f` are
+        // sources, and anything else closes the menu without importing.
+        if self.import_menu {
+            self.import_menu = false;
+            match key.code {
+                KeyCode::Char('u') if !ctrl => self.fetch_tags(),
+                KeyCode::Char('f') if !ctrl => self.import_filename(),
+                _ => self.status = "import cancelled".into(),
+            }
+            return;
+        }
         match (key.code, ctrl) {
             (KeyCode::Char('j'), false) | (KeyCode::Down, _) | (KeyCode::Tab, _) => {
                 self.move_focus(1)
@@ -993,8 +1093,13 @@ impl App {
             (KeyCode::Char('g'), false) => self.jump(0),
             (KeyCode::Char('G'), false) => self.jump(self.rows.len().saturating_sub(1)),
             (KeyCode::Enter, _) => self.begin_edit(),
-            (KeyCode::Char('i'), false) => {
+            (KeyCode::Char('I'), false) => {
                 self.inspector = !self.inspector;
+                self.status.clear();
+            }
+            (KeyCode::Char('i'), false) => {
+                self.commit_editor();
+                self.import_menu = true;
                 self.status.clear();
             }
             (KeyCode::Char('y') | KeyCode::Char('c'), false) => self.yank(),
@@ -1014,7 +1119,6 @@ impl App {
             (KeyCode::Char('u'), false) => self.undo(),
             (KeyCode::Char('r'), true) => self.redo(),
             (KeyCode::Char('r'), false) => self.rename_files(),
-            (KeyCode::Char('d'), false) => self.fetch_tags(),
             (KeyCode::Backspace, _) => self.clear_focused(),
             (KeyCode::Char('w'), false) => self.prepare_write(),
             (KeyCode::Char('t'), false) => {
@@ -2184,20 +2288,86 @@ mod tests {
         assert_eq!(app.mode, Mode::Select);
     }
 
-    /// `d` is the URL field's key: elsewhere it says so, and on an empty URL
-    /// it has nothing to ask -- neither starts yt-dlp.
+    /// `i u` reads the URL field wherever the cursor is, and on an empty URL
+    /// it has nothing to ask -- so it does not start yt-dlp.
     #[test]
     fn fetch_only_starts_from_a_url() {
         let mut app = one(&[("title", "T")]);
         app.jump(0);
-        press(&mut app, KeyCode::Char('d'));
-        assert!(!app.fetching);
-        assert_eq!(app.status, "fetch works from the URL field");
-        let url = app.rows.iter().position(|r| r.key == "url").unwrap();
-        app.jump(url);
-        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Char('i'));
+        assert!(app.import_menu);
+        press(&mut app, KeyCode::Char('u'));
+        assert!(!app.import_menu);
         assert!(!app.fetching);
         assert_eq!(app.status, "no URL to fetch from");
+    }
+
+    /// The import menu is one keystroke deep: `i` opens it, a source key
+    /// runs it, and any other key closes it without touching the form.
+    #[test]
+    fn the_import_menu_is_modal_for_one_key() {
+        let mut app = one(&[("title", "T")]);
+        press(&mut app, KeyCode::Char('i'));
+        assert!(app.import_menu);
+        press(&mut app, KeyCode::Char('w'));
+        assert!(!app.import_menu);
+        assert!(app.pending.is_none(), "w inside the menu must not open a write plan");
+        assert_eq!(app.status, "import cancelled");
+        press(&mut app, KeyCode::Char('I'));
+        assert!(app.inspector);
+        assert!(!app.import_menu);
+    }
+
+    /// `i f` fills the empty fields from the name and leaves a field that
+    /// already holds something alone -- and the whole of it is one undo step.
+    #[test]
+    fn a_filename_import_fills_only_the_empty_fields() {
+        use crate::tags::probe::FileTags;
+        let f = FileTags {
+            path: PathBuf::from("/x/Ann Lee, Bo Cruz (Studio X) - A Title #pov #hd ★★★★☆.mp4"),
+            atoms: [("title".to_string(), Value::text("Kept Title"))].into_iter().collect(),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = App::new(vec![f], BTreeMap::new(), false);
+        let p = app.import_preview();
+        assert_eq!(p.keeps, ["Title"]);
+        assert_eq!(p.fills.len(), 4, "{:?}", p.fills);
+        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('f'));
+        assert_eq!(shown(&app, "title"), Some(Value::text("Kept Title")));
+        assert_eq!(shown(&app, "actors"), Some(Value::List(vec!["Ann Lee".into(), "Bo Cruz".into()])));
+        assert_eq!(shown(&app, "channel"), Some(Value::text("Studio X")));
+        assert_eq!(shown(&app, "rating"), Some(Value::text("4")));
+        assert_eq!(shown(&app, "tags"), Some(Value::List(vec!["pov".into(), "hd".into()])));
+        assert_eq!(app.status, "imported 4 fields");
+        press(&mut app, KeyCode::Char('u'));
+        assert!(app.staged.is_empty(), "{:?}", app.staged);
+        // A second import has nothing left to fill, and says so.
+        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('f'));
+        press(&mut app, KeyCode::Char('u'));
+        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('f'));
+        assert!(app.status.starts_with("imported"), "{}", app.status);
+        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('f'));
+        assert_eq!(app.status, "nothing new: every field the name carries is already set");
+    }
+
+    /// A name with nothing to read says so and stages nothing.
+    #[test]
+    fn a_bare_filename_imports_nothing() {
+        use crate::tags::probe::FileTags;
+        let f = FileTags {
+            path: PathBuf::from("/x/[1080p 30fps].mp4"),
+            atoms: BTreeMap::new(),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = App::new(vec![f], BTreeMap::new(), false);
+        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('f'));
+        assert!(app.staged.is_empty());
+        assert!(app.status.starts_with("nothing recognised in"), "{}", app.status);
     }
 
     /// Footage is a different form, not the same form with a label on it: the

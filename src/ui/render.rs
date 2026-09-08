@@ -83,7 +83,9 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
     }
 
     if header_h > 0 {
-        if app.inspector {
+        if app.import_menu {
+            draw_import(f, chunks[2], app);
+        } else if app.inspector {
             draw_inspector(f, chunks[2], app);
         } else {
             draw_header(f, chunks[2], app, proto);
@@ -189,6 +191,75 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
             .wrap(Wrap { trim: false }),
         cols[1],
     );
+}
+
+/// The import menu, in the band the inspector uses: each source with what it
+/// would bring, so the choice is made looking at the answer rather than at a
+/// key name. The filename line is the honest one -- it is computed, not
+/// promised -- and it says which fields it would fill and which the file
+/// already holds, because the import never overwrites.
+fn draw_import(f: &mut Frame, area: Rect, app: &App) {
+    let p = app.import_preview();
+    let key = |k: &str| Span::styled(format!(" {k} "), Style::default().bg(t::rule()).fg(t::accent()).add_modifier(Modifier::BOLD));
+    let name = |s: &str| Span::styled(format!(" {s:<9}"), Style::default().fg(t::label_focus()));
+    let muted = Style::default().fg(t::muted());
+    let width = area.width as usize;
+    // Truncate without padding: these are values set side by side, not a
+    // column to line up.
+    let clip = |s: &str, max: usize| t::fit(s, s.width().min(max));
+    let fit = |s: &str, used: usize| clip(s, width.saturating_sub(used).max(8));
+
+    let scope_note = if p.files > 1 { format!("  {} files, each from its own", p.files) } else { String::new() };
+    let mut lines = vec![Line::from(vec![
+        Span::styled(" import ", Style::default().bg(t::rule()).fg(t::label_focus())),
+        Span::styled(format!("  from where?  fills the empty fields, keeps the rest{scope_note}"), muted),
+    ])];
+
+    // The URL line: what yt-dlp would be asked.
+    let url_text = match &p.url {
+        Some(u) => fit(u, 16),
+        None => "no URL on this file".into(),
+    };
+    lines.push(Line::from(vec![
+        Span::raw(" "),
+        key("u"),
+        name("url"),
+        Span::styled(url_text, Style::default().fg(if p.url.is_some() { t::value() } else { t::value_empty() })),
+    ]));
+
+    // The filename line, and under it what the parse found.
+    lines.push(Line::from(vec![
+        Span::raw(" "),
+        key("f"),
+        name("filename"),
+        Span::styled(fit(&p.stem, 16), Style::default().fg(t::value())),
+    ]));
+    let mut found: Vec<Span> = vec![Span::raw("               ")];
+    if p.fills.is_empty() && p.keeps.is_empty() {
+        found.push(Span::styled("nothing recognised in the name", Style::default().fg(t::value_empty())));
+    } else {
+        for (n, (label, value)) in p.fills.iter().enumerate() {
+            if n > 0 {
+                found.push(Span::styled(" · ", muted));
+            }
+            found.push(Span::styled(format!("{label} "), Style::default().fg(t::staged())));
+            let shown = match value {
+                Value::Text(s) if label == "Rating" => stars_glyphs(s.parse().unwrap_or(0)),
+                Value::Text(s) => s.clone(),
+                Value::List(l) => l.join(", "),
+            };
+            found.push(Span::styled(clip(&shown, 30), Style::default().fg(t::value())));
+        }
+        if !p.keeps.is_empty() {
+            if !p.fills.is_empty() {
+                found.push(Span::styled("  ·  ", muted));
+            }
+            found.push(Span::styled(format!("keeps {}", p.keeps.join(", ")), muted));
+        }
+    }
+    lines.push(Line::from(found));
+    lines.push(Line::from(vec![Span::raw(" "), key("esc"), Span::styled(" cancel", muted)]));
+    f.render_widget(Paragraph::new(lines), area);
 }
 
 /// The answer to "what does ‹multiple› actually contain" -- the thing the old
@@ -703,10 +774,14 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
     // appending to it.
     let (mode_name, mode_fg, bar_bg) = if app.format_pending {
         ("FORMAT", t::star(), Some(t::input_bg_focus()))
+    } else if app.import_menu {
+        ("IMPORT", t::star(), Some(t::input_bg_focus()))
     } else {
         (mode_name, mode_fg, bar_bg)
     };
-    let pairs: &[(&str, &str)] = if app.format_pending {
+    let pairs: &[(&str, &str)] = if app.import_menu {
+        &[("u", "from the URL"), ("f", "from the filename"), ("esc", "cancel")]
+    } else if app.format_pending {
         &[
             ("c", "capitalize"),
             ("t", "title case"),
@@ -735,9 +810,9 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
             ("⏎", "edit"),
             ("w", "write"),
             ("r", "rename"),
-            ("d", "fetch"),
+            ("i", "import"),
             ("m", "merge"),
-            ("i", "inspect"),
+            ("I", "inspect"),
             ("][", "file"),
             ("a", "all files"),
             ("o", "open"),
@@ -1505,6 +1580,38 @@ mod tests {
         for key in ["o", "b", "f", "F", "t"] {
             assert!(strip.contains(&format!(" {key}  ")), "{key} crowded: {strip:?}");
         }
+    }
+
+    /// The import band names both sources and previews the filename's
+    /// answer, marking what the file already holds -- at a width a laptop
+    /// terminal actually has.
+    #[test]
+    fn the_import_band_previews_the_filename() {
+        use crate::tags::probe::FileTags;
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use std::collections::BTreeMap;
+
+        let f = FileTags {
+            path: std::path::PathBuf::from("/x/Ann (Ch) - A Title #pov ★★★☆☆.mp4"),
+            atoms: [("title".to_string(), Value::text("Kept"))].into_iter().collect(),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
+        app.import_menu = true;
+        let (w, h) = (100, 6);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|fr| draw_import(fr, fr.area(), &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let text: Vec<String> =
+            (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect();
+        assert!(text[1].contains(" u  url"), "{:?}", text[1]);
+        assert!(text[1].contains("no URL on this file"), "{:?}", text[1]);
+        assert!(text[2].contains(" f  filename"), "{:?}", text[2]);
+        assert!(text[3].contains("Actors Ann"), "{:?}", text[3]);
+        assert!(text[3].contains("Rating ★★★☆☆"), "{:?}", text[3]);
+        assert!(text[3].contains("keeps Title"), "{:?}", text[3]);
+        assert!(text[4].contains("esc"), "{:?}", text[4]);
     }
 
     #[test]

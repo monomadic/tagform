@@ -873,8 +873,9 @@ The table above is built exactly as written, down to the message text
 built. The fix-up needs a key that is not `⌃F`, which is forward-one-character
 (§5.1).
 
-⟨built, differs⟩ **Fetch** is `d` in Select mode over the URL field
-(`src/fetch.rs`), not a control-level key: it runs `yt-dlp -J --skip-download`
+⟨built, differs⟩ **Fetch** is `i` then `u` in Select mode — the import
+menu, painted in the header band with a preview of each source — from any
+field (`src/fetch.rs`), not a control-level key: it runs `yt-dlp -J --skip-download`
 against the URL and fills Title, Actors, Channel, Description, Tags and Date
 from the result, mapped exactly as the yt-dlp config's `--parse-metadata`
 lines map them at download time. No shared cache, and no per-field diff
@@ -1167,7 +1168,7 @@ one rather than being a dimmer shade. Both guards exist because both mistakes
 were made — 16-colour `DarkGray` labels, and a file path drawn in a divider
 colour at 1.4:1.
 
-The **inspector** (`i`) replaces the thumbnail band with a per-file value table
+The **inspector** (`I`) replaces the thumbnail band with a per-file value table
 for the focused field — the answer to "what does `‹multiple›` actually contain",
 which `mp4-tui-tagger` could only show in an fzf preview.
 
@@ -1386,11 +1387,19 @@ not a fallback.
 
 ### 9.4 Filename sync
 
-⟨designed⟩ **Not built.** No filename is parsed or composed anywhere in the
-code today, which also means §3.6's field-precedence rule ("no edit, no
-metadata → parse it out of the filename") is inert: an empty field stays empty.
-This is the largest remaining piece of milestone 6, and the section below is
-the design it should be built to.
+⟨built, differs⟩ **Parsing is built; composing is not.** `i` then `f` reads
+the filename back into the form (`src/model/filename.rs`): `#tags`, a run of
+stars (`★` counted, `☆` discarded), a leading `YYYY-MM-DD--HH-MM-SS` or ISO
+timestamp, `[...]` blocks dropped as meta, and the remainder split on the
+first ` - ` into `Actor, Actor (Channel)` and the title. It fills only the
+fields that are still empty — the name was composed *from* the tags, so where
+the two disagree the container is the newer — and stages the result as one
+undo step, per file in scope. That is §3.6's precedence rule as a key rather
+than as an automatic read: a filled field never changes without being asked.
+Note the grammar it reads puts Channel in `(...)`, which is the footage shape
+below and what the library's media names actually carry; the `[Channel]`
+form described next is not recognised as a channel. Composing is still
+delegated, as the next note says.
 
 ⟨built, differs⟩ **Composing is delegated, for now.** `r` in Select mode hands
 the files in view to `rename-video` (`tags/rename.rs`), which composes both
@@ -1598,7 +1607,7 @@ document is why the map has the shape it does.
 
 Two rules do the work. `enter` opens a field and `esc` or `enter` closes it, so
 Select mode's letters are never ambiguous — `w` write, `m` merge, `i`
-inspector, `F` faststart, `t` theme, `y`/`p` yank and paste, `]`/`[`/`a` for
+import (then `u`/`f` for the source), `I` inspector, `F` faststart, `t` theme, `y`/`p` yank and paste, `]`/`[`/`a` for
 the selection, `O`/`b` to push a field out to every file (§4.3), `o` to hand
 the file to the desktop player. `c` is a second name for `y`, because half the
 world learned that key as copy; the two are the same command and the map says
@@ -1840,7 +1849,7 @@ sequence worth restating here.
 | # | Remaining | |
 |---|---|---|
 | **6** | The Footage profile: XMP fields ✅, `PreservedFileName` ✅, the second filename grammar ⬜ (§9.4). | ◐ |
-| **7** | Seeding: fetch ✅ (`d` on the URL field, §5.5), `--from-filename` ⬜, completion history ⬜. | ◐ |
+| **7** | Seeding: fetch ✅ (`i u`, §5.5), from the filename ✅ (`i f`, §9.4; no `--from-filename` flag yet), completion history ⬜. | ◐ |
 | **8** | Headless `--set`/`--apply`, the remaining §3.2 fields, config file, `--compat both`. | ⬜ |
 
 Milestone 6 turned out to be two independent halves, and the important one is
