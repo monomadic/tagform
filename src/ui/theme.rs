@@ -176,13 +176,17 @@ pub static PALETTES: &[Palette] = &[
         label_focus: c(0xe0, 0xc9, 0x7a),
         label_custom: c(0x8f, 0x7b, 0xb0),
         value: c(0xc8, 0xcd, 0xd8),
-        value_empty: c(0x64, 0x6c, 0x80),
+        // Lifted a step when the focused row started painting its own ground:
+        // the two greys cleared 3:1 on the page and 2.7:1 on the band, which
+        // is exactly the "subdued means invisible" failure this file opens by
+        // warning about.
+        value_empty: c(0x6e, 0x76, 0x8a),
         mixed: c(0x8b, 0x94, 0xad),
         accent: c(0x7a, 0xa2, 0xf7),
         staged: c(0x9e, 0xd9, 0x7a),
         warn: c(0xe0, 0xaf, 0x68),
         error: c(0xf7, 0x76, 0x8e),
-        muted: c(0x62, 0x6b, 0x80),
+        muted: c(0x6e, 0x77, 0x8c),
         rule: c(0x2a, 0x2f, 0x3c),
         star: c(0xe0, 0xaf, 0x68),
         path: c(0x7d, 0x87, 0x9e),
@@ -251,12 +255,15 @@ pub static PALETTES: &[Palette] = &[
         label_focus: c(0xeb, 0xcb, 0x8b),
         label_custom: c(0xb4, 0x8e, 0xad),
         value: c(0xd8, 0xde, 0xe9),
-        value_empty: c(0x7b, 0x86, 0x9c),
+        value_empty: c(0x86, 0x91, 0xa7),
         mixed: c(0x9a, 0xa5, 0xb8),
         accent: c(0x88, 0xc0, 0xd0),
         staged: c(0xa3, 0xbe, 0x8c),
         warn: c(0xd0, 0x87, 0x70),
-        error: c(0xbf, 0x61, 0x6a),
+        // Nord's own aurora red sits at 2.5:1 on the focused row's ground.
+        // Lifted along its own hue rather than replaced: an error that only
+        // reads on unfocused rows is an error you find last.
+        error: c(0xdc, 0x70, 0x7a),
         muted: c(0x84, 0x8e, 0xa3),
         rule: c(0x43, 0x4c, 0x5e),
         star: c(0xeb, 0xcb, 0x8b),
@@ -289,7 +296,7 @@ pub static PALETTES: &[Palette] = &[
         label_focus: c(0xf6, 0xc1, 0x77),
         label_custom: c(0xeb, 0xbc, 0xba),
         value: c(0xe0, 0xde, 0xf4),
-        value_empty: c(0x6e, 0x6a, 0x86),
+        value_empty: c(0x73, 0x6f, 0x8b),
         mixed: c(0x9c, 0x97, 0xb8),
         accent: c(0x9c, 0xcf, 0xd8),
         staged: c(0xa3, 0xd2, 0xa5),
@@ -551,6 +558,7 @@ mod tests {
                         ("page", p.page),
                         ("field", p.input_bg_readonly),
                         ("input", p.input_bg),
+                        ("focused row", p.input_bg_focus),
                         ("bar", p.bar_bg),
                     ]
                 {

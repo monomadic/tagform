@@ -77,22 +77,23 @@ nothing is listening for the letter w.
 | key | |
 |---|---|
 | `j` / `k`, arrows, `tab` | move between fields (`g` / `G` first / last) |
-| `h` / `l` | step a fixed set, or nudge a rating — a set is edited only this way |
+| `h` / `l` | step a fixed set, or nudge a rating — both are edited only this way |
 | `0`–`5` | on a rating: jump straight to that many stars |
-| `enter` | edit the focused field — on an empty date, fill it with now first |
+| `enter` | edit the focused field — on an empty date, fill it with now first; a set and a rating never open |
 | `w` | write staged edits (shows a plan first) |
 | `ctrl-s` / `cmd-s` | the same, from either mode — commits the open field first (`cmd` needs a terminal with the kitty keyboard protocol) |
 | `r` | rename the file — or every file in the selection — from the tags on disk, by running `rename-video` |
 | `i` | import — the header band shows the two sources with what each would bring, then `u` fetches the page behind the URL field with `yt-dlp` (metadata only, no download) and stages Title, Actors, Channel, Description, Tags and Date, or `f` reads the filename: `#tags`, `★` stars, and `Actor, Actor (Channel) - Title`, with an optional leading timestamp and `[meta]` blocks ignored. A fetch takes the page's word; a filename fills only the fields that are still empty. `u` takes either back in one step |
 | `m` | merge a list field across every file in the selection |
 | `I` | inspector — per-file values for the focused field |
-| `]` / `[` / `a` | next file / previous file / all files |
+| `]` / `[` (or `ctrl-n` / `ctrl-p`) / `a` | next file / previous file / all files |
 | `o` | open the file in whatever the desktop plays it with |
 | `O` / `b` | overwrite the focused field on every file / backfill it into only the files where it is empty |
-| `u` / `ctrl-r` | undo / redo |
+| `u` / `ctrl-r` | undo / redo — `cmd-z` and `cmd-shift-z` do the same |
 | `backspace` | clear the focused field |
 | `y` (or `c`) / `p` | yank the focused field / paste into it |
 | `f` | format menu — then `c` capitalize, `t` title (the little words stay lowered), `l` lower, `u` upper |
+| `~` | step those same four cases in place, without the menu |
 | `t` | cycle the colour scheme |
 | `?` | the key map — every binding in the form, on a screen of its own |
 | `F` | toggle MOV faststart on the write (on by default) |
@@ -103,7 +104,6 @@ nothing is listening for the letter w.
 | key | |
 |---|---|
 | (type) | edit the field |
-| `←` / `→`, `0`–`5` | adjust a rating, or set it outright |
 | `enter` | save and stop editing |
 | `tab` / `shift-tab` | save and move to the next / previous field |
 | `j` / `k`, `↑` / `↓` | save and move a row — on a control with no text to type |
@@ -141,7 +141,11 @@ computes WCAG contrast for every text colour in every scheme against that
 scheme's own background and fails below 3:1, and checks that a custom-key label
 is a different *hue* from an ordinary one rather than a dimmer shade. Both
 guards exist because both mistakes were made: 16-colour `DarkGray` labels, and
-a file path drawn in a divider colour at 1.4:1.
+a file path drawn in a divider colour at 1.4:1. The focused row is filled
+across its whole width — label included, not just its input box — so the row
+you are on is found without hunting for the marker; the fill is checked as a
+text surface by the same contrast test, which is what caught three greys that
+read on the page and not on the band.
 
 Every scheme also carries a **tag ring**: list and `#hashtag` values draw one
 colour per entry rather than one colour for the whole string, hashed from the
@@ -183,6 +187,11 @@ value lit — so you see the whole set without cycling blind:
 `h`/`l` (or `←`/`→`) step and wrap, and each step stages immediately. A set has
 no edit mode: `enter` does not open it, because stepping in place is all
 opening it ever did. Step back or press `u` to undo a mis-step.
+
+**The rating is a set too**, of six values, and behaves like one: `h`/`l` nudge
+it, `0`–`5` name it outright, `j`/`k` still leave the row, and `enter` opens
+nothing. It used to have a mode whose only keys were the ones that already
+worked outside it.
 
 Typing into a set is not supported yet — Category and Variant are picked from
 the list, like Kind. A value already on the file that the list does not know

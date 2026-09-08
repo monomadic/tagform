@@ -885,6 +885,12 @@ shows before anything is written. A field the page does not answer is left
 exactly as it was. In a multi-file scope each file is fetched from its own
 URL. It is `media-refresh-tags` as an interaction instead of a script.
 
+It first required focus on the URL field and refused elsewhere. That guard came
+off: the command reads each file's own `url` and never the focused row, so the
+only thing focus bought was a walk to a row before pressing a key that could
+not have meant anything else. With no URL anywhere in scope it still says so
+rather than starting `yt-dlp`.
+
 Recognising a URL is already embedded is why the URL field reads five aliases
 (§4.2): files in this library carry it as `comment` (old `media-write-tags`
 output), `purl` (yt-dlp), `source_url` and `webpage_url` (`media-embed`), or
@@ -901,6 +907,13 @@ The control from `media-set-rating`, made reusable:
 `←`/`→` or `h`/`l` step, and `h`/`l` also step it from Select mode without
 entering an edit at all. Renders five glyphs always (filled + hollow), which is
 the exact form the filename grammar parses back.
+
+**Built, differs: there is no open state at all**, exactly as in §5.7.
+⟨built, differs⟩ A rating is a six-member fixed set and is now treated as one:
+`h`/`l` nudge it, `0`–`5` name it, `⏎` says so rather than opening anything,
+and `j`/`k` keep meaning "next row". The mode it used to have contained only
+the keys that already worked outside it — the same argument that took the open
+state off Enum, applied to the control that argument was first made about.
 
 ⟨built, differs⟩ `0`–`5` set the rating outright, from Select mode as well as
 from an open editor. The objection recorded here was that those keys already
@@ -1167,6 +1180,14 @@ below 3:1, and checks that a custom-key label differs in *hue* from an ordinary
 one rather than being a dimmer shade. Both guards exist because both mistakes
 were made — 16-colour `DarkGray` labels, and a file path drawn in a divider
 colour at 1.4:1.
+
+The focused row is filled across its whole width, label included, rather than
+marked only by the caret and its lit input box: on twenty rows the marker is a
+thing you hunt for and a band is a thing you land on. The fill is the *focus*
+tint and not the edit one, so an open field's box still reads as the box inside
+the row. It is a text surface like any other and the contrast test treats it as
+one, which is what caught three greys that cleared 3:1 on the page and sat at
+2.5–2.9:1 on the band.
 
 The **inspector** (`I`) replaces the thumbnail band with a per-file value table
 for the focused field — the answer to "what does `‹multiple›` actually contain",
@@ -1622,12 +1643,32 @@ And a control that does not want a key hands it back (§5), so `tab` moves focus
 from inside a field, `j`/`k` move a row on a control with no text to type, and
 `h`/`l` step a set or a rating.
 
-**A fixed set is the one field `enter` does not open** (§5.7). `h`/`l` step it
-in place from Select mode and stage as they go, which is all opening it ever
-did, so there is no third mode and the shortcut strip has only NORMAL and EDIT
-to name. **`enter` on an empty Date** fills the field with the current local
+**A fixed set is the one field `enter` does not open** (§5.7) — and a rating is
+a fixed set (§5.6). `h`/`l` step them in place from Select mode and stage as
+they go, which is all opening them ever did, so there is no third mode and the
+shortcut strip has only NORMAL and EDIT to name. **`enter` on an empty Date** fills the field with the current local
 timestamp and opens it, which is the `t` = today the original design wanted,
 minus a key (§5.9).
+
+⟨built, differs⟩ **Three bindings are duplicates on purpose**, which the
+original map avoided on the grounds that one key per command is the point of a
+modal form. They earn it by being the gesture the rest of the machine already
+trains: `⌃N`/`⌃P` walk the selection beside `]`/`[`, and `⌘Z`/`⌘⇧Z` are `u` and
+`⌃R`. The `⌘` pair needs a terminal that reports SUPER — the same kitty
+keyboard protocol `⌘S` needs — so the vi keys remain the ones that always work,
+and the map lists both rather than pretending the alias is the binding.
+
+⟨built, differs⟩ **`~` is the format menu without the menu**: it steps the same
+four cases in place, reading where it is in the ring off the text itself, so
+holding it walks capitalize → title → lower → upper. A case that would not
+change the text is skipped, because a press that redraws nothing reads as a
+dead key. `f` stays: the menu is where the transforms that are not a cycle
+(trim, collapse, strip) will go, and naming a case outright beats stepping to
+it when you know which one you want.
+
+**`i u` reads the URL field from anywhere on the form** (§5.5). It never looked
+at the focused row — only at each file's own `url` — so requiring focus there
+was a walk to a row in front of a command that was already unambiguous.
 
 On a text field, the emacs/macOS editing keys as well — `⌃A` `⌃E` `⌃B` `⌃F`
 `⌃D` `⌃H` `⌃W` `⌃K` `⌃U`, table in §5.1. They bind only while a field is open,
