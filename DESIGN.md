@@ -827,6 +827,30 @@ A List with a different grammar, because tags round-trip through *filenames*:
   underscores become `-`, so a tag is always one filename token
 - **stored comma-joined without `#`** in `keywords` — `#` is presentation
 - `Warn` on a tag containing `/`, `\`, `:` or a leading `.` (filename-hostile)
+
+⟨built, differs⟩ Two corrections, both from the same report: `tag, tag two,
+tag three` looked saved and was not.
+
+**The comma wins where there is one.** Splitting on comma *or* space always is
+what made that line six tags rather than four, silently — the one repair the
+user cannot see happening, because the field still reads green afterwards. So a
+line containing a comma splits on commas only, and the spaces inside a part are
+the user's to keep: they are what the sanitiser repairs into `tag-two`. A line
+with no comma is still a stream of hashtags and still splits on whitespace, so
+`#pov #hd` arrives as it always did.
+
+**Filename-hostile is an `Error`, not a `Warn`.** Everything else in the
+grammar is repaired rather than reported, so what is left is the set no repair
+can guess at: `/`, `\`, `:`, a leading `.`, a control character. A slash in a
+tag is nearly always a pasted path or a hierarchy that meant something, and
+flattening it to `-` would invent a tag nobody wrote. The field is drawn in the
+error colour — the offending tag itself, wherever tags are drawn — and the
+write leaves *that field* out and says so, rather than blocking the rest of the
+form (§9). The edit stays staged, so fixing it and pressing `w` again is the
+whole recovery.
+
+The grammar lives in `model/tag.rs`, outside `ui/`, because the write path asks
+the same question the control does and the two must not be able to disagree.
 - ⟨designed⟩ `⌃Space` completes against the corpus of tags seen across the
   library index
 
@@ -986,9 +1010,14 @@ land (§3.2).
 
 `validate()` runs per keystroke; the form aggregates:
 
-- any `Error` → the write key is inert and the status bar names the first
-  offending field. Exactly one thing produces `Error` today: an unparseable
-  URL. (The non-integer Number case waits on the control.)
+- any `Error` → the status bar names the reason, and the write leaves that
+  field out of the plan rather than refusing the whole write: the other edits
+  are sound and have nothing to do with the bad one. Two things produce
+  `Error` today: an unparseable URL, and a tag no repair can turn into a
+  filename token (§5.4). (The non-integer Number case waits on the control.)
+- an `Error` is asked of a field *at rest* too, not only of one being typed
+  into — a staged value the write is going to skip has to look wrong while it
+  sits there, or the only symptom is a field that never saves
 - `Warn` → yellow gutter, listed in the confirmation dialog, never blocks.
 
 Errors are rare by design. A tagger that refuses to save because it dislikes

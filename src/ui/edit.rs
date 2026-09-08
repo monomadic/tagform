@@ -9,6 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tui_input::{Input, InputRequest};
 
 use crate::model::schema::Control;
+use crate::model::tag;
 use crate::model::value::Value;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -169,9 +170,20 @@ impl Editor {
             // file joins the set rather than sitting outside it -- so there is
             // nothing left to complain about.
             Editor::Enum(_) => Validation::Ok,
+            // A tag is repaired on the way out (§5.4), so the only thing left
+            // to say is the part no repair can guess at -- and for tags that is
+            // an Error, because the field is left out of the write rather than
+            // saved wrong. A list is a list of *names*: a slash in one is
+            // awkward in a filename and nothing worse, so it stays a warning.
+            Editor::Chips(c) if c.hash => match tag::why_invalid(&tag::split(c.input.value())) {
+                Some(why) => Validation::Error(why),
+                None => Validation::Ok,
+            },
             Editor::Chips(c) => {
-                let items = if c.hash { split_tags(c.input.value()) } else { split_list(c.input.value()) };
-                match items.iter().find(|t| t.contains(['/', '\\', ':']) || t.starts_with('.')) {
+                match split_list(c.input.value())
+                    .into_iter()
+                    .find(|t| t.contains(['/', '\\', ':']) || t.starts_with('.'))
+                {
                     Some(bad) => Validation::Warn(format!("‘{bad}’ is awkward in a filename")),
                     None => Validation::Ok,
                 }
@@ -319,11 +331,12 @@ pub fn split_list(s: &str) -> Vec<String> {
     s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
 }
 
+/// The control's reading of a tag line: repaired, so what a field reports is
+/// always storable (DESIGN §5.4). The repair lands in `value()` rather than in
+/// the keystroke handler so that typing is never fought with -- the line reads
+/// back as typed until the field is left, and shows the repaired tags after.
 pub fn split_tags(s: &str) -> Vec<String> {
-    s.split([',', ' '])
-        .map(|p| p.trim().trim_start_matches('#').to_string())
-        .filter(|p| !p.is_empty())
-        .collect()
+    tag::split(s)
 }
 
 #[cfg(test)]
@@ -605,9 +618,34 @@ mod tests {
         }
     }
 
+    /// A slash cannot be repaired into a tag, so it is an error the write path
+    /// acts on -- not a warning the user is free to ignore into a bad file.
     #[test]
-    fn tag_with_a_slash_warns() {
+    fn tag_with_a_slash_is_an_error() {
         let e = Editor::new(Control::HashTags, Some(&Value::List(vec!["a/b".into()])), vec![]);
+        assert!(matches!(e.validate(), Validation::Error(_)));
+    }
+
+    /// The same character in a list of *names* is only awkward, and awkward
+    /// never blocks a write.
+    #[test]
+    fn a_slash_in_a_list_still_only_warns() {
+        let e = Editor::new(Control::List, Some(&Value::List(vec!["AC/DC".into()])), vec![]);
         assert!(matches!(e.validate(), Validation::Warn(_)));
+    }
+
+    /// The reported case: what is typed is repaired into what is stored, and
+    /// the field is sound rather than quietly split into six tags.
+    #[test]
+    fn a_tag_with_spaces_is_repaired_not_split() {
+        let mut e = Editor::new(Control::HashTags, None, vec![]);
+        for c in "tag, tag two, tag three, another".chars() {
+            e.handle(key(c));
+        }
+        assert_eq!(e.validate(), Validation::Ok);
+        assert_eq!(
+            e.value(),
+            Value::List(vec!["tag".into(), "tag-two".into(), "tag-three".into(), "another".into()])
+        );
     }
 }

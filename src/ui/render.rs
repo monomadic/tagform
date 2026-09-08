@@ -14,6 +14,7 @@ use ratatui_image::{protocol::StatefulProtocol, StatefulImage};
 use unicode_width::UnicodeWidthStr;
 
 use crate::model::schema::Control;
+use crate::model::tag;
 use crate::model::value::{Agg, Value};
 use crate::tags::plan::FilePlan;
 use crate::ui::app::{App, Mode, Row, WriteProgress, WriteResults};
@@ -631,10 +632,12 @@ fn tag_spans(
         if !sig.is_empty() {
             spans.push(Span::styled(sig, Style::default().bg(bg).fg(sigil_fg)));
         }
-        spans.push(Span::styled(
-            item.clone(),
-            Style::default().bg(bg).fg(t::tag_colour(item)),
-        ));
+        // A tag that cannot be repaired into a filename token is drawn in the
+        // error colour wherever tags are drawn, so the one the write is about
+        // to leave out is the one that looks wrong -- rather than the field
+        // reading as saved-and-fine in the staged green (§5.4).
+        let fg = if hash && tag::is_hostile(item) { t::error() } else { t::tag_colour(item) };
+        spans.push(Span::styled(item.clone(), Style::default().bg(bg).fg(fg)));
     }
     if used < width {
         spans.push(Span::styled(" ".repeat(width - used), Style::default().bg(bg)));
@@ -926,7 +929,17 @@ fn draw_help(f: &mut Frame, area: Rect, app: &App) {
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {
     // Validation is about the field under the cursor, so it outranks the
     // transient status line -- but only while a field is actually open.
-    let live = if app.mode == Mode::Edit { app.validation() } else { Validation::Ok };
+    // A field at rest can still be unwritable -- a staged tag set with a slash
+    // in it will be skipped -- and the reason has to be readable without
+    // opening the field again, since nothing else says why it never saves.
+    let live = match app.mode {
+        Mode::Edit => app.validation(),
+        _ => app
+            .rows
+            .get(app.focus)
+            .and_then(|r| app.row_error(r))
+            .map_or(Validation::Ok, Validation::Error),
+    };
     let (text, fg) = match live {
         Validation::Error(m) => (m, t::error()),
         Validation::Warn(m) => (m, t::warn()),
@@ -952,11 +965,21 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
     ];
 
     for edit in app.staged_summary() {
+        // A refused field is still listed -- it is staged, and hiding it would
+        // make the dialog agree with the write for the wrong reason -- but it
+        // is listed as what it is: red, and named as not going.
+        let value_fg = if edit.refused.is_some() { t::error() } else { t::staged() };
         let mut spans = vec![
             Span::styled(format!("  {}", t::fit(&edit.label, 14)), Style::default().fg(t::label())),
             Span::styled("→ ", Style::default().fg(t::muted())),
-            Span::styled(edit.shown, Style::default().fg(t::staged())),
+            Span::styled(edit.shown, Style::default().fg(value_fg)),
         ];
+        if let Some(why) = &edit.refused {
+            spans.push(Span::styled(
+                format!("   not written · {why}"),
+                Style::default().fg(t::error()),
+            ));
+        }
         // Which files, because an edit no longer belongs to whatever happens to
         // be in view: it belongs to the files it was made on.
         if edit.files < app.files.len() {

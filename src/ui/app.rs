@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
@@ -15,9 +15,10 @@ use std::time::{Duration, Instant};
 use crate::config::{Enums, KINDS};
 use crate::fetch;
 use crate::model::schema::{
-    self, Control, FieldDef, ADULT, ADULT_HIDDEN, ADULT_ORDER, CLIP, FIELDS, FOOTAGE,
+    self, field_by_id, Control, FieldDef, ADULT, ADULT_HIDDEN, ADULT_ORDER, CLIP, FIELDS, FOOTAGE,
     FOOTAGE_HIDDEN,
 };
+use crate::model::tag;
 use crate::ui::edit::{Editor, Opt, Reaction, Validation};
 use crate::ui::theme;
 use crate::model::value::{Agg, Value};
@@ -511,6 +512,7 @@ impl App {
                     },
                     files: edits.len(),
                     overwrites: seen.len(),
+                    refused: edits.iter().find_map(|(_, v)| field_error(key, v)),
                 }
             })
             .collect()
@@ -534,19 +536,46 @@ impl App {
             self.status = "nothing to write".into();
             return;
         }
+        // A field whose value cannot be stored is left out of the plan rather
+        // than written wrong (§5.4). The rest of the form still goes, and the
+        // refused edit stays staged -- `finish_write` drops an edit only once
+        // disk agrees with it, and disk never will until it is fixed.
+        let mut refused: BTreeSet<&str> = BTreeSet::new();
+        let mut why: Option<String> = None;
         // Every staged edit, not just the ones in view: an edit belongs to the
         // file it was made on, and silently skipping the file you are not
         // looking at is how a batch loses half its work.
         let plans: Vec<FilePlan> = self
             .staged
             .iter()
-            .map(|(i, edits)| plan::build(&self.files[*i], edits, self.faststart))
+            .map(|(i, edits)| {
+                let sound: BTreeMap<String, Value> = edits
+                    .iter()
+                    .filter(|(k, v)| match field_error(k, v) {
+                        Some(e) => {
+                            refused.insert(field_by_id(k).map(|f| f.label).unwrap_or(k.as_str()));
+                            why.get_or_insert(e);
+                            false
+                        }
+                        None => true,
+                    })
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                plan::build(&self.files[*i], &sound, self.faststart)
+            })
             .filter(|p| !p.is_empty())
             .collect();
+        // One sentence for the whole write: which fields were dropped, and the
+        // first reason. Naming every reason would bury the field names, and
+        // the field is what the user has to go and fix.
+        let refused_note = why.map(|why| {
+            format!("{} not written · {why}", refused.into_iter().collect::<Vec<_>>().join(", "))
+        });
         if plans.is_empty() {
-            self.status = "nothing to write".into();
+            self.status = refused_note.unwrap_or_else(|| "nothing to write".into());
             return;
         }
+        self.status = refused_note.unwrap_or_default();
         self.pending = Some(plans);
     }
 
@@ -1340,6 +1369,27 @@ impl App {
         self.editor.as_ref().map(|e| e.validate()).unwrap_or(Validation::Ok)
     }
 
+    /// Why the row's staged value cannot be written, if it cannot.
+    ///
+    /// Asked of a field at rest rather than of one being typed into: a tag set
+    /// the write is going to skip has to say so while it is merely sitting
+    /// there staged, or the only sign of it is a field that never saves.
+    ///
+    /// Only staged rows answer. A value already on disk is not something this
+    /// run is about to write, and painting it red would be a complaint the
+    /// user has no edit to act on.
+    pub fn row_error(&self, row: &Row) -> Option<String> {
+        if !row.staged {
+            return None;
+        }
+        let values: Vec<&Value> = match &row.eff {
+            Agg::Same { value } => vec![value],
+            Agg::Mixed { values } => values.iter().flatten().collect(),
+            Agg::Absent => vec![],
+        };
+        values.into_iter().find_map(|v| field_error(&row.key, v))
+    }
+
     /// The value a row should display: the staged edit if any, else what is on
     /// disk. None when the files in scope do not agree.
     pub fn shown_value(&self, row: &Row) -> Option<Value> {
@@ -1533,6 +1583,22 @@ impl App {
 /// empty is the point of a form.
 /// What one file holds for a row key, whether the key is a schema field or an
 /// unclaimed atom or XMP tag carried through from disk.
+/// Why a staged value cannot be stored under `key`, if it cannot.
+///
+/// One authority for the question, asked by the form (to paint the field and
+/// name the reason) and by the write path (to leave the field out). Only the
+/// hashtag grammar has a failure a repair cannot fix; everything else the user
+/// can type is storable, which is the point of §5.10's "errors are rare".
+pub fn field_error(key: &str, value: &Value) -> Option<String> {
+    if field_by_id(key).map(|f| f.control) != Some(Control::HashTags) {
+        return None;
+    }
+    match value {
+        Value::List(l) => tag::why_invalid(l),
+        Value::Text(s) => tag::why_invalid(&tag::split(s)),
+    }
+}
+
 pub fn disk_value(t: &FileTags, key: &str) -> Option<Value> {
     match key.split_once(':') {
         Some(("xmp", tag)) => t.xmp.get(tag).cloned(),
@@ -1684,6 +1750,10 @@ pub struct StagedEdit {
     pub files: usize,
     /// Distinct values on disk this edit is about to replace.
     pub overwrites: usize,
+    /// Why the write will leave this field alone, if it will. The dialog is
+    /// the last place to see what is about to happen, so an edit that is not
+    /// going to happen must not be listed there as though it were.
+    pub refused: Option<String>,
 }
 
 /// Whether the file now carries what was staged for it. An edit that cleared a
@@ -1951,6 +2021,92 @@ mod tests {
 
         assert!(app.staged.is_empty(), "{:?}", app.staged);
         assert_eq!(app.status, "wrote 1 of 1");
+    }
+
+    /// The reported case, end to end: a tag with a space is repaired on the way
+    /// into the staging map, so the field is sound and writes like any other.
+    #[test]
+    fn tags_typed_with_spaces_are_repaired_into_one_token_each() {
+        let mut app = one(&[]);
+        let tags = app.rows.iter().position(|r| r.key == "tags").expect("tags row");
+        app.jump(tags);
+        press(&mut app, KeyCode::Enter);
+        for c in "tag, tag two, tag three, another".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(
+            shown(&app, "tags"),
+            Some(Value::List(vec![
+                "tag".into(),
+                "tag-two".into(),
+                "tag-three".into(),
+                "another".into()
+            ]))
+        );
+        let row = app.rows.iter().find(|r| r.key == "tags").unwrap();
+        assert_eq!(app.row_error(row), None, "a repaired tag set is writable");
+    }
+
+    /// What a repair cannot fix must be visible while the field sits closed --
+    /// otherwise the only symptom is a field that quietly never saves.
+    #[test]
+    fn a_staged_tag_a_repair_cannot_fix_reports_why() {
+        let mut app = one(&[]);
+        app.set_staged(0, "tags", Value::List(vec!["fine".into(), "a/b".into()]));
+        let row = app.rows.iter().find(|r| r.key == "tags").unwrap();
+        assert!(app.row_error(row).is_some_and(|e| e.contains("a/b")), "{:?}", app.row_error(row));
+    }
+
+    /// A tag set already on disk is not this run's problem: there is no edit to
+    /// fix, so there is nothing to complain about.
+    #[test]
+    fn an_unstaged_value_from_disk_is_not_reported() {
+        let app = one(&[("keywords", "a/b")]);
+        let row = app.rows.iter().find(|r| r.key == "tags").unwrap();
+        assert_eq!(app.row_error(row), None);
+    }
+
+    /// The bad field is left out; every other edit still writes, and the status
+    /// says which field was dropped and why.
+    #[test]
+    fn an_unwritable_field_is_dropped_from_the_plan_not_the_whole_write() {
+        let mut app = one(&[]);
+        app.set_staged(0, "title", Value::text("kept"));
+        app.set_staged(0, "tags", Value::List(vec!["a/b".into()]));
+        app.prepare_write();
+
+        let plans = app.pending.as_ref().expect("a plan for the sound fields");
+        let keys: Vec<&str> = plans[0].atoms.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"title"), "{keys:?}");
+        assert!(!keys.contains(&"keywords"), "{keys:?}");
+        assert!(app.status.contains("Tags not written"), "{}", app.status);
+    }
+
+    /// The dialog is the last look before a write, so it has to agree with
+    /// what the write is actually going to do.
+    #[test]
+    fn the_confirmation_dialog_marks_the_field_it_will_skip() {
+        let mut app = one(&[]);
+        app.set_staged(0, "title", Value::text("kept"));
+        app.set_staged(0, "tags", Value::List(vec!["a/b".into()]));
+        let summary = app.staged_summary();
+        let by = |l: &str| summary.iter().find(|e| e.label == l).expect(l).refused.clone();
+        assert!(by("Tags").is_some_and(|w| w.contains("a/b")));
+        assert_eq!(by("Title"), None);
+    }
+
+    /// With nothing else staged there is no plan at all -- and the reason has
+    /// to survive, or the write reads as "nothing to write" when there was.
+    #[test]
+    fn a_write_of_only_an_unwritable_field_says_why_it_did_nothing() {
+        let mut app = one(&[]);
+        app.set_staged(0, "tags", Value::List(vec!["a/b".into()]));
+        app.prepare_write();
+        assert!(app.pending.is_none());
+        assert!(app.status.contains("Tags not written"), "{}", app.status);
+        assert!(app.status.contains("a/b"), "{}", app.status);
     }
 
     /// One unprobeable file with whatever atoms the test wants, so nothing
