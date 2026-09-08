@@ -320,8 +320,19 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
             (false, false, true) => t::label_custom(),
             (false, false, false) => t::label(),
         };
+        // The focused row is filled edge to edge, not just in its input box.
+        // The caret and the lit box said "here" only in the two columns you
+        // were already looking at; a band across the label as well is what you
+        // find without looking, which on a twenty-row form is the whole job of
+        // a cursor. Deliberately the *focus* tint and not the edit one, so an
+        // open field's box still stands out from the row carrying it.
+        let row_bg = focused.then(t::input_bg_focus);
+        let banded = |st: Style| match row_bg {
+            Some(b) => st.bg(b),
+            None => st,
+        };
         let label_style = if focused {
-            Style::default().fg(label_fg).add_modifier(Modifier::BOLD)
+            banded(Style::default().fg(label_fg).add_modifier(Modifier::BOLD))
         } else {
             Style::default().fg(label_fg)
         };
@@ -439,7 +450,7 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
         };
 
         let mut spans = vec![
-            Span::styled(marker, Style::default().fg(marker_fg)),
+            Span::styled(marker, banded(Style::default().fg(marker_fg))),
             Span::styled(
                 t::fit(
                     &if custom { t::short_key(&row.label) } else { row.label.clone() },
@@ -447,11 +458,17 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
                 ),
                 label_style,
             ),
-            Span::raw(" "),
+            Span::styled(" ".repeat(GUTTER as usize), banded(Style::default())),
             Span::styled(" ".repeat(lead), Style::default().bg(bg)),
         ];
         spans.extend(value_spans);
         spans.push(Span::styled(" ".repeat(PAD as usize), Style::default().bg(bg)));
+        // The column the value box does not reach. Painted only on the focused
+        // row, so the band closes rather than stopping one column short.
+        let drawn = 1 + LABEL_COLS + GUTTER + value_w as u16;
+        if let Some(tail) = inner.width.checked_sub(drawn).filter(|_| focused) {
+            spans.push(Span::styled(" ".repeat(tail as usize), banded(Style::default())));
+        }
         lines.push(Line::from(spans));
         if group_break_after(row) {
             lines.push(group_rule(inner.width as usize, bulk.as_deref()));
@@ -718,7 +735,6 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
         &[
             ("⏎", "save"),
             ("⇥", "save + next"),
-            ("←→", "rating"),
             ("esc", "cancel"),
             ("^c", "quit"),
         ]
@@ -748,7 +764,7 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
             // that in most terminals, so it carries its own trailing space
             // rather than letting the next label collide with it.
             ("⌫ ", "clear"),
-            ("f", "format"),
+            ("f ~", "format"),
             ("y", "yank"),
             ("p", "paste"),
             ("t", "theme"),
@@ -1430,6 +1446,44 @@ mod tests {
         assert_eq!(buf[(1, 1)].style().fg, Some(t::staged()), "label {row:?}");
     }
 
+    /// The focused row is a band, not a caret: the label side is filled too,
+    /// so the row is findable without hunting for a one-column marker. The
+    /// rows either side of it keep the terminal's own ground -- a form where
+    /// every row is tinted has no cursor at all.
+    #[test]
+    fn the_focused_row_is_filled_across_its_label_as_well() {
+        use crate::tags::probe::FileTags;
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use std::collections::BTreeMap;
+
+        let f = FileTags {
+            path: std::path::PathBuf::from("/tmp/tagform-band-test.mp4"),
+            atoms: BTreeMap::new(),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
+        app.focus = 1;
+        let w = 80;
+        let mut term = Terminal::new(TestBackend::new(w, 12)).unwrap();
+        term.draw(|fr| draw_fields(fr, fr.area(), &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+
+        // y = 1 is the first field row, so the focused one is the next line
+        // down. Every column of it, marker and label included, carries the
+        // focus ground -- including the last, which the value box stops short
+        // of.
+        let band = t::input_bg_focus();
+        for x in 0..w {
+            assert_eq!(buf[(x, 2)].style().bg, Some(band), "column {x} of the focused row");
+        }
+        // The row above it is untinted where the label is: the terminal's own
+        // background, which is what keeps a translucent terminal translucent.
+        for x in 0..LABEL_COLS {
+            assert_ne!(buf[(x, 1)].style().bg, Some(band), "column {x} bled onto row 1");
+        }
+    }
+
     /// A set whose selection came from disk keeps the focus accent, so the
     /// staged colour means "will be written" and nothing else.
     #[test]
@@ -1502,7 +1556,7 @@ mod tests {
         assert!(strip.contains(" ⌫   clear"), "{strip:?}");
         assert!(!strip.contains("…"), "the whole strip should fit at {w} cols: {strip:?}");
         assert!(strip.starts_with(" NORMAL   ?  help "), "help must lead the strip: {strip:?}");
-        for key in ["o", "b", "f", "F", "t"] {
+        for key in ["o", "b", "f ~", "F", "t"] {
             assert!(strip.contains(&format!(" {key}  ")), "{key} crowded: {strip:?}");
         }
     }

@@ -82,6 +82,10 @@ pub enum Case {
     Upper,
 }
 
+/// The order `~` steps them in, which is the order the `f` menu lists them:
+/// the two that keep words apart first, then the two that flatten everything.
+const CASE_RING: [Case; 4] = [Case::Capitalize, Case::Title, Case::Lower, Case::Upper];
+
 impl Case {
     pub fn name(self) -> &'static str {
         match self {
@@ -763,19 +767,19 @@ impl App {
         };
     }
 
-    /// `d` over the URL field: ask yt-dlp what the page says and stage it
-    /// onto the other fields (§5.5). Per file in scope, each from its own URL,
-    /// so a batch of downloads seeds itself in one key. The URL used is the
-    /// one shown -- a URL just typed and not yet written counts, which is the
-    /// common case: paste the page, press `d`, get the form filled.
+    /// `d`: ask yt-dlp what the page says and stage it onto the other fields
+    /// (§5.5). Per file in scope, each from its own URL, so a batch of
+    /// downloads seeds itself in one key. The URL used is the one shown -- a
+    /// URL just typed and not yet written counts, which is the common case:
+    /// paste the page, press `d`, get the form filled.
+    ///
+    /// It reads the URL field wherever the cursor happens to be. Requiring
+    /// focus there bought nothing: the fetch never looked at the focused row's
+    /// value, only at each file's `url`, so the guard was a second keystroke
+    /// (walk to the row) in front of a command that was already unambiguous.
     fn fetch_tags(&mut self) {
         self.commit_editor();
         if self.fetching {
-            return;
-        }
-        let Some(row) = self.rows.get(self.focus) else { return };
-        if row.key != "url" {
-            self.status = "fetch works from the URL field".into();
             return;
         }
         let jobs: Vec<(usize, String)> = self
@@ -980,6 +984,24 @@ impl App {
             }
             return;
         }
+        // ⌘Z is undo as well as `u`, and ⌘⇧Z redo as well as ⌃R. The vi keys
+        // are the ones worth learning, but the form is a form: the undo
+        // gesture every other app on the machine trains should not be the one
+        // thing here that does nothing. Like ⌘S it needs a terminal that
+        // reports SUPER (the kitty keyboard protocol).
+        if key.modifiers.contains(KeyModifiers::SUPER) {
+            match key.code {
+                KeyCode::Char('z') => {
+                    self.undo();
+                    return;
+                }
+                KeyCode::Char('Z') => {
+                    self.redo();
+                    return;
+                }
+                _ => {}
+            }
+        }
         match (key.code, ctrl) {
             (KeyCode::Char('j'), false) | (KeyCode::Down, _) | (KeyCode::Tab, _) => {
                 self.move_focus(1)
@@ -999,8 +1021,8 @@ impl App {
             }
             (KeyCode::Char('y') | KeyCode::Char('c'), false) => self.yank(),
             (KeyCode::Char('p'), false) => self.paste(),
-            (KeyCode::Char(']'), false) => self.cycle_file(1),
-            (KeyCode::Char('['), false) => self.cycle_file(-1),
+            (KeyCode::Char(']'), false) | (KeyCode::Char('n'), true) => self.cycle_file(1),
+            (KeyCode::Char('['), false) | (KeyCode::Char('p'), true) => self.cycle_file(-1),
             (KeyCode::Char('a'), false) => {
                 self.commit_editor();
                 self.view = None;
@@ -1021,6 +1043,7 @@ impl App {
                 self.status = format!("theme: {}", theme::cycle());
             }
             (KeyCode::Char('f'), false) => self.begin_format(),
+            (KeyCode::Char('~'), false) => self.cycle_case(),
             (KeyCode::Char('?'), false) => {
                 self.commit_editor();
                 self.help = true;
@@ -1047,6 +1070,11 @@ impl App {
     /// exists only to press h/l in is a mode nobody needs (§5.7). The keys are
     /// live wherever the row is focused, so ⏎ says so rather than doing
     /// nothing silently.
+    ///
+    /// A rating is a fixed set of six values and is treated as one: h/l nudge
+    /// it, 0-5 name it outright, and j/k keep meaning "next field" instead of
+    /// being swallowed by a mode whose only keys were the ones that already
+    /// worked outside it.
     fn begin_edit(&mut self) {
         match self.rows.get(self.focus) {
             Some(row) if !row.editable() => {
@@ -1054,6 +1082,9 @@ impl App {
             }
             Some(row) if row.control == Control::Enum => {
                 self.status = format!("{} · h/l or ←→ to choose", row.label);
+            }
+            Some(row) if row.control == Control::Stars => {
+                self.status = format!("{} · h/l or ←→ to nudge, 0-5 to set", row.label);
             }
             // An empty Date opens holding now. A date you meant to be today is
             // the overwhelmingly common one, and typing it out is the kind of
@@ -1465,6 +1496,50 @@ impl App {
             Value::List(l) => Value::List(l.iter().map(|s| case.apply(s)).collect()),
         };
         let (key, label) = (row.key.clone(), row.label.clone());
+        self.stage(key, recased);
+        self.status = format!("{label} · {}", case.name());
+    }
+
+    /// `~` steps the same four cases the `f` menu offers, without the menu.
+    ///
+    /// Where in the ring it starts is read off the value itself rather than
+    /// remembered: whichever case the text is already in, the next press moves
+    /// to the one after it, so the key is a toggle you can hold down until the
+    /// row looks right instead of a mode you have to track. A case that would
+    /// not change the text is skipped -- "Hello" is both capitalized and title
+    /// case, and a press that redraws nothing reads as a dead key.
+    fn cycle_case(&mut self) {
+        let Some(row) = self.rows.get(self.focus) else { return };
+        if !row.editable() {
+            self.status = format!("{} is read-only", row.label);
+            return;
+        }
+        if !is_textual(row.control) {
+            self.status = format!("{} takes no formatting", row.label);
+            return;
+        }
+        let Some(value) = self.shown_value(row) else {
+            self.status = format!("{} is empty", row.label);
+            return;
+        };
+        let apply = |case: Case, v: &Value| match v {
+            Value::Text(s) => Value::Text(case.apply(s)),
+            Value::List(l) => Value::List(l.iter().map(|s| case.apply(s)).collect()),
+        };
+        let at = CASE_RING.iter().position(|c| apply(*c, &value) == value);
+        // Nothing in the ring matches: the text is in some case of its own,
+        // and the first press should give an answer rather than guess where in
+        // the ring that lands.
+        let from = at.map(|i| i + 1).unwrap_or(0);
+        let next = (from..from + CASE_RING.len())
+            .map(|i| CASE_RING[i % CASE_RING.len()])
+            .find(|c| apply(*c, &value) != value);
+        let Some(case) = next else {
+            self.status = format!("{} reads the same in every case", row.label);
+            return;
+        };
+        let (key, label) = (row.key.clone(), row.label.clone());
+        let recased = apply(case, &value);
         self.stage(key, recased);
         self.status = format!("{label} · {}", case.name());
     }
@@ -2184,20 +2259,105 @@ mod tests {
         assert_eq!(app.mode, Mode::Select);
     }
 
-    /// `d` is the URL field's key: elsewhere it says so, and on an empty URL
-    /// it has nothing to ask -- neither starts yt-dlp.
+    /// `d` reads the file's URL, not the focused row: it is the same command
+    /// from every field, and the only thing that stops it is having no URL to
+    /// ask about. Standing on Title used to be refused, which made the key a
+    /// two-step -- walk to the row, then fetch.
     #[test]
-    fn fetch_only_starts_from_a_url() {
+    fn fetch_works_from_any_field_and_needs_only_a_url() {
         let mut app = one(&[("title", "T")]);
-        app.jump(0);
-        press(&mut app, KeyCode::Char('d'));
-        assert!(!app.fetching);
-        assert_eq!(app.status, "fetch works from the URL field");
-        let url = app.rows.iter().position(|r| r.key == "url").unwrap();
-        app.jump(url);
-        press(&mut app, KeyCode::Char('d'));
-        assert!(!app.fetching);
-        assert_eq!(app.status, "no URL to fetch from");
+        for key in ["title", "url", "description"] {
+            focus_on(&mut app, key);
+            press(&mut app, KeyCode::Char('d'));
+            assert!(!app.fetching, "{key} started a fetch with no URL");
+            assert_eq!(app.status, "no URL to fetch from", "refused from {key}");
+        }
+    }
+
+    /// ⌃N / ⌃P walk the selection the way `]` / `[` do. The bracket keys stay:
+    /// this is the pair the hand already knows from every other list on the
+    /// machine, not a replacement.
+    #[test]
+    fn ctrl_n_and_ctrl_p_walk_the_selection() {
+        let mut app = pair();
+        assert_eq!(app.view, None);
+        app.on_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+        assert_eq!(app.view, Some(0));
+        app.on_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+        assert_eq!(app.view, Some(1));
+        app.on_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
+        assert_eq!(app.view, Some(0));
+    }
+
+    /// ⌘Z is `u` under the name the rest of the machine uses, and ⌘⇧Z is ⌃R.
+    #[test]
+    fn cmd_z_undoes_and_cmd_shift_z_redoes() {
+        let mut app = one(&[("title", "before")]);
+        focus_on(&mut app, "title");
+        app.stage("title".into(), Value::text("after"));
+        assert_eq!(shown(&app, "title"), Some(Value::text("after")));
+        app.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::SUPER));
+        assert_eq!(shown(&app, "title"), Some(Value::text("before")));
+        app.on_key(KeyEvent::new(KeyCode::Char('Z'), KeyModifiers::SUPER));
+        assert_eq!(shown(&app, "title"), Some(Value::text("after")));
+    }
+
+    /// A rating is a fixed set, so it opens no more than one does: h/l nudge
+    /// it, 0-5 name it, and j/k stay the keys that leave the row.
+    #[test]
+    fn enter_never_opens_a_rating() {
+        let mut app = one(&[("rating", "2")]);
+        focus_on(&mut app, "rating");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.mode, Mode::Select);
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(shown(&app, "rating"), Some(Value::text("3")));
+        press(&mut app, KeyCode::Char('h'));
+        assert!(app.staged.is_empty(), "back to what disk holds");
+        press(&mut app, KeyCode::Char('5'));
+        assert_eq!(shown(&app, "rating"), Some(Value::text("5")));
+        // j leaves the row rather than typing a letter into it.
+        let was = app.focus;
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.focus, was + 1);
+    }
+
+    /// `~` walks the four cases without the menu, reading where it is in the
+    /// ring off the text itself -- and never lands on a press that redraws
+    /// nothing, which is what a case the value is already in would be.
+    #[test]
+    fn tilde_steps_the_case_ring_and_skips_the_no_ops() {
+        let mut app = one(&[("title", "the SHAPE of water")]);
+        focus_on(&mut app, "title");
+        let mut seen = Vec::new();
+        for _ in 0..5 {
+            press(&mut app, KeyCode::Char('~'));
+            seen.push(match shown(&app, "title") {
+                Some(Value::Text(s)) => s,
+                other => panic!("{other:?}"),
+            });
+        }
+        assert_eq!(
+            seen,
+            vec![
+                "The shape of water",
+                "The Shape of Water",
+                "the shape of water",
+                "THE SHAPE OF WATER",
+                "The shape of water",
+            ],
+            "the ring must cycle, not stall"
+        );
+    }
+
+    /// A rating has no case to step, and saying so beats staging nonsense.
+    #[test]
+    fn tilde_refuses_a_field_with_no_case() {
+        let mut app = one(&[("rating", "3")]);
+        focus_on(&mut app, "rating");
+        press(&mut app, KeyCode::Char('~'));
+        assert!(app.staged.is_empty());
+        assert!(app.status.contains("takes no formatting"), "{}", app.status);
     }
 
     /// Footage is a different form, not the same form with a label on it: the
