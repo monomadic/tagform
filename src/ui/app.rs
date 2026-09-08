@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use crate::config::{Enums, KINDS};
+use crate::config::{Enums, KINDS, ORIENTATIONS};
 use crate::fetch;
 use crate::model::filename;
 use crate::model::schema::{
@@ -1459,6 +1459,10 @@ impl App {
         match row.key.as_str() {
             "category" => same(&self.enums.category),
             "variant" => same(&self.enums.variant),
+            "orientation" => ORIENTATIONS
+                .iter()
+                .map(|s| Opt { code: (*s).into(), label: (*s).into() })
+                .collect(),
             "kind" => KINDS
                 .iter()
                 .map(|(c, l)| Opt { code: (*c).into(), label: (*l).into() })
@@ -1893,6 +1897,10 @@ fn build_rows(
                 return None;
             }
             if adult && !edited && ADULT_HIDDEN.contains(&def.id) {
+                return None;
+            }
+            // Offered on an adult file; otherwise only once it holds something.
+            if def.adult_only && !adult && !edited && disk.iter().all(Option::is_none) {
                 return None;
             }
             // Offered on an adult clip; otherwise only once it holds something.
@@ -2566,8 +2574,9 @@ mod tests {
         }
     }
 
-    /// Adult is the second profile: no Artist row, the publishing order, and
-    /// no Track until the file is a Clip.
+    /// Adult is the second profile: no Artist row, an Orientation set under
+    /// the other two, the publishing order, and no Track until the file is a
+    /// Clip.
     #[test]
     fn the_adult_category_reshapes_the_form() {
         let app = one(&[("category", "Adult")]);
@@ -2575,18 +2584,33 @@ mod tests {
         assert!(!k.contains(&"artist"), "{k:?}");
         assert!(!k.contains(&"track"), "not a clip: {k:?}");
         assert_eq!(
-            k[..13],
+            k[..14],
             [
-                "category", "variant", "title", "channel", "actors", "rating", "url", "tags",
-                "date", "description", "genre", "synopsis", "origin"
+                "category", "variant", "orientation", "title", "channel", "actors", "rating",
+                "url", "tags", "date", "description", "genre", "synopsis", "origin"
             ]
         );
-        assert_eq!(k[13..], ["kind"]);
+        assert_eq!(k[14..], ["kind"]);
+        let opts: Vec<String> =
+            app.options_for(row(&app, "orientation")).into_iter().map(|o| o.code).collect();
+        assert_eq!(opts, ["Straight", "Gay", "Trans"]);
 
         let app = one(&[("category", "Adult"), ("variant", "Clip")]);
         let k = keys(&app);
-        assert_eq!(k[..4], ["category", "variant", "title", "track"], "{k:?}");
+        assert_eq!(k[..5], ["category", "variant", "orientation", "title", "track"], "{k:?}");
         assert_eq!(row(&app, "track").label, "Track");
+    }
+
+    /// Orientation belongs to the adult profile alone: absent elsewhere until
+    /// a file actually carries one, and then kept -- hiding it would hide a
+    /// key the write carries (invariant 4).
+    #[test]
+    fn orientation_is_offered_only_to_adult_files_unless_present() {
+        for app in [one(&[]), one(&[("category", "Music Video")])] {
+            assert!(!keys(&app).contains(&"orientation"), "{:?}", keys(&app));
+        }
+        let app = one(&[("category", "Footage"), ("orientation", "Gay")]);
+        assert!(keys(&app).contains(&"orientation"), "{:?}", keys(&app));
     }
 
     /// Choosing Clip in the form, not just on disk, brings Track in -- and

@@ -42,6 +42,9 @@ pub const EXIFTOOL_KEY_NAMES: &[(&str, &str)] = &[
     ("origin", "Origin"),
     ("location", "Location"),
     ("track", "TrackK"),
+    // `K` suffix like the others: exiftool already has an EXIF `Orientation`,
+    // and a bare name would be ambiguous in its messages even under `Keys:`.
+    ("orientation", "OrientationK"),
 ];
 
 pub fn exiftool_name(key: &str) -> Option<&'static str> {

@@ -127,7 +127,7 @@ fn build_report(files: &[FileTags]) -> Report {
     for f in FIELDS {
         let per_file: Vec<Option<Value>> = files.iter().map(|t| t.lookup(f)).collect();
         let agg = Agg::fold(per_file);
-        if matches!(agg, Agg::Absent) && (f.footage_only || f.clip_only) {
+        if matches!(agg, Agg::Absent) && (f.footage_only || f.clip_only || f.adult_only) {
             continue; // profile fields stay hidden until they hold something
         }
         if !matches!(agg, Agg::Absent) && f.ilst.is_none() {

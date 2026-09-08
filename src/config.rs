@@ -56,6 +56,11 @@ pub const KINDS: &[(&str, &str)] = &[
     ("21", "Podcast"),
 ];
 
+/// The adult profile's Orientation: a closed set, offered in this order.
+/// Not read from the yt-dlp aliases -- nothing there carries it -- so it is
+/// fixed here like `KINDS`, not parsed like Category and Variant.
+pub const ORIENTATIONS: &[&str] = &["Straight", "Gay", "Trans"];
+
 pub struct Enums {
     pub category: Vec<String>,
     pub variant: Vec<String>,

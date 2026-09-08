@@ -51,6 +51,10 @@ pub struct FieldDef {
     /// file that is no longer tagged as a clip is still a value, and hiding it
     /// would hide a key the write carries (invariant 4).
     pub clip_only: bool,
+    /// Part of the adult profile proper: shown when the selection agrees it
+    /// is Adult, whatever the Variant, or when the value is present -- the
+    /// same value-keeps-the-row rule as `clip_only`.
+    pub adult_only: bool,
 }
 
 macro_rules! field {
@@ -59,7 +63,7 @@ macro_rules! field {
         FieldDef {
             id: $id, label: $label, control: $control,
             mdta: &[$($m),*], read: &[$($r),*], xmp: &[$($x),*],
-            ilst: $ilst, footage_only: false, clip_only: false,
+            ilst: $ilst, footage_only: false, clip_only: false, adult_only: false,
         }
     };
 }
@@ -99,6 +103,17 @@ pub static FIELDS: &[FieldDef] = &[
     field!("title", "Title", Control::Text,
         mdta: ["title"], read: ["title"], xmp: ["XMP-dc:Title"], ilst: Some("\u{a9}nam")),
 
+    // The third closed set, and the first that belongs to one Category alone:
+    // Straight, Gay or Trans (`ORIENTATIONS` in config.rs). Only the adult
+    // profile offers it unprompted; anywhere else it appears once it holds a
+    // value, so the key is never hidden from a write (invariant 4). Its own
+    // mdta key, not a tag -- a tag is free text and this is not.
+    FieldDef {
+        id: "orientation", label: "Orientation", control: Control::Enum,
+        mdta: &["orientation"], read: &["orientation"], xmp: &[], ilst: None,
+        footage_only: false, clip_only: false, adult_only: true,
+    },
+
     // A clip's number within the work it was cut from. Only the adult-clip
     // profile shows it unprompted; anywhere else it appears once it holds a
     // value. `track` under mdta, not the iTunes `trkn` pair -- that atom is a
@@ -107,7 +122,7 @@ pub static FIELDS: &[FieldDef] = &[
     FieldDef {
         id: "track", label: "Track", control: Control::Text,
         mdta: &["track"], read: &["track"], xmp: &[], ilst: None,
-        footage_only: false, clip_only: true,
+        footage_only: false, clip_only: true, adult_only: false,
     },
 
     // yt-dlp writes %(cast,uploader)l to both actors and artist; rename-footage
@@ -182,7 +197,7 @@ pub static FIELDS: &[FieldDef] = &[
     FieldDef {
         id: "location", label: "Location", control: Control::Text,
         mdta: &[], read: &[],
-        xmp: &["XMP-iptcExt:LocationCreatedCity"], ilst: None, footage_only: true, clip_only: false,
+        xmp: &["XMP-iptcExt:LocationCreatedCity"], ilst: None, footage_only: true, clip_only: false, adult_only: false,
     },
     // Written by the camera, never by hand. rename-footage --geocode is what
     // turns these into the place name above.
@@ -193,7 +208,7 @@ pub static FIELDS: &[FieldDef] = &[
     FieldDef {
         id: "coordinates", label: "Coordinates", control: Control::ReadOnly,
         mdta: &[], read: &["location", "location-eng"],
-        xmp: &[], ilst: None, footage_only: true, clip_only: false,
+        xmp: &[], ilst: None, footage_only: true, clip_only: false, adult_only: false,
     },
     // Write-once: the only surviving copy of a camera's own IMG_4855.MOV.
     // rename-footage --geocode writes the city as one field of an IPTC block and
@@ -203,17 +218,17 @@ pub static FIELDS: &[FieldDef] = &[
     FieldDef {
         id: "location_state", label: "State", control: Control::Text,
         mdta: &[], read: &[],
-        xmp: &["XMP-iptcExt:LocationCreatedProvinceState"], ilst: None, footage_only: true, clip_only: false,
+        xmp: &["XMP-iptcExt:LocationCreatedProvinceState"], ilst: None, footage_only: true, clip_only: false, adult_only: false,
     },
     FieldDef {
         id: "location_country", label: "Country", control: Control::Text,
         mdta: &[], read: &[],
-        xmp: &["XMP-iptcExt:LocationCreatedCountryName"], ilst: None, footage_only: true, clip_only: false,
+        xmp: &["XMP-iptcExt:LocationCreatedCountryName"], ilst: None, footage_only: true, clip_only: false, adult_only: false,
     },
     FieldDef {
         id: "preserved_name", label: "Original name", control: Control::ReadOnly,
         mdta: &[], read: &[], xmp: &["XMP-xmpMM:PreservedFileName"],
-        ilst: None, footage_only: true, clip_only: false,
+        ilst: None, footage_only: true, clip_only: false, adult_only: false,
     },
 ];
 
@@ -257,12 +272,13 @@ pub const CLIP: &str = "Clip";
 /// is no separate artist. Same display-only rule as `FOOTAGE_HIDDEN`.
 pub static ADULT_HIDDEN: &[&str] = &["artist"];
 
-/// The order an adult file is filled in. Track sits with Title because it
+/// The order an adult file is filled in. Orientation sits with the other two
+/// closed sets, because it is one; Track sits with Title because it
 /// qualifies it -- "this work, cut N". Kind and the footage fields are not
 /// named and keep schema order behind these.
 pub static ADULT_ORDER: &[&str] = &[
-    "category", "variant", "title", "track", "channel", "actors", "rating", "url", "tags",
-    "date", "description", "genre", "synopsis", "origin",
+    "category", "variant", "orientation", "title", "track", "channel", "actors", "rating",
+    "url", "tags", "date", "description", "genre", "synopsis", "origin",
 ];
 
 /// Position in a profile's order, or past its end for a field it does not
@@ -352,6 +368,10 @@ mod tests {
         assert_eq!(ADULT_ORDER[..2], ["category", "variant"]);
         assert!(ADULT_ORDER.contains(&"track"));
         assert!(field_by_id("track").unwrap().clip_only);
+        assert!(ADULT_ORDER.contains(&"orientation"));
+        let orientation = field_by_id("orientation").unwrap();
+        assert!(orientation.adult_only && !orientation.clip_only);
+        assert_eq!(orientation.control, Control::Enum);
         assert!(profile_rank(ADULT_ORDER, "kind") > profile_rank(ADULT_ORDER, "origin"));
     }
 
