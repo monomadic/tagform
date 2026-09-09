@@ -100,6 +100,12 @@ pub struct MediaInfo {
 }
 
 impl MediaInfo {
+    /// Display aspect, already turned for a rotated phone clip. `None` until
+    /// the probe has answered.
+    pub fn aspect(&self) -> Option<f32> {
+        (self.width > 0 && self.height > 0).then(|| self.width as f32 / self.height as f32)
+    }
+
     pub fn summary(&self) -> String {
         let mut parts = Vec::new();
         if self.width > 0 {

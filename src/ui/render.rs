@@ -149,7 +149,9 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
     let Some(file) = app.files.get(idx) else { return };
 
     let want = app.thumb_aspect.map(|a| thumb_cols(area.height, a)).unwrap_or(0);
-    let has_thumb = proto.is_some() && want > 0 && area.width > want + 20;
+    // The column is reserved as soon as the aspect is known, picture or not:
+    // the facts beside it must not slide left and back while ffmpeg seeks.
+    let has_thumb = want > 0 && area.width > want + 20;
     let cols = Layout::horizontal([
         Constraint::Length(if has_thumb { want } else { 0 }),
         Constraint::Min(10),
@@ -1034,6 +1036,7 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
     let (text, fg) = match live {
         Validation::Error(m) => (m, t::error()),
         Validation::Warn(m) => (m, t::warn()),
+        Validation::Ok if app.status_error => (app.status.clone(), t::error()),
         Validation::Ok if !app.status.is_empty() => (app.status.clone(), t::muted()),
         Validation::Ok => (String::new(), t::muted()),
     };
@@ -1191,7 +1194,7 @@ fn draw_results(f: &mut Frame, area: Rect, r: &WriteResults) {
     let ok = r.failed.is_empty();
     let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(
-            format!(" Wrote {} of {} ", r.ok.len(), total),
+            format!(" {} {} of {} ", r.verb, r.ok.len(), total),
             Style::default()
                 .bg(if ok { t::staged() } else { t::error() })
                 .fg(t::badge_fg())
@@ -1692,6 +1695,7 @@ mod tests {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
         let r = WriteResults {
+            verb: "Wrote",
             ok: vec![],
             failed: vec![(
                 std::path::PathBuf::from("/x/IMG_4855.MOV"),

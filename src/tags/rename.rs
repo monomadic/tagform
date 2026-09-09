@@ -21,6 +21,12 @@ use std::process::{Command, Stdio};
 /// `rename-video` costs you `r` and nothing else.
 const TOOL: &str = "rename-video";
 
+/// Bytes a filename may hold on APFS, HFS+, ext4 and NTFS alike. The tool
+/// composes a name out of every tag on the file, and a long tag list walks
+/// straight past this; `mv` then fails with a message that puts the reason
+/// after two 300-byte paths, where a one-line status cannot reach it.
+const NAME_MAX: usize = 255;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     /// Renamed, and now lives here.
@@ -57,7 +63,12 @@ pub fn target(path: &Path) -> Result<PathBuf> {
     if !line.starts_with('/') {
         bail!("{}", say(&out.stderr, &out.stdout));
     }
-    Ok(PathBuf::from(line))
+    let target = PathBuf::from(line);
+    let len = target.file_name().map_or(0, |n| n.as_encoded_bytes().len());
+    if len > NAME_MAX {
+        bail!("name would be {len} bytes and the filesystem allows {NAME_MAX} -- fewer tags would fit");
+    }
+    Ok(target)
 }
 
 /// Rename `path` from its tags. The returned path is where the file now is.
@@ -113,8 +124,22 @@ fn say(err: &[u8], out: &[u8]) -> String {
         .chain(out.lines())
         .map(str::trim)
         .find(|l| !l.is_empty())
-        .map(|l| l.trim_start_matches(|c: char| !c.is_alphanumeric()).to_string())
+        .map(|l| reason_first(l.trim_start_matches(|c: char| !c.is_alphanumeric())))
         .unwrap_or_else(|| format!("{TOOL} said nothing and did nothing"))
+}
+
+/// `mv: rename <src> to <dst>: File name too long` -- the part that says what
+/// went wrong sits after both paths, and the paths are the long part. Lift it
+/// to the front so it survives a status line that shows the first sixty
+/// columns and no more.
+fn reason_first(line: &str) -> String {
+    let Some(rest) = line.strip_prefix("mv: ") else {
+        return line.to_string();
+    };
+    match rest.rsplit_once(": ") {
+        Some((_, reason)) if !reason.is_empty() => format!("mv: {reason}"),
+        _ => line.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -127,6 +152,13 @@ mod tests {
         assert_eq!(say(e, b"ignored\n"), "No category tag: clip.mov");
         assert_eq!(say(b"", b"\xe2\x9c\x93 Exists: clip.mov\n"), "Exists: clip.mov");
         assert!(say(b"", b"").contains(TOOL));
+    }
+
+    #[test]
+    fn say_puts_the_mv_reason_before_the_paths() {
+        let e = b"mv: rename /a/very long (name).mp4 to /a/longer (name): File name too long\n";
+        assert_eq!(say(e, b""), "mv: File name too long");
+        assert_eq!(say(b"mv: no reason here\n", b""), "mv: no reason here");
     }
 
     #[test]

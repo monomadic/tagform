@@ -174,6 +174,9 @@ fn is_textual(control: Control) -> bool {
 }
 
 pub struct WriteResults {
+    /// The verb for the title: `Wrote` or `Renamed`. The dialog is the same
+    /// shape for either -- a batch that half-worked needs the same list.
+    pub verb: &'static str,
     pub ok: Vec<PathBuf>,
     pub failed: Vec<(PathBuf, String)>,
 }
@@ -269,6 +272,10 @@ pub struct App {
     /// than counting up invisibly and leaving `k` unresponsive.
     pub help_max: std::cell::Cell<u16>,
     pub status: String,
+    /// The status line reports a failure. Painted in the error colour until
+    /// the next key: a rename that did nothing looked exactly like one that
+    /// worked, and the difference was a word in the middle of a grey line.
+    pub status_error: bool,
     pub enums: Enums,
     /// Ride the faststart flag along on any remux we are already doing. On by
     /// default, per the brief.
@@ -351,6 +358,7 @@ impl App {
             help_scroll: 0,
             help_max: std::cell::Cell::new(0),
             status: String::new(),
+            status_error: false,
             enums: Enums::load(),
             faststart: true,
             pending: None,
@@ -428,7 +436,10 @@ impl App {
         }
         self.thumb_for = Some(idx);
         self.thumb_image = None;
-        self.thumb_aspect = None;
+        // The probe answers in milliseconds and the extract in seconds, so the
+        // band is sized from the probe: the form must not jump down when the
+        // picture of a portrait clip finally lands.
+        self.thumb_aspect = self.media.get(idx).and_then(MediaInfo::aspect);
         let path = self.files[idx].path.clone();
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -455,6 +466,9 @@ impl App {
                     }
                 }
                 Msg::Media(i, info) => {
+                    if self.thumb_for == Some(i) && self.thumb_aspect.is_none() {
+                        self.thumb_aspect = info.aspect();
+                    }
                     if i < self.media.len() {
                         self.media[i] = info;
                     }
@@ -662,7 +676,7 @@ impl App {
                     Err(e) => failed.push((plan.path.clone(), e.to_string())),
                 }
             }
-            let _ = tx.send(Msg::Wrote(Box::new(WriteResults { ok: written, failed })));
+            let _ = tx.send(Msg::Wrote(Box::new(WriteResults { verb: "Wrote", ok: written, failed })));
         });
     }
 
@@ -708,6 +722,7 @@ impl App {
                 if kept == 1 { "" } else { "s" }
             )
         };
+        self.status_error = !results.failed.is_empty();
         // The results stay up whether the write was clean or not: any key
         // returns to the editor, with any unwritten edits still staged.
         self.results = Some(results);
@@ -763,30 +778,45 @@ impl App {
         let total = out.len();
         let mut renamed = 0usize;
         let mut name = String::new();
-        // Why a file kept its name, kept separately from the names that changed:
-        // in a mixed batch the interesting half is the half that did not move,
-        // and the strip has room for one line.
-        let mut note = String::new();
+        let mut unchanged = 0usize;
+        // A file that kept its name for a reason, with the reason. These go
+        // to the results dialog rather than the status line: the reason is a
+        // sentence about a 300-byte path, and the line has room for neither.
+        let mut failed: Vec<(PathBuf, String)> = Vec::new();
+        let mut ok: Vec<PathBuf> = Vec::new();
         for (i, r) in out {
+            let path = self.files.get(i).map(|f| f.path.clone()).unwrap_or_default();
             match r {
                 Ok(Outcome::Renamed(to)) => {
                     name = file_name(&to);
+                    ok.push(to.clone());
                     if let Some(f) = self.files.get_mut(i) {
                         f.path = to;
                     }
                     renamed += 1;
                 }
-                Ok(Outcome::Unchanged) => note = "already named from its tags".into(),
-                Ok(Outcome::Taken(to)) => note = format!("name taken: {}", file_name(&to)),
-                Err(e) => note = e,
+                Ok(Outcome::Unchanged) => unchanged += 1,
+                Ok(Outcome::Taken(to)) => {
+                    failed.push((path, format!("name taken by {}", file_name(&to))))
+                }
+                Err(e) => failed.push((path, e)),
             }
         }
+        self.status_error = !failed.is_empty();
         self.status = match (renamed, total) {
-            (0, _) => note,
+            (0, 1) if unchanged == 1 => "already named from its tags".into(),
+            (0, _) if failed.is_empty() => "already named from their tags".into(),
+            (0, 1) => format!("not renamed: {}", failed[0].1),
+            (0, t) => format!("renamed 0 of {t}"),
             (1, 1) => format!("renamed to {name}"),
             (n, t) if n == t => format!("renamed {n} files"),
-            (n, t) => format!("renamed {n} of {t}: {note}"),
+            (n, t) => format!("renamed {n} of {t}"),
         };
+        // Only a failure earns the dialog. A clean batch, or a file already
+        // named right, is a one-line fact; a refusal is a paragraph.
+        if !failed.is_empty() {
+            self.results = Some(WriteResults { verb: "Renamed", ok, failed });
+        }
     }
 
     /// `i` then `u`: ask yt-dlp what the page behind the URL field says and
@@ -959,6 +989,9 @@ impl App {
             self.results = None;
             return;
         }
+        // Any key after a failure is the acknowledgement; the message stays,
+        // the colour goes.
+        self.status_error = false;
         // The key map owns every key while it is up, the same way a dialog
         // does -- otherwise reading it would edit the form behind it. Only
         // scrolling stays live; anything else closes it.
@@ -2178,6 +2211,7 @@ mod tests {
         app.set_staged(0, "title", Value::Text("kept".into()));
 
         app.finish_write(WriteResults {
+            verb: "Wrote",
             ok: vec![],
             failed: vec![(PathBuf::from("/nonexistent/tagform-test.mov"), "boom".into())],
         });
@@ -2202,6 +2236,7 @@ mod tests {
         app.set_staged(0, "title", Value::Text("landed".into()));
 
         app.finish_write(WriteResults {
+            verb: "Wrote",
             ok: vec![PathBuf::from("/nonexistent/tagform-test.mov")],
             failed: vec![],
         });
