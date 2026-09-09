@@ -2593,7 +2593,7 @@ mod tests {
         assert_eq!(k[14..], ["kind"]);
         let opts: Vec<String> =
             app.options_for(row(&app, "orientation")).into_iter().map(|o| o.code).collect();
-        assert_eq!(opts, ["Straight", "Gay", "Trans"]);
+        assert_eq!(opts, ["Straight", "Gay", "Sapphic", "Trans"]);
 
         let app = one(&[("category", "Adult"), ("variant", "Clip")]);
         let k = keys(&app);

@@ -104,7 +104,7 @@ pub static FIELDS: &[FieldDef] = &[
         mdta: ["title"], read: ["title"], xmp: ["XMP-dc:Title"], ilst: Some("\u{a9}nam")),
 
     // The third closed set, and the first that belongs to one Category alone:
-    // Straight, Gay or Trans (`ORIENTATIONS` in config.rs). Only the adult
+    // Straight, Gay, Sapphic or Trans (`ORIENTATIONS` in config.rs). Only the adult
     // profile offers it unprompted; anywhere else it appears once it holds a
     // value, so the key is never hidden from a write (invariant 4). Its own
     // mdta key, not a tag -- a tag is free text and this is not.

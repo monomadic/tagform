@@ -8,6 +8,7 @@
 //!
 //! ```text
 //! Actor, Actor (Channel) - Title #tag #tag ★★★★☆
+//! Actor, Actor (Channel) - Title #tag #tag @G ★★★★☆
 //! Actor, Actor (Channel) - Title #tag #tag [meta] ★★★★☆
 //! Actor (Channel) - Title #tag #tag [meta]
 //! Actor - Title #tag #tag [meta]
@@ -17,8 +18,8 @@
 //!
 //! The parts are pulled off in the order that makes each one unambiguous: a
 //! `[...]` block is the probed spec `rename-footage` appends and is never a
-//! field, so it goes first; stars and `#tags` are single tokens anywhere in the
-//! stem; a leading timestamp is a fixed shape; and only then is what remains
+//! field, so it goes first; stars, `#tags` and the `@G`/`@L`/`@T` orientation
+//! mark are single tokens anywhere in the stem; a leading timestamp is a fixed shape; and only then is what remains
 //! split on the first ` - ` into the people (with their `(Channel)`) and the
 //! title. A name with no ` - ` is all title, because guessing that a plain
 //! word is an actor is the wrong kind of helpful.
@@ -30,6 +31,7 @@
 
 use std::path::Path;
 
+use crate::config::ORIENTATION_MARKS;
 use crate::model::tag;
 use crate::model::value::Value;
 
@@ -60,8 +62,10 @@ pub fn parse(stem: &str) -> Vec<(&'static str, Value)> {
 
     // Hashtags: any whitespace-delimited token opening with `#`. Repaired
     // through the tag grammar, so a `#tag_two` in an old name lands as the
-    // `tag-two` the form would have written.
+    // `tag-two` the form would have written. The orientation mark is a token
+    // of the same kind, matched exactly: `@G`, not `@g` and not `@Gmail`.
     let mut tags: Vec<String> = Vec::new();
+    let mut orientation: Option<&'static str> = None;
     let mut kept: Vec<&str> = Vec::new();
     for tok in rest.split_whitespace() {
         if tok.len() > 1 && tok.starts_with('#') {
@@ -69,6 +73,8 @@ pub fn parse(stem: &str) -> Vec<(&'static str, Value)> {
             if !t.is_empty() && !tags.iter().any(|x| x.eq_ignore_ascii_case(&t)) {
                 tags.push(t);
             }
+        } else if let Some((name, _)) = ORIENTATION_MARKS.iter().find(|(_, m)| *m == tok) {
+            orientation = orientation.or(Some(name));
         } else {
             kept.push(tok);
         }
@@ -109,6 +115,9 @@ pub fn parse(stem: &str) -> Vec<(&'static str, Value)> {
     }
     if !tags.is_empty() {
         out.push(("tags", Value::List(tags)));
+    }
+    if let Some(o) = orientation {
+        out.push(("orientation", Value::Text(o.to_string())));
     }
     out
 }
@@ -285,6 +294,26 @@ mod tests {
     fn tags_are_repaired_and_deduplicated() {
         let out = parse("Ann - T #this-is-a-tag #example_tag #Tag #tag #");
         assert_eq!(list(&out, "tags"), ["this-is-a-tag", "example-tag", "Tag"]);
+    }
+
+    /// The orientation mark is a token beside the tags, one per marked
+    /// ORIENTATIONS value; Straight has none and a name without one says
+    /// nothing about the field.
+    #[test]
+    fn the_orientation_mark_is_a_field() {
+        for (name, mark) in ORIENTATION_MARKS {
+            let stem = format!("Ann (Ch) - T #a {mark} ★★★☆☆ [1080p 30fps H]");
+            let out = parse(&stem);
+            assert_eq!(text(&out, "orientation").as_deref(), Some(*name), "{stem}");
+            assert_eq!(text(&out, "title").as_deref(), Some("T"), "{stem}");
+            assert_eq!(list(&out, "tags"), ["a"], "{stem}");
+        }
+        assert!(get(&parse("Ann - T #a [1080p 30fps H]"), "orientation").is_none());
+        // Exact tokens only: case and length both matter, and a title keeps
+        // its `@`-words.
+        let out = parse("Ann - see you @ 7 @g @Gmail");
+        assert!(get(&out, "orientation").is_none());
+        assert_eq!(text(&out, "title").as_deref(), Some("see you @ 7 @g @Gmail"));
     }
 
     #[test]

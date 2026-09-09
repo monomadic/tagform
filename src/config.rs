@@ -59,7 +59,13 @@ pub const KINDS: &[(&str, &str)] = &[
 /// The adult profile's Orientation: a closed set, offered in this order.
 /// Not read from the yt-dlp aliases -- nothing there carries it -- so it is
 /// fixed here like `KINDS`, not parsed like Category and Variant.
-pub const ORIENTATIONS: &[&str] = &["Straight", "Gay", "Trans"];
+pub const ORIENTATIONS: &[&str] = &["Straight", "Gay", "Sapphic", "Trans"];
+
+/// The token `rename-video` puts in a name for an Orientation, beside the
+/// `#tags`, and the filename import reads back. Straight is the unmarked case
+/// and has no token. The script keeps its own copy of this table, so a change
+/// here is a change there too.
+pub const ORIENTATION_MARKS: &[(&str, &str)] = &[("Gay", "@G"), ("Sapphic", "@L"), ("Trans", "@T")];
 
 pub struct Enums {
     pub category: Vec<String>,
