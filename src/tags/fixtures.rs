@@ -384,3 +384,55 @@ fn a_truncated_file_is_refused() {
     }
     assert_eq!(std::fs::read(&f).unwrap(), before, "a refused write still changed the file");
 }
+
+// ---------------------------------------------------------------------------
+// the muxer is chosen, not inferred
+// ---------------------------------------------------------------------------
+
+/// `.m4v` is an mp4 file, but ffmpeg infers the `ipod` muxer from that name and
+/// `ipod` has no tag for HEVC -- so an ordinary HEVC `.m4v` failed the remux
+/// outright with "could not find tag for codec hevc". The remux names its
+/// muxer now; this is that, end to end.
+///
+/// The fixture is generated as `.mp4` and renamed, because the generator would
+/// hit the very same inference. Fragmented, so the native writer declines it
+/// and the plan actually reaches ffmpeg.
+#[test]
+fn an_hevc_m4v_can_be_remuxed() {
+    let dir = workspace("hevc-m4v");
+    let src = generate(
+        &dir,
+        "hevc.mp4",
+        &[
+            "-c:v", "libx265", "-x265-params", "log-level=none",
+            "-movflags", "+use_metadata_tags+frag_keyframe+empty_moov",
+            "-metadata", "title=Original",
+        ],
+    );
+    let f = dir.join("hevc.m4v");
+    std::fs::rename(&src, &f).expect("renaming the fixture to .m4v");
+
+    let (writer, r) = write_it(&f, &staged(&[("origin", "Camera")]), false);
+    assert_ne!(writer, Writer::Native, "the fixture must reach ffmpeg to test anything");
+    r.expect("an HEVC .m4v must remux");
+    assert_eq!(text(&probe::probe(&f).unwrap(), "origin"), Some("Camera".into()));
+    assert_eq!(text(&probe::probe(&f).unwrap(), "title"), Some("Original".into()));
+}
+
+/// `.mov` is the one extension where the muxer is a real difference in what
+/// gets written rather than a naming one (docs/CONTAINER.md §1.2), so it keeps
+/// the mov muxer while everything else is mp4.
+#[test]
+fn only_mov_gets_the_mov_muxer() {
+    for (name, want) in [
+        ("a.mov", "mov"),
+        ("a.QT", "mov"),
+        ("a.mp4", "mp4"),
+        ("a.m4v", "mp4"),
+        ("a.M4V", "mp4"),
+        ("a.m4a", "mp4"),
+        ("a", "mp4"),
+    ] {
+        assert_eq!(write::muxer_for(Path::new(name)), want, "for {name}");
+    }
+}

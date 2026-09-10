@@ -364,6 +364,8 @@ fn remux(
         args.push("-metadata".into());
         args.push(format!("{k}={v}"));
     }
+    args.push("-f".into());
+    args.push(muxer_for(path).into());
     args.push("--".into());
     args.push(tmp.to_string_lossy().into_owned());
 
@@ -418,8 +420,26 @@ fn remux(
     Ok(())
 }
 
+/// The muxer named outright, because letting ffmpeg infer one from the
+/// extension is wrong for the whole `.m4*` family: those select `ipod`, whose
+/// codec whitelist predates HEVC, so a perfectly ordinary HEVC `.m4v` fails
+/// the remux with "could not find tag for codec hevc". They are mp4 files and
+/// the mp4 muxer takes them. `.mov` keeps the mov muxer, which is a real
+/// difference in what gets written, not a naming one (docs/CONTAINER.md §1.2).
+pub(crate) fn muxer_for(path: &Path) -> &'static str {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "mov" | "qt" => "mov",
+        _ => "mp4",
+    }
+}
+
 /// Same directory, so the swap is a rename rather than a copy; same extension,
-/// so ffmpeg selects the same muxer mode (docs/CONTAINER.md §1.2).
+/// so the file the user gets back is named as it was. The muxer is chosen by
+/// `muxer_for`, not by this name.
 fn temp_beside(path: &Path) -> PathBuf {
     let dir = path.parent().unwrap_or(Path::new("."));
     let ext = path.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|| "mp4".into());
