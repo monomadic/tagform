@@ -17,7 +17,7 @@ use crate::model::schema::Control;
 use crate::model::tag;
 use crate::model::value::{Agg, Value};
 use crate::tags::plan::FilePlan;
-use crate::ui::app::{App, Mode, Row, WriteProgress, WriteResults};
+use crate::ui::app::{App, ImportSource, Mode, Row, WriteProgress, WriteResults};
 use crate::ui::edit::{stars_glyphs, Opt, Validation};
 use crate::ui::keymap::{key_width, KEYMAP};
 use crate::ui::theme as t;
@@ -200,10 +200,21 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
 /// key name. The filename line is the honest one -- it is computed, not
 /// promised -- and it says which fields it would fill and which the file
 /// already holds, because the import never overwrites.
+///
+/// A caret marks the source j/k are sitting on. The letter chips stay beside
+/// it: the cursor is for choosing while reading the preview, the letters for
+/// when the choice was made before the menu opened.
 fn draw_import(f: &mut Frame, area: Rect, app: &App) {
     let p = app.import_preview();
     let key = |k: &str| Span::styled(format!(" {k} "), Style::default().bg(t::rule()).fg(t::accent()).add_modifier(Modifier::BOLD));
-    let name = |s: &str| Span::styled(format!(" {s:<9}"), Style::default().fg(t::label_focus()));
+    let name = |s: &str, on: bool| {
+        let style = Style::default().fg(t::label_focus());
+        Span::styled(format!(" {s:<9}"), if on { style.add_modifier(Modifier::BOLD) } else { style })
+    };
+    // One column, always painted, so the two lines do not shift sideways as
+    // the cursor moves between them.
+    let caret = |on: bool| Span::styled(if on { "▸" } else { " " }, Style::default().fg(t::accent()));
+    let on_url = app.import_pick == ImportSource::Url;
     let muted = Style::default().fg(t::muted());
     let width = area.width as usize;
     // Truncate without padding: these are values set side by side, not a
@@ -223,17 +234,17 @@ fn draw_import(f: &mut Frame, area: Rect, app: &App) {
         None => "no URL on this file".into(),
     };
     lines.push(Line::from(vec![
-        Span::raw(" "),
+        caret(on_url),
         key("u"),
-        name("url"),
+        name("url", on_url),
         Span::styled(url_text, Style::default().fg(if p.url.is_some() { t::value() } else { t::value_empty() })),
     ]));
 
     // The filename line, and under it what the parse found.
     lines.push(Line::from(vec![
-        Span::raw(" "),
+        caret(!on_url),
         key("f"),
-        name("filename"),
+        name("filename", !on_url),
         Span::styled(fit(&p.stem, 16), Style::default().fg(t::value())),
     ]));
     let mut found: Vec<Span> = vec![Span::raw("               ")];
@@ -260,7 +271,15 @@ fn draw_import(f: &mut Frame, area: Rect, app: &App) {
         }
     }
     lines.push(Line::from(found));
-    lines.push(Line::from(vec![Span::raw(" "), key("esc"), Span::styled(" cancel", muted)]));
+    lines.push(Line::from(vec![
+        Span::raw(" "),
+        key("j/k"),
+        Span::styled(" choose  ", muted),
+        key("⏎"),
+        Span::styled(" import  ", muted),
+        key("esc"),
+        Span::styled(" cancel", muted),
+    ]));
     f.render_widget(Paragraph::new(lines), area);
 }
 
@@ -799,7 +818,13 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
         (mode_name, mode_fg, bar_bg)
     };
     let pairs: &[(&str, &str)] = if app.import_menu {
-        &[("u", "from the URL"), ("f", "from the filename"), ("esc", "cancel")]
+        &[
+            ("jk", "choose"),
+            ("⏎", "import"),
+            ("u", "from the URL"),
+            ("f", "from the filename"),
+            ("esc", "cancel"),
+        ]
     } else if app.format_pending {
         &[
             ("c", "capitalize"),
@@ -1656,6 +1681,8 @@ mod tests {
         };
         let mut app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
         app.import_menu = true;
+        // Where the menu opens on a file with no URL of its own.
+        app.import_pick = ImportSource::Filename;
         let (w, h) = (100, 6);
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|fr| draw_import(fr, fr.area(), &app)).unwrap();
@@ -1669,6 +1696,21 @@ mod tests {
         assert!(text[3].contains("Rating ★★★☆☆"), "{:?}", text[3]);
         assert!(text[3].contains("keeps Title"), "{:?}", text[3]);
         assert!(text[4].contains("esc"), "{:?}", text[4]);
+        assert!(text[4].contains("j/k"), "the band must say how to choose: {:?}", text[4]);
+
+        // The caret sits on the source the cursor is on, and only on that one.
+        assert!(text[2].starts_with("▸"), "{:?}", text[2]);
+        assert!(!text[1].starts_with("▸"), "{:?}", text[1]);
+        app.import_pick = ImportSource::Url;
+        term.draw(|fr| draw_import(fr, fr.area(), &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let moved: Vec<String> =
+            (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect();
+        assert!(moved[1].starts_with("▸"), "{:?}", moved[1]);
+        assert!(!moved[2].starts_with("▸"), "{:?}", moved[2]);
+        // Moving the caret must not shift the lines it moves between.
+        let tail = |s: &str| s.chars().skip(1).collect::<String>();
+        assert_eq!(tail(&moved[2]), tail(&text[2]));
     }
 
     #[test]

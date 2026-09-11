@@ -874,8 +874,10 @@ built. The fix-up needs a key that is not `⌃F`, which is forward-one-character
 (§5.1).
 
 ⟨built, differs⟩ **Fetch** is `i` then `u` in Select mode — the import
-menu, painted in the header band with a preview of each source — from any
-field (`src/fetch.rs`), not a control-level key: it runs `yt-dlp -J --skip-download`
+menu, painted in the header band with a preview of each source, and navigable
+with `j`/`k` and `⏎` for choosing while reading that preview — from any
+field (`src/fetch.rs`), not a control-level key: it runs `yt-dlp -J
+--skip-download --ignore-no-formats-error`
 against the URL and fills Title, Actors, Channel, Description, Tags and Date
 from the result, mapped exactly as the yt-dlp config's `--parse-metadata`
 lines map them at download time. No shared cache, and no per-field diff
@@ -1628,7 +1630,7 @@ document is why the map has the shape it does.
 
 Two rules do the work. `enter` opens a field and `esc` or `enter` closes it, so
 Select mode's letters are never ambiguous — `w` write, `m` merge, `i`
-import (then `u`/`f` for the source), `I` inspector, `F` faststart, `t` theme, `y`/`p` yank and paste, `]`/`[`/`a` for
+import (then `j`/`k` and `⏎`, or `u`/`f` for the source outright), `I` inspector, `F` faststart, `t` theme, `y`/`p` yank and paste, `]`/`[`/`a` for
 the selection, `O`/`b` to push a field out to every file (§4.3), `o` to hand
 the file to the desktop player. `c` is a second name for `y`, because half the
 world learned that key as copy; the two are the same command and the map says

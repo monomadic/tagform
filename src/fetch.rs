@@ -33,19 +33,38 @@ const TOOL: &str = "yt-dlp";
 /// need -- but its download archive is, since an archived id would otherwise
 /// come back as "already recorded" instead of as metadata. `--no-playlist`
 /// keeps a video URL that happens to carry a list parameter from expanding
-/// into the list.
+/// into the list. `--ignore-no-formats-error` is the one that makes this a
+/// metadata tool rather than a download tool: see beside it.
 pub fn fetch(url: &str) -> Result<Vec<(&'static str, Value)>> {
     let out = Command::new(TOOL)
-        .args(["-J", "--skip-download", "--no-download-archive", "--no-playlist", "--no-warnings", "--"])
+        .args([
+            "-J",
+            "--skip-download",
+            "--no-download-archive",
+            "--no-playlist",
+            // A page whose video this account cannot play still *describes* the
+            // video, and the description is the whole errand here. Without this
+            // an extractor that finds no playable stream aborts the extraction
+            // -- `raise_no_formats` is fatal by default -- and a paywalled or
+            // members-only page comes back as an error rather than as tags.
+            "--ignore-no-formats-error",
+            "--no-warnings",
+            "--",
+        ])
         .arg(url)
         .stdin(Stdio::null())
         .output()
         .with_context(|| format!("running {TOOL}"))?;
-    if !out.status.success() {
-        bail!("{}", say(&out.stderr));
-    }
-    let info: Json = serde_json::from_slice(&out.stdout)
-        .with_context(|| format!("{TOOL} did not return JSON"))?;
+    // The info dict outranks the exit status. An extractor can print the whole
+    // dict and still exit non-zero over something that only a download would
+    // have cared about; when the metadata is on stdout we have what we came
+    // for, and only when it is absent does the status get to decide.
+    let info: Json = match serde_json::from_slice::<Json>(&out.stdout) {
+        Ok(info) if info.is_object() => info,
+        _ if !out.status.success() => bail!("{}", say(&out.stderr)),
+        Ok(_) => bail!("{TOOL} returned no metadata for that URL"),
+        Err(e) => return Err(e).with_context(|| format!("{TOOL} did not return JSON")),
+    };
     if info.get("_type").and_then(Json::as_str) == Some("playlist") {
         bail!("that URL is a playlist, not a video");
     }

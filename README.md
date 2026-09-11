@@ -127,11 +127,14 @@ untouched. Keys no field claims are carried through unchanged.
 
 ### Import from the web or the filename
 
-`i` opens the import band. `u` fetches the page behind the URL field with
-`yt-dlp` (metadata only, nothing is downloaded) and stages Title, Actors,
-Channel, Description, Tags and Date. `f` parses the filename instead:
-`#tags`, `★` stars, and `Actor, Actor (Channel) - Title`, filling only the
-fields that are still empty.
+`i` opens the import band, a two-line selector: `j`/`k` move between the
+sources with each one's preview under the cursor, `⏎` runs the one selected,
+`esc` closes. `u` fetches the page behind the URL field with `yt-dlp`
+(metadata only, nothing is downloaded, and a video this account cannot play
+still yields its tags) and stages Title, Actors, Channel, Description, Tags
+and Date. `f` parses the filename instead: `#tags`, `★` stars, and
+`Actor, Actor (Channel) - Title`, filling only the fields that are still
+empty. Both letters still work without moving the cursor first.
 
 ### Help is one key away
 
@@ -165,7 +168,7 @@ ring.
 | `w` | write staged edits (shows a plan first) |
 | `ctrl-s` / `cmd-s` | the same, from either mode — commits the open field first (`cmd` needs a terminal with the kitty keyboard protocol) |
 | `r` | rename the file — or every file in the selection — from the tags on disk, by running `rename-video` |
-| `i` | import — then `u` fetches the page behind the URL field with `yt-dlp`, or `f` reads the filename. A fetch takes the page's word; a filename fills only the fields that are still empty. `u` takes either back in one step |
+| `i` | import — `j`/`k` pick a source and `⏎` runs it, or name one outright: `u` fetches the page behind the URL field with `yt-dlp`, `f` reads the filename. A fetch takes the page's word; a filename fills only the fields that are still empty. `u` takes either back in one step |
 | `m` | merge a list field across every file in the selection |
 | `I` | inspector — per-file values for the focused field |
 | `]` / `[` (or `ctrl-n` / `ctrl-p`) / `a` | next file / previous file / all files |

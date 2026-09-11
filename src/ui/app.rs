@@ -222,6 +222,21 @@ pub enum Msg {
     Fetched(Vec<(usize, Result<Vec<(&'static str, Value)>, String>)>),
 }
 
+/// Where an import reads from. The menu keeps a cursor on one of these, so
+/// the choice can be made by moving rather than by knowing a letter -- `u`
+/// and `f` still name one outright.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ImportSource {
+    Url,
+    Filename,
+}
+
+impl ImportSource {
+    /// The sources in the order the band paints them, which is the order the
+    /// cursor walks.
+    pub const ALL: [ImportSource; 2] = [ImportSource::Url, ImportSource::Filename];
+}
+
 /// The import menu's preview of one file: what each source has to offer.
 pub struct ImportPreview {
     /// How many files the import would run over.
@@ -255,10 +270,14 @@ pub struct App {
     pub inspector: bool,
     /// The import menu is up in the header band (§5.5, §9.4): a choice of
     /// where to seed the form from -- the page behind the URL field, or the
-    /// filename -- with a preview of what each would bring. Modal for one
-    /// keystroke, like the format menu, and painted where the inspector
-    /// paints because both are answers about the file rather than the form.
+    /// filename -- with a preview of what each would bring. Modal until it is
+    /// answered or dismissed, and painted where the inspector paints because
+    /// both are answers about the file rather than the form.
     pub import_menu: bool,
+    /// Which source the menu's cursor is on. Kept across openings so a second
+    /// `i` offers the source the first one used, and set to whichever source
+    /// has something to offer when the menu opens on a file with no URL.
+    pub import_pick: ImportSource,
     /// The key-map overlay (§11). A screen of its own rather than a longer
     /// shortcut strip: the strip has room for a mode's commands, not for the
     /// forty bindings the form actually has.
@@ -354,6 +373,7 @@ impl App {
             view: None,
             inspector: false,
             import_menu: false,
+            import_pick: ImportSource::Url,
             help: false,
             help_scroll: 0,
             help_max: std::cell::Cell::new(0),
@@ -845,6 +865,7 @@ impl App {
             .collect();
         let Some((first, _)) = jobs.first() else {
             self.status = "no URL to fetch from".into();
+            self.status_error = true;
             return;
         };
         self.status = match jobs.len() {
@@ -931,6 +952,11 @@ impl App {
         }
         self.rebuild_rows();
         let n_fields = |n: usize| format!("{n} field{}", if n == 1 { "" } else { "s" });
+        // A page that would not answer is the one outcome here worth a colour.
+        // The message already said so, in the middle of a grey line that looks
+        // exactly like the line a successful import leaves -- which is how a
+        // failed fetch got read as "nothing new" more than once.
+        self.status_error = files < total;
         self.status = match (files, total) {
             (0, _) => note,
             (1, 1) if filled == 0 => format!("nothing new: {agrees}"),
@@ -969,6 +995,36 @@ impl App {
             }
         }
         ImportPreview { files: scope.len(), url, stem, fills, keeps }
+    }
+
+    /// `i`: open the menu, with the cursor on a source that has something to
+    /// offer. A file with no URL cannot be fetched for, so opening on `url`
+    /// there would put ⏎ on the one choice that refuses -- the cursor starts
+    /// on the filename instead, and `u` still reaches the other one.
+    fn open_import(&mut self) {
+        if self.import_preview().url.is_none() {
+            self.import_pick = ImportSource::Filename;
+        }
+        self.import_menu = true;
+        self.status.clear();
+    }
+
+    /// Walk the cursor, wrapping the way the form's own j/k do.
+    fn move_import(&mut self, delta: isize) {
+        let all = ImportSource::ALL;
+        let n = all.len() as isize;
+        let at = all.iter().position(|s| *s == self.import_pick).unwrap_or(0) as isize;
+        self.import_pick = all[(((at + delta) % n + n) % n) as usize];
+    }
+
+    /// Close the menu and run the chosen source.
+    fn run_import(&mut self, source: ImportSource) {
+        self.import_menu = false;
+        self.import_pick = source;
+        match source {
+            ImportSource::Url => self.fetch_tags(),
+            ImportSource::Filename => self.import_filename(),
+        }
     }
 
     /// Route by mode. Select moves and commands; Edit types.
@@ -1106,14 +1162,27 @@ impl App {
             }
             return;
         }
-        // The import menu owns the next key the same way: `u` and `f` are
-        // sources, and anything else closes the menu without importing.
+        // The import menu owns every key while it is up, but unlike the format
+        // menu it is a selector rather than a single keystroke: j/k walk the
+        // sources with the preview redrawn under the cursor, ⏎ runs the one
+        // the cursor is on. `u` and `f` still name a source outright -- the
+        // menu is somewhere to look before choosing, not a toll on already
+        // knowing. A key that means nothing here is swallowed rather than
+        // treated as a cancel: in a menu you move around in, an unrecognised
+        // key is a misfire, and closing on it would throw away the preview
+        // the user is still reading.
         if self.import_menu {
-            self.import_menu = false;
             match key.code {
-                KeyCode::Char('u') if !ctrl => self.fetch_tags(),
-                KeyCode::Char('f') if !ctrl => self.import_filename(),
-                _ => self.status = "import cancelled".into(),
+                KeyCode::Char('j') | KeyCode::Down | KeyCode::Tab => self.move_import(1),
+                KeyCode::Char('k') | KeyCode::Up | KeyCode::BackTab => self.move_import(-1),
+                KeyCode::Enter => self.run_import(self.import_pick),
+                KeyCode::Char('u') if !ctrl => self.run_import(ImportSource::Url),
+                KeyCode::Char('f') if !ctrl => self.run_import(ImportSource::Filename),
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('i') => {
+                    self.import_menu = false;
+                    self.status = "import cancelled".into();
+                }
+                _ => {}
             }
             return;
         }
@@ -1154,8 +1223,7 @@ impl App {
             }
             (KeyCode::Char('i'), false) => {
                 self.commit_editor();
-                self.import_menu = true;
-                self.status.clear();
+                self.open_import();
             }
             (KeyCode::Char('y') | KeyCode::Char('c'), false) => self.yank(),
             (KeyCode::Char('p'), false) => self.paste(),
@@ -2506,20 +2574,79 @@ mod tests {
         assert!(app.status.contains("takes no formatting"), "{}", app.status);
     }
 
-    /// The import menu is one keystroke deep: `i` opens it, a source key
-    /// runs it, and any other key closes it without touching the form.
+    /// The import menu owns every key while it is up: a key that means
+    /// something elsewhere must not reach the form through it, and one that
+    /// means nothing here must not throw the menu away either.
     #[test]
-    fn the_import_menu_is_modal_for_one_key() {
+    fn the_import_menu_is_modal() {
         let mut app = one(&[("title", "T")]);
         press(&mut app, KeyCode::Char('i'));
         assert!(app.import_menu);
         press(&mut app, KeyCode::Char('w'));
-        assert!(!app.import_menu);
+        assert!(app.import_menu, "an unrecognised key must not close the menu");
         assert!(app.pending.is_none(), "w inside the menu must not open a write plan");
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.import_menu);
         assert_eq!(app.status, "import cancelled");
         press(&mut app, KeyCode::Char('I'));
         assert!(app.inspector);
+    }
+
+    /// j/k choose and ⏎ runs, so the source can be picked while reading its
+    /// preview rather than by knowing its letter.
+    #[test]
+    fn the_import_menu_is_a_selector() {
+        use crate::tags::probe::FileTags;
+        let f = FileTags {
+            path: PathBuf::from("/x/Ann Lee (Studio X) - A Title.mp4"),
+            atoms: [("webpage_url".to_string(), Value::text("https://example.com/v"))]
+                .into_iter()
+                .collect(),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = App::new(vec![f], BTreeMap::new(), false);
+        press(&mut app, KeyCode::Char('i'));
+        // A file with a URL opens on the URL, and j walks to the filename.
+        assert_eq!(app.import_pick, ImportSource::Url);
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.import_pick, ImportSource::Filename);
+        // Two entries, so k comes back and j wraps the way the form's j does.
+        press(&mut app, KeyCode::Char('k'));
+        assert_eq!(app.import_pick, ImportSource::Url);
+        press(&mut app, KeyCode::Char('k'));
+        assert_eq!(app.import_pick, ImportSource::Filename);
+        // ⏎ runs the source under the cursor -- here the filename, which is
+        // synchronous, so the staging is on the far side of the keystroke.
+        press(&mut app, KeyCode::Enter);
         assert!(!app.import_menu);
+        assert_eq!(shown(&app, "channel"), Some(Value::text("Studio X")));
+    }
+
+    /// With no URL to fetch from, ⏎ on a freshly opened menu must not land on
+    /// the one source that can only refuse.
+    #[test]
+    fn the_import_menu_opens_on_a_source_with_something_to_offer() {
+        let mut app = one(&[("title", "T")]);
+        press(&mut app, KeyCode::Char('i'));
+        assert_eq!(app.import_pick, ImportSource::Filename);
+    }
+
+    /// A source that could not answer says so in the error colour: the words
+    /// alone were being read as one more grey note.
+    #[test]
+    fn a_refused_import_is_marked_an_error() {
+        let mut app = one(&[("title", "T")]);
+        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('u'));
+        assert_eq!(app.status, "no URL to fetch from");
+        assert!(app.status_error);
+        // The next key is the acknowledgement, and the colour goes with it.
+        press(&mut app, KeyCode::Char('j'));
+        assert!(!app.status_error);
+
+        app.finish_fetch(vec![(0, Err("Video unavailable".into()))]);
+        assert!(app.status_error);
+        assert_eq!(app.status, "Video unavailable");
     }
 
     /// `i f` fills the empty fields from the name and leaves a field that

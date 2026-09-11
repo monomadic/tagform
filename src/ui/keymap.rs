@@ -39,7 +39,7 @@ pub const KEYMAP: &[Section] = &[
             b("w", "write staged edits (shows a plan to confirm first)"),
             b("^s", "write from either mode, committing the open field first"),
             b("r", "rename the file(s) in view from their tags on disk"),
-            b("i", "import — then u: the page's tags via yt-dlp, f: the filename's"),
+            b("i", "import — j/k a source, ⏎ runs it; u the page via yt-dlp, f the name"),
             b("m", "merge a list field across every file in the selection"),
             b("I", "inspector — per-file values for the focused field"),
             b("] [ ^n ^p", "next / previous file"),
