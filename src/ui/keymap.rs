@@ -35,6 +35,7 @@ pub const KEYMAP: &[Section] = &[
             b("g G", "first / last field"),
             b("h l ← →", "step a fixed set, or nudge a rating"),
             b("0-5", "on a rating: jump straight to that many stars"),
+            b("0-9", "on Track: start typing that number, no ⏎ first"),
             b("⏎", "edit the focused field — a set and a rating never open"),
             b("w", "write staged edits (shows a plan to confirm first)"),
             b("^s", "write from either mode, committing the open field first"),

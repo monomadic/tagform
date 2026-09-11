@@ -1213,7 +1213,7 @@ impl App {
             }
             (KeyCode::Char('h'), false) | (KeyCode::Left, _) => self.nudge(-1),
             (KeyCode::Char('l'), false) | (KeyCode::Right, _) => self.nudge(1),
-            (KeyCode::Char(c @ '0'..='5'), false) => self.set_stars(c as u8 - b'0'),
+            (KeyCode::Char(c @ '0'..='9'), false) => self.type_digit(c),
             (KeyCode::Char('g'), false) => self.jump(0),
             (KeyCode::Char('G'), false) => self.jump(self.rows.len().saturating_sub(1)),
             (KeyCode::Enter, _) => self.begin_edit(),
@@ -1385,6 +1385,35 @@ impl App {
     /// three stars from wherever the row stands. h/l still nudge; this is the
     /// same edit without the counting. On any other row the digit is not ours
     /// and falls through to nothing.
+    /// A digit in Select mode goes where the focused row can use one: a rating
+    /// it names outright, a numeric field it starts typing. On Track that is
+    /// the difference between `1` `2` ⏎ meaning twelve and the `1` being
+    /// swallowed by a command that does not exist -- the field is digits and
+    /// nothing else, so there is no reason to press ⏎ first.
+    ///
+    /// Seeding replaces rather than appends, the way a digit typed over a
+    /// spreadsheet cell does: the keystroke that opened the field is the first
+    /// character of a new number, not an edit to the old one. Esc still backs
+    /// out to whatever the row showed.
+    fn type_digit(&mut self, c: char) {
+        let Some(row) = self.rows.get(self.focus) else { return };
+        if row.control == Control::Stars {
+            if let Some(n) = c.to_digit(6) {
+                self.set_stars(n as u8);
+            }
+            return;
+        }
+        if !row.def.is_some_and(|d| d.numeric) {
+            return;
+        }
+        self.open_editor();
+        if let Some(ed) = &mut self.editor {
+            ed.set_text(&c.to_string());
+        }
+        self.mode = Mode::Edit;
+        self.status.clear();
+    }
+
     fn set_stars(&mut self, n: u8) {
         let Some(row) = self.rows.get(self.focus) else { return };
         if row.control != Control::Stars {
@@ -2452,8 +2481,8 @@ mod tests {
     }
 
     /// Five stars is five keys away by nudging and one key away by naming.
-    /// The digit belongs to the rating row alone -- anywhere else it stages
-    /// nothing rather than typing into a field nobody opened.
+    /// Outside a rating and a numeric field the digit stages nothing rather
+    /// than typing into a field nobody opened.
     #[test]
     fn a_digit_sets_the_rating_and_leaves_other_rows_alone() {
         let mut app = one(&[("rating", "2")]);
@@ -2472,6 +2501,34 @@ mod tests {
         press(&mut app, KeyCode::Char('3'));
         assert!(app.staged.is_empty());
         assert_eq!(app.mode, Mode::Select);
+    }
+
+    /// Track is digits and nothing else, so a digit on the row is the value:
+    /// it opens the field already holding that number, further digits type on
+    /// as normal, and ⏎ commits. The keystroke replaces what was there -- `1`
+    /// on a track reading 7 starts a new number, it does not make 71.
+    #[test]
+    fn a_digit_on_track_starts_typing_the_number() {
+        let mut app = one(&[("track", "7")]);
+        let track = app.rows.iter().position(|r| r.key == "track").expect("track row");
+        app.jump(track);
+
+        press(&mut app, KeyCode::Char('1'));
+        assert_eq!(app.mode, Mode::Edit);
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.mode, Mode::Select);
+        assert_eq!(shown(&app, "track"), Some(Value::Text("12".into())));
+
+        // One digit is one key and ⏎, with no trace of the old value.
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(shown(&app, "track"), Some(Value::Text("3".into())));
+
+        // Esc backs out to what the row showed, staged value and all.
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(shown(&app, "track"), Some(Value::Text("3".into())));
     }
 
     /// `i u` reads the URL field wherever the cursor is, and on an empty URL

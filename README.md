@@ -164,6 +164,7 @@ ring.
 | `j` / `k`, arrows, `tab` | move between fields (`g` / `G` first / last) |
 | `h` / `l` | step a fixed set, or nudge a rating — both are edited only this way |
 | `0`–`5` | on a rating: jump straight to that many stars |
+| `0`–`9` | on Track: start typing that number straight away, no `enter` first |
 | `enter` | edit the focused field — on an empty date, fill it with now first; a set and a rating never open |
 | `w` | write staged edits (shows a plan first) |
 | `ctrl-s` / `cmd-s` | the same, from either mode — commits the open field first (`cmd` needs a terminal with the kitty keyboard protocol) |

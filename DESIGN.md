@@ -1019,8 +1019,16 @@ must never do.
 not built. `t` = today is subsumed: `⏎` on an empty field is the same gesture
 with one fewer key to remember, and `t` is the theme key.
 
-⟨designed⟩ Number is not built; nothing uses it until the Season/Episode fields
-land (§3.2).
+⟨built, differs⟩ Number is not a control. Track is a Text field carrying a
+`numeric` flag in the schema, which buys the one thing a Number control was
+wanted for: in Select mode `0`-`9` on the row opens the field already holding
+that digit, so `1` `2` ⏎ is a two-digit track and `3` ⏎ a one-digit one. The
+keystroke replaces rather than appends — the digit that opened the field starts
+a new number the way it does over a spreadsheet cell — and `esc` still backs out
+to whatever the row showed. A whole control would have bought validation and
+`↑`/`↓` stepping on top of that, and neither is wanted on a clip number; the
+flag is also what keeps the digits off every other Text field, where they would
+be swallowing commands. Season/Episode (§3.2) can take the same flag.
 
 ### 5.10 Validation model
 

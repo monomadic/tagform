@@ -55,6 +55,12 @@ pub struct FieldDef {
     /// is Adult, whatever the Variant, or when the value is present -- the
     /// same value-keeps-the-row rule as `clip_only`.
     pub adult_only: bool,
+    /// The value is a number, so a bare digit in Select mode starts typing it
+    /// rather than falling through to a command (DESIGN §5.9). A control flag
+    /// would not do: Track is a plain Text control, and the digits mean
+    /// something else on the one control that is numeric by construction
+    /// (Stars name a rating outright).
+    pub numeric: bool,
 }
 
 macro_rules! field {
@@ -64,6 +70,7 @@ macro_rules! field {
             id: $id, label: $label, control: $control,
             mdta: &[$($m),*], read: &[$($r),*], xmp: &[$($x),*],
             ilst: $ilst, footage_only: false, clip_only: false, adult_only: false,
+            numeric: false,
         }
     };
 }
@@ -112,6 +119,7 @@ pub static FIELDS: &[FieldDef] = &[
         id: "orientation", label: "Orientation", control: Control::Enum,
         mdta: &["orientation"], read: &["orientation"], xmp: &[], ilst: None,
         footage_only: false, clip_only: false, adult_only: true,
+        numeric: false,
     },
 
     // A clip's number within the work it was cut from. Only the adult-clip
@@ -119,10 +127,14 @@ pub static FIELDS: &[FieldDef] = &[
     // value. `track` under mdta, not the iTunes `trkn` pair -- that atom is a
     // binary (n, total) tuple ffmpeg synthesises from a `track` tag, and it
     // has not been measured (invariant 1).
+    //
+    // The one numeric field: a clip number is digits and nothing else, so a
+    // digit pressed on the row is the value rather than a command.
     FieldDef {
         id: "track", label: "Track", control: Control::Text,
         mdta: &["track"], read: &["track"], xmp: &[], ilst: None,
         footage_only: false, clip_only: true, adult_only: false,
+        numeric: true,
     },
 
     // yt-dlp writes %(cast,uploader)l to both actors and artist; rename-footage
@@ -198,6 +210,7 @@ pub static FIELDS: &[FieldDef] = &[
         id: "location", label: "Location", control: Control::Text,
         mdta: &[], read: &[],
         xmp: &["XMP-iptcExt:LocationCreatedCity"], ilst: None, footage_only: true, clip_only: false, adult_only: false,
+        numeric: false,
     },
     // Written by the camera, never by hand. rename-footage --geocode is what
     // turns these into the place name above.
@@ -209,6 +222,7 @@ pub static FIELDS: &[FieldDef] = &[
         id: "coordinates", label: "Coordinates", control: Control::ReadOnly,
         mdta: &[], read: &["location", "location-eng"],
         xmp: &[], ilst: None, footage_only: true, clip_only: false, adult_only: false,
+        numeric: false,
     },
     // Write-once: the only surviving copy of a camera's own IMG_4855.MOV.
     // rename-footage --geocode writes the city as one field of an IPTC block and
@@ -219,16 +233,19 @@ pub static FIELDS: &[FieldDef] = &[
         id: "location_state", label: "State", control: Control::Text,
         mdta: &[], read: &[],
         xmp: &["XMP-iptcExt:LocationCreatedProvinceState"], ilst: None, footage_only: true, clip_only: false, adult_only: false,
+        numeric: false,
     },
     FieldDef {
         id: "location_country", label: "Country", control: Control::Text,
         mdta: &[], read: &[],
         xmp: &["XMP-iptcExt:LocationCreatedCountryName"], ilst: None, footage_only: true, clip_only: false, adult_only: false,
+        numeric: false,
     },
     FieldDef {
         id: "preserved_name", label: "Original name", control: Control::ReadOnly,
         mdta: &[], read: &[], xmp: &["XMP-xmpMM:PreservedFileName"],
         ilst: None, footage_only: true, clip_only: false, adult_only: false,
+        numeric: false,
     },
 ];
 
