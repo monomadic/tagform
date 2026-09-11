@@ -14,6 +14,7 @@
 //! are outstanding.
 
 use anyhow::{bail, Context, Result};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -72,14 +73,24 @@ pub fn target(path: &Path) -> Result<PathBuf> {
 }
 
 /// Rename `path` from its tags. The returned path is where the file now is.
+///
+/// Three checks stand between a target and a lost file, and each covers what
+/// the others cannot. `same_entry` recognises the file that is already
+/// correctly named -- the tool answers `--print-target` in absolute paths and
+/// `tagform` is routinely handed relative ones, so the two spellings of one
+/// file are not comparable as strings. `entry_exists` refuses a target another
+/// file holds. And the identity check afterwards proves that what now sits at
+/// the target is the file that was asked to move, not a stranger that arrived
+/// between the check and the rename.
 pub fn run(path: &Path) -> Result<Outcome> {
     let target = target(path)?;
-    if target == path {
+    if same_entry(path, &target) {
         return Ok(Outcome::Unchanged);
     }
     if entry_exists(&target) {
         return Ok(Outcome::Taken(target));
     }
+    let before = ident(path);
     let out = Command::new(TOOL)
         .arg("--")
         .arg(path)
@@ -95,7 +106,43 @@ pub fn run(path: &Path) -> Result<Outcome> {
     if !entry_exists(&target) {
         bail!("{}", say(&out.stderr, &out.stdout));
     }
+    // And an entry at the target is not proof either. The tool declines to
+    // overwrite, so a target that holds a *different* file than the one handed
+    // over means the rename did not happen and something else got there first
+    // -- report that rather than tell the caller its file moved somewhere it
+    // did not.
+    if let (Some(before), Some(after)) = (before, ident(&target)) {
+        if before != after {
+            bail!(
+                "{} is another file now; {} was left where it was",
+                name_of(&target),
+                name_of(path)
+            );
+        }
+    }
     Ok(Outcome::Renamed(target))
+}
+
+/// The two paths name one directory entry: the same last component, and the
+/// same file underneath it.
+///
+/// Both halves are load-bearing. Without the identity check a file moved out
+/// from under us reads as unchanged; without the name check a hard link -- two
+/// names, one inode, and the second one a file this rename must not take --
+/// reads as the same entry and gets skipped instead of refused.
+fn same_entry(a: &Path, b: &Path) -> bool {
+    a.file_name() == b.file_name() && ident(a).is_some() && ident(a) == ident(b)
+}
+
+/// Which file a path names, if it names one. `symlink_metadata`, so a symlink
+/// is identified as itself: it is the entry that moves, and the file it points
+/// at is not this tool's business.
+fn ident(p: &Path) -> Option<(u64, u64)> {
+    std::fs::symlink_metadata(p).ok().map(|m| (m.dev(), m.ino()))
+}
+
+fn name_of(p: &Path) -> String {
+    p.file_name().unwrap_or(p.as_os_str()).to_string_lossy().into_owned()
 }
 
 /// Does the directory hold an entry with exactly this name?
@@ -159,6 +206,29 @@ mod tests {
         let e = b"mv: rename /a/very long (name).mp4 to /a/longer (name): File name too long\n";
         assert_eq!(say(e, b""), "mv: File name too long");
         assert_eq!(say(b"mv: no reason here\n", b""), "mv: no reason here");
+    }
+
+    #[test]
+    fn same_entry_sees_through_a_relative_path_but_not_through_a_link() {
+        let dir = std::env::temp_dir().join("tagform-rename-ident");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("clip.mov");
+        std::fs::write(&file, b"x").unwrap();
+
+        // The case `r` hits constantly: `tagform clip.mov` from the file's own
+        // directory, against the absolute path `--print-target` answers with.
+        let relative = dir.join(".").join("clip.mov");
+        assert!(same_entry(&relative, &file));
+
+        // One inode, two names -- the second is a file of its own, and a
+        // rename onto it would take it.
+        let link = dir.join("other.mov");
+        std::fs::hard_link(&file, &link).unwrap();
+        assert!(!same_entry(&file, &link));
+
+        assert!(!same_entry(&file, &dir.join("absent.mov")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
