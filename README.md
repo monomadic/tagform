@@ -175,7 +175,7 @@ ring.
 | `enter` | edit the focused field — on an empty date, fill it with now first; a set and a rating never open |
 | `w` | write staged edits (shows a plan first) |
 | `ctrl-s` / `cmd-s` | the same, from either mode — commits the open field first (`cmd` needs a terminal with the kitty keyboard protocol) |
-| `r` | rename the file — or every file in the selection — from the tags on disk, by running `rename-video` |
+| `r` | rename the file — or every file in the selection — from its tags, by running `rename-video`. With edits pending, the rename is queued onto the write and runs after it; `r` again unqueues it |
 | `i` | import — `j`/`k` pick a source and `⏎` runs it, or name one outright: `u` fetches the page behind the URL field with `yt-dlp`, `f` reads the filename. A fetch takes the page's word; a filename fills only the fields that are still empty. `u` takes either back in one step |
 | `m` | merge a list field across every file in the selection |
 | `I` | inspector — per-file values for the focused field |

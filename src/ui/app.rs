@@ -174,12 +174,24 @@ fn is_textual(control: Control) -> bool {
     )
 }
 
+#[derive(Default)]
 pub struct WriteResults {
     /// The verb for the title: `Wrote` or `Renamed`. The dialog is the same
     /// shape for either -- a batch that half-worked needs the same list.
     pub verb: &'static str,
     pub ok: Vec<PathBuf>,
     pub failed: Vec<(PathBuf, String)>,
+    /// Written, but the rename that was to follow did not happen, and why.
+    /// Kept apart from `failed`: the tags landed, and the count of writes
+    /// must say so.
+    pub not_renamed: Vec<(PathBuf, String)>,
+}
+
+impl WriteResults {
+    /// Whether there is anything here the status line cannot carry.
+    pub fn has_problems(&self) -> bool {
+        !self.failed.is_empty() || !self.not_renamed.is_empty()
+    }
 }
 
 fn file_name(p: &std::path::Path) -> String {
@@ -215,6 +227,10 @@ struct Job {
     file: usize,
     plan: FilePlan,
     xmp: BTreeMap<String, Value>,
+    /// Rename the file from its tags once they are written. `r` on a file
+    /// with edits pending flags this rather than renaming from the values
+    /// the write is about to replace.
+    rename: bool,
 }
 
 /// The write queue, shared with the writer thread (DESIGN §9).
@@ -258,7 +274,9 @@ pub enum Msg {
     /// One file is done: its index, a fresh probe of it if the write landed,
     /// and the outcome. Sent per file so the form catches up with each one as
     /// it finishes rather than at the end of a forty-file run.
-    WroteFile(usize, Option<Box<FileTags>>, Result<(), String>),
+    /// The last field is the rename that followed a flagged write, if one
+    /// was asked for.
+    WroteFile(usize, Option<Box<FileTags>>, Result<(), String>, Option<Result<Outcome, String>>),
     /// The queue ran dry: the whole run's outcome.
     Wrote(Box<WriteResults>),
     /// One outcome per file a `rename-video` run was given, by file index.
@@ -355,6 +373,10 @@ pub struct App {
     pub writing: bool,
     /// The plans waiting to be written, shared with the writer thread.
     queue: Arc<Mutex<WriteQueue>>,
+    /// Files to rename from their tags once their write lands. A rename is a
+    /// field on the write, not a separate act: asked for while edits are
+    /// pending, it waits for them.
+    pub rename_after: BTreeSet<usize>,
     /// A `rename-video` run is in flight. It shells out to ffprobe and exiftool
     /// per file, so it runs off the UI thread like every other probe here --
     /// and while it does, the paths in `files` are the ones about to change,
@@ -433,6 +455,7 @@ impl App {
             faststart: true,
             pending: None,
             queue: Arc::default(),
+            rename_after: BTreeSet::new(),
             results: None,
             writing: false,
             renaming: false,
@@ -549,7 +572,9 @@ impl App {
                         self.progress = Some(*p);
                     }
                 }
-                Msg::WroteFile(i, fresh, res) => self.file_written(i, fresh.map(|b| *b), res),
+                Msg::WroteFile(i, fresh, res, renamed) => {
+                    self.file_written(i, fresh.map(|b| *b), res, renamed)
+                }
                 Msg::Wrote(r) => self.finish_write(*r),
                 Msg::Renamed(r) => self.finish_rename(r),
                 Msg::Fetched(r) => self.finish_fetch(r),
@@ -704,7 +729,8 @@ impl App {
             .into_iter()
             .filter_map(|plan| {
                 let file = self.files.iter().position(|f| f.path == plan.path)?;
-                Some(Job { file, xmp: self.files[file].xmp.clone(), plan })
+                let rename = self.rename_after.contains(&file);
+                Some(Job { file, xmp: self.files[file].xmp.clone(), plan, rename })
             })
             .collect();
         if jobs.is_empty() {
@@ -745,6 +771,7 @@ impl App {
         std::thread::spawn(move || {
             let mut written: Vec<PathBuf> = Vec::new();
             let mut failed: Vec<(PathBuf, String)> = Vec::new();
+            let mut not_renamed: Vec<(PathBuf, String)> = Vec::new();
             loop {
                 let (job, file_no) = {
                     let mut q = lock(&queue);
@@ -782,11 +809,27 @@ impl App {
                     // A bad file in a batch must not cost the others their write.
                     Err(e) => failed.push((job.plan.path.clone(), e.clone())),
                 }
+                // The rename runs on the tags just written, which is the
+                // whole reason it waited. Only after a write that landed: a
+                // file whose write failed keeps the name its old tags gave it.
+                let renamed = (job.rename && res.is_ok()).then(|| {
+                    on(write::Step { label: "renaming", frac: 1.0 });
+                    rename::run(&job.plan.path).map_err(|e| format!("{e:#}"))
+                });
+                let mut path = job.plan.path.clone();
+                match &renamed {
+                    Some(Ok(Outcome::Renamed(to))) => path = to.clone(),
+                    Some(Ok(Outcome::Taken(to))) => {
+                        not_renamed.push((path.clone(), format!("name taken by {}", file_name(to))))
+                    }
+                    Some(Err(e)) => not_renamed.push((path.clone(), e.clone())),
+                    Some(Ok(Outcome::Unchanged)) | None => {}
+                }
                 // Probed here, off the UI thread, so the form does not stall
                 // on ffprobe and exiftool between one file and the next.
                 let fresh = res
                     .is_ok()
-                    .then(|| crate::tags::probe::probe(&job.plan.path).ok())
+                    .then(|| crate::tags::probe::probe(&path).ok())
                     .flatten()
                     .map(Box::new);
                 {
@@ -794,9 +837,14 @@ impl App {
                     q.done += 1;
                     q.busy = None;
                 }
-                let _ = tx.send(Msg::WroteFile(job.file, fresh, res));
+                let _ = tx.send(Msg::WroteFile(job.file, fresh, res, renamed));
             }
-            let _ = tx.send(Msg::Wrote(Box::new(WriteResults { verb: "Wrote", ok: written, failed })));
+            let _ = tx.send(Msg::Wrote(Box::new(WriteResults {
+                verb: "Wrote",
+                ok: written,
+                failed,
+                not_renamed,
+            })));
         });
     }
 
@@ -807,9 +855,24 @@ impl App {
     /// The file's own job, if `w` queued one again while it was being
     /// written, is rebuilt from whatever is still staged -- a plan built
     /// before the write would carry the edits that just landed.
-    fn file_written(&mut self, i: usize, fresh: Option<FileTags>, _res: Result<(), String>) {
+    fn file_written(
+        &mut self,
+        i: usize,
+        fresh: Option<FileTags>,
+        _res: Result<(), String>,
+        renamed: Option<Result<Outcome, String>>,
+    ) {
         if let (Some(slot), Some(fresh)) = (self.files.get_mut(i), fresh) {
             *slot = fresh;
+        }
+        // The rename ran, one way or another; the flag has done its job. A
+        // refusal is reported when the run settles, not carried forward to
+        // silently retry on the next write.
+        if let Some(outcome) = renamed {
+            self.rename_after.remove(&i);
+            if let (Ok(Outcome::Renamed(to)), Some(f)) = (outcome, self.files.get_mut(i)) {
+                f.path = to;
+            }
         }
         self.drop_landed();
         self.sync_queue(&[i]);
@@ -880,7 +943,8 @@ impl App {
             if plan.is_empty() {
                 q.waiting.remove(at);
             } else {
-                q.waiting[at] = Job { file: i, xmp: file.xmp.clone(), plan };
+                let rename = self.rename_after.contains(&i);
+                q.waiting[at] = Job { file: i, xmp: file.xmp.clone(), plan, rename };
             }
             out.refreshed += 1;
         }
@@ -931,11 +995,14 @@ impl App {
                 if kept == 1 { "" } else { "s" }
             )
         };
-        self.status_error = !results.failed.is_empty();
+        if !results.not_renamed.is_empty() {
+            self.status.push_str(&format!(" · {} not renamed", results.not_renamed.len()));
+        }
+        self.status_error = results.has_problems();
         // The results stay up until a key, with any unwritten edits still
         // staged. Only for a failure: the list of what went wrong is the
         // point of the dialog, and a clean run has nothing to list.
-        if !results.failed.is_empty() {
+        if results.has_problems() {
             self.results = Some(results);
         }
     }
@@ -947,28 +1014,53 @@ impl App {
     ///
     /// Disk tags, not staged ones: the tool re-probes each file, so a rename
     /// run before the write would build the name out of the values the edit is
-    /// about to replace. Refusing is better than a name that is stale the
-    /// moment `w` lands.
+    /// about to replace. So a file with edits pending -- staged, or already on
+    /// the write queue -- is *flagged* instead: the rename becomes part of its
+    /// write and runs on the tags the write leaves. `r` again takes the flag
+    /// off. Files with nothing pending are renamed now, as before.
     fn rename_files(&mut self) {
         self.commit_editor();
         if self.renaming {
             return;
         }
         let scope = self.scope();
-        let stale = scope
-            .iter()
-            .any(|i| self.staged.get(i).is_some_and(|e| !e.is_empty()));
-        if stale {
-            self.status = "staged edits: write with w first, then rename".into();
-            return;
+        let (pending, clean): (Vec<usize>, Vec<usize>) = scope.into_iter().partition(|i| {
+            self.staged.get(i).is_some_and(|e| !e.is_empty()) || self.queue_place(*i).is_some()
+        });
+        let mut note = String::new();
+        if !pending.is_empty() {
+            // One key toggles the whole selection the same way: on if any of
+            // it was off, otherwise off.
+            let arm = pending.iter().any(|i| !self.rename_after.contains(i));
+            for i in &pending {
+                if arm {
+                    self.rename_after.insert(*i);
+                } else {
+                    self.rename_after.remove(i);
+                }
+            }
+            self.sync_queue(&pending);
+            let n = pending.len();
+            note = match (arm, n) {
+                (true, 1) => "rename queued · runs after the write".into(),
+                (true, n) => format!("rename queued for {n} files · runs after the write"),
+                (false, 1) => "rename unqueued".into(),
+                (false, n) => format!("rename unqueued for {n} files"),
+            };
         }
         let jobs: Vec<(usize, PathBuf)> =
-            scope.iter().map(|i| (*i, self.files[*i].path.clone())).collect();
-        let Some((_, first)) = jobs.first() else { return };
+            clean.iter().map(|i| (*i, self.files[*i].path.clone())).collect();
+        let Some((_, first)) = jobs.first() else {
+            self.status = note;
+            return;
+        };
         self.status = match jobs.len() {
             1 => format!("renaming {}", file_name(first)),
             n => format!("renaming {n} files"),
         };
+        if !note.is_empty() {
+            self.status = format!("{} · {note}", self.status);
+        }
         self.renaming = true;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -1027,7 +1119,7 @@ impl App {
         // Only a failure earns the dialog. A clean batch, or a file already
         // named right, is a one-line fact; a refusal is a paragraph.
         if !failed.is_empty() {
-            self.results = Some(WriteResults { verb: "Renamed", ok, failed });
+            self.results = Some(WriteResults { verb: "Renamed", ok, failed, not_renamed: vec![] });
         }
     }
 
@@ -1886,8 +1978,16 @@ impl App {
             q.busy = Some(file);
             q.running = true;
         } else {
-            q.waiting.push_back(Job { file, xmp: self.files[file].xmp.clone(), plan });
+            let rename = self.rename_after.contains(&file);
+            q.waiting.push_back(Job { file, xmp: self.files[file].xmp.clone(), plan, rename });
         }
+    }
+
+    #[cfg(test)]
+    /// Whether the queued job for `file` will rename it afterwards.
+    pub fn queued_rename_for_test(&self, file: usize) -> Option<bool> {
+        let q = lock(&self.queue);
+        q.waiting.iter().find(|j| j.file == file).map(|j| j.rename)
     }
 
     #[cfg(test)]
@@ -2551,6 +2651,7 @@ mod tests {
             verb: "Wrote",
             ok: vec![],
             failed: vec![(PathBuf::from("/nonexistent/tagform-test.mov"), "boom".into())],
+            ..Default::default()
         });
 
         assert_eq!(app.staged[&0].get("title"), Some(&Value::Text("kept".into())));
@@ -2576,6 +2677,7 @@ mod tests {
             verb: "Wrote",
             ok: vec![PathBuf::from("/nonexistent/tagform-test.mov")],
             failed: vec![],
+            ..Default::default()
         });
 
         assert!(app.staged.is_empty(), "{:?}", app.staged);
@@ -3327,6 +3429,79 @@ mod tests {
         assert!(app.writing);
     }
 
+    /// `r` on a file with edits pending does not refuse and does not rename
+    /// from the old tags: it flags the rename onto the write, the queued job
+    /// carries the flag, and `r` again takes it off.
+    #[test]
+    fn a_rename_with_edits_pending_is_queued_onto_the_write() {
+        let mut app = pair();
+        app.cycle_file(1); // a.mov
+        focus_on(&mut app, "title");
+        app.stage("title".into(), Value::text("edited"));
+        app.enqueue_for_test(0, false);
+
+        app.rename_files();
+        assert!(app.rename_after.contains(&0));
+        assert!(!app.renaming, "nothing renamed now");
+        assert!(app.status.contains("rename queued"), "{}", app.status);
+        assert_eq!(app.queued_rename_for_test(0), Some(true));
+
+        // A later edit to the same file keeps the flag on the rebuilt job.
+        app.stage("channel".into(), Value::text("c"));
+        assert_eq!(app.queued_rename_for_test(0), Some(true));
+
+        app.rename_files();
+        assert!(!app.rename_after.contains(&0));
+        assert_eq!(app.queued_rename_for_test(0), Some(false));
+        assert!(app.status.contains("unqueued"), "{}", app.status);
+    }
+
+    /// A staged-but-not-yet-queued file takes the flag too, and `w` hands it
+    /// to the job.
+    #[test]
+    fn the_flag_rides_into_the_job_on_w() {
+        let mut app = pair();
+        app.cycle_file(1);
+        focus_on(&mut app, "title");
+        app.stage("title".into(), Value::text("edited"));
+        app.rename_files();
+        assert!(app.rename_after.contains(&0));
+        app.enqueue_for_test(1, true); // a writer is alive, so apply only queues
+        app.prepare_write();
+        app.apply();
+        assert_eq!(app.queued_rename_for_test(0), Some(true));
+    }
+
+    /// When the rename that followed a write comes home, the file's path
+    /// moves with it and the flag is spent -- whatever the outcome.
+    #[test]
+    fn a_finished_rename_moves_the_path_and_clears_the_flag() {
+        let mut app = pair();
+        app.rename_after.insert(0);
+        app.file_written(0, None, Ok(()), Some(Ok(Outcome::Renamed(PathBuf::from("/nonexistent/new.mov")))));
+        assert!(app.files[0].path.ends_with("new.mov"));
+        assert!(!app.rename_after.contains(&0));
+
+        app.rename_after.insert(1);
+        app.file_written(1, None, Ok(()), Some(Ok(Outcome::Taken(PathBuf::from("/x.mov")))));
+        assert!(app.files[1].path.ends_with("b.mov"));
+        assert!(!app.rename_after.contains(&1));
+    }
+
+    /// Written but not renamed is reported, and earns the dialog.
+    #[test]
+    fn a_rename_that_did_not_happen_is_reported() {
+        let mut app = one(&[]);
+        app.finish_write(WriteResults {
+            verb: "Wrote",
+            ok: vec![PathBuf::from("/x.mov")],
+            not_renamed: vec![(PathBuf::from("/x.mov"), "name taken by y.mov".into())],
+            ..Default::default()
+        });
+        assert!(app.status.contains("1 not renamed"), "{}", app.status);
+        assert!(app.results.is_some());
+    }
+
     /// Keys stay live during a write -- that is the point of the queue --
     /// but quitting is refused until it lands.
     #[test]
@@ -3344,13 +3519,18 @@ mod tests {
     #[test]
     fn only_a_failed_run_raises_the_results_dialog() {
         let mut app = one(&[]);
-        app.finish_write(WriteResults { verb: "Wrote", ok: vec![PathBuf::from("/x.mov")], failed: vec![] });
+        app.finish_write(WriteResults {
+            verb: "Wrote",
+            ok: vec![PathBuf::from("/x.mov")],
+            ..Default::default()
+        });
         assert!(app.results.is_none());
         assert_eq!(app.status, "wrote 1 of 1");
         app.finish_write(WriteResults {
             verb: "Wrote",
             ok: vec![],
             failed: vec![(PathBuf::from("/x.mov"), "boom".into())],
+            ..Default::default()
         });
         assert!(app.results.is_some());
     }

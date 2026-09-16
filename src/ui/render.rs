@@ -146,6 +146,10 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App) {
     if !app.staged.is_empty() {
         right.push_str(&format!("{} staged · ", app.staged_count()));
     }
+    if !app.rename_after.is_empty() {
+        let n = app.rename_after.len();
+        right.push_str(&format!("{n} to rename · "));
+    }
     // The mode lives in the shortcut strip now, next to the keys it governs;
     // saying it twice, in two vocabularies, was worse than saying it once.
     right.push_str(&format!(
@@ -1236,6 +1240,29 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
         )));
     }
 
+    // A rename that waited for this write is part of it, and the plan is
+    // where a write says everything it is about to do.
+    let renames: Vec<String> = plans
+        .iter()
+        .filter(|p| {
+            app.files
+                .iter()
+                .position(|f| f.path == p.path)
+                .is_some_and(|i| app.rename_after.contains(&i))
+        })
+        .map(|p| file_label(&p.path))
+        .collect();
+    if !renames.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  then renamed from their tags: ", Style::default().fg(t::staged())),
+            Span::styled(
+                t::fit(&renames.join(", "), (area.width as usize).saturating_sub(36).max(10)),
+                Style::default().fg(t::header_fg()),
+            ),
+        ]));
+    }
+
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         format!(
@@ -1306,6 +1333,23 @@ fn draw_results(f: &mut Frame, area: Rect, r: &WriteResults) {
             ),
         ]));
         for l in wrap(err, text_width) {
+            lines.push(Line::from(Span::styled(
+                format!("      {l}"),
+                Style::default().fg(t::muted()),
+            )));
+        }
+        lines.push(Line::from(""));
+    }
+    // Written but not renamed is its own kind of outcome: the tags are on
+    // the file, so it is not a failure, but the name the user asked for is
+    // not there either, and the reason is the same paragraph a refusal is.
+    for (p, why) in &r.not_renamed {
+        lines.push(Line::from(vec![
+            Span::styled("  ↷ ", Style::default().fg(t::warn())),
+            Span::styled(file_label(p), Style::default().fg(t::warn()).add_modifier(Modifier::BOLD)),
+            Span::styled("  written, not renamed", Style::default().fg(t::muted())),
+        ]));
+        for l in wrap(why, text_width) {
             lines.push(Line::from(Span::styled(
                 format!("      {l}"),
                 Style::default().fg(t::muted()),
@@ -1875,6 +1919,7 @@ mod tests {
                 std::path::PathBuf::from("/x/IMG_4855.MOV"),
                 "the remux did not reproduce this file's tracks\nlost:    data/mebx x3".into(),
             )],
+            ..Default::default()
         };
         let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
         term.draw(|fr| draw_results(fr, fr.area(), &r)).unwrap();
