@@ -125,6 +125,13 @@ writer builds a sibling temp file, proves its duration, tags and layout, and
 only then renames it over the original. Any failure leaves the original
 untouched. Keys no field claims are carried through unchanged.
 
+The write runs in the background, as a queue. The form stays live while it
+drains: the badge bar carries the bar, and in single-file view the rule under
+Category says where that file stands — `􀈏 queued for write - 2 files left`.
+An edit to a file still waiting is saved into its queued write by `⏎` alone;
+only the file under the writer needs a second `w`. A clean run reports in the
+status line; a run with a failure raises the results dialog.
+
 ### Import from the web or the filename
 
 `i` opens the import band, a two-line selector: `j`/`k` move between the

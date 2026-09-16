@@ -1281,6 +1281,15 @@ hiding the only number the user might want to act on.
 ⟨designed⟩ `e` to edit the plan is not built; `esc` and re-editing the form is
 the whole of it.
 
+⟨built, differs⟩ The confirmed plan is not run as one blocking batch behind a
+progress dialog. It goes onto a queue drained by a writer thread while the form
+stays live: the bar sits in the badge bar, the rule under Category says where
+the file in view stands (`􀈏 queued for write - 2 files left`), and an edit to a
+file still waiting is rebuilt into its queued plan on `⏎`, so the file is
+written once with everything. The file under the writer is the one exception;
+its edit stays staged for the next `w`. A second `w` mid-run appends to the
+queue. The results dialog is raised only when a file failed.
+
 ### 9.2 Choosing a backend — from the file, not from a flag
 
 There are two writers, and the choice between them is a **correctness** decision

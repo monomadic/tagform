@@ -17,7 +17,7 @@ use crate::model::schema::Control;
 use crate::model::tag;
 use crate::model::value::{Agg, Value};
 use crate::tags::plan::FilePlan;
-use crate::ui::app::{App, ImportSource, Mode, Row, WriteProgress, WriteResults};
+use crate::ui::app::{App, ImportSource, Mode, QueuePlace, Row, WriteResults};
 use crate::ui::edit::{stars_glyphs, Opt, Validation};
 use crate::ui::keymap::{key_width, KEYMAP};
 use crate::ui::theme as t;
@@ -26,6 +26,12 @@ const LABEL_COLS: u16 = 15;
 const GUTTER: u16 = 1;
 /// Blank columns of field background either side of a value.
 const PAD: u16 = 1;
+/// SF Symbols, like the rest of the glyph vocabulary here. `􁒖` marks the bulk
+/// heading, `􀈏` a file waiting in the write queue.
+const BULK_ICON: &str = "\u{101496}";
+const QUEUE_ICON: &str = "\u{10020f}";
+/// Names the bulk header lists before it gives up and states the count.
+const LISTED_FILES: usize = 5;
 
 /// Cells are about twice as tall as they are wide, so an image of pixel aspect
 /// `a` needs `2 * rows * a` columns to keep its proportions. Sizing the band
@@ -62,7 +68,9 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
     draw_badge_bar(f, chunks[0], app);
 
     // A dialog takes everything below the header: it is the whole message.
-    if app.help || app.pending.is_some() || app.results.is_some() || app.progress.is_some() {
+    // A running write is not one: the form stays live while the queue drains,
+    // and the bar sits in the badge bar instead.
+    if app.help || app.pending.is_some() || app.results.is_some() {
         let top = chunks[2].y;
         let body = Rect {
             x: area.x,
@@ -72,8 +80,6 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
         };
         if app.help {
             draw_help(f, body, app);
-        } else if let Some(p) = &app.progress {
-            draw_progress(f, body, p);
         } else if let Some(plans) = &app.pending {
             draw_confirm(f, body, app, plans);
         } else if let Some(r) = &app.results {
@@ -108,6 +114,30 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App) {
     if app.n_custom > 0 {
         left.push_str(&format!(" · {} custom", app.n_custom));
     }
+    // The running write, ahead of everything else on the right: which file
+    // of how many, what stage, and a short bar. The stage name matters as
+    // much as the bar -- "remuxing" for two minutes is patience, the same
+    // two minutes unlabelled is a hang.
+    let progress: Vec<Span> = match &app.progress {
+        Some(p) => {
+            let overall = p.overall();
+            let mut v = vec![Span::styled(
+                format!("writing {}/{} · {} · {} ", p.file + 1, p.total, t::fit(&p.name, 24), p.label),
+                Style::default().bg(t::header_bg()).fg(t::accent()),
+            )];
+            v.extend(bar(10, overall).spans.into_iter().map(|s| {
+                let st = s.style.bg(t::header_bg());
+                s.style(st)
+            }));
+            v.push(Span::styled(
+                format!(" {:>3}% · ", (overall * 100.0).round() as u32),
+                Style::default().bg(t::header_bg()).fg(t::accent()),
+            ));
+            v
+        }
+        None => Vec::new(),
+    };
+    let progress_w: usize = progress.iter().map(|s| s.content.width()).sum();
     let mut right = String::new();
     if !app.staged.is_empty() {
         right.push_str(&format!("{} staged · ", app.staged_count()));
@@ -121,7 +151,7 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App) {
     let tail = "  ".to_string();
 
     let badge = " tagform ";
-    let used = badge.width() + left.width() + right.width() + tail.width();
+    let used = badge.width() + left.width() + progress_w + right.width() + tail.width();
     let gap = (area.width as usize).saturating_sub(used);
     let bar = Style::default().bg(t::header_bg());
 
@@ -133,18 +163,26 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App) {
             ),
             Span::styled(left, bar.fg(t::header_fg())),
             Span::styled(" ".repeat(gap), bar),
+        ]
+        .into_iter()
+        .chain(progress)
+        .chain([
             Span::styled(
                 right,
                 bar.fg(if app.staged.is_empty() { t::muted() } else { t::staged() }),
             ),
             Span::styled(tail, bar),
-        ]))
+        ])
+        .collect::<Vec<_>>()))
         .style(bar),
         area,
     );
 }
 
 fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut StatefulProtocol>) {
+    if app.view.is_none() && app.files.len() > 1 {
+        return draw_file_list(f, area, app);
+    }
     let idx = app.current_file();
     let Some(file) = app.files.get(idx) else { return };
 
@@ -193,6 +231,44 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
             .wrap(Wrap { trim: false }),
         cols[1],
     );
+}
+
+/// Bulk view's header: the selection itself, where a single file shows its
+/// picture. One file's thumbnail over a form that edits forty is a claim
+/// about the wrong file. Five names and then the count -- the band is six
+/// rows, and a list that has to scroll is a list nobody reads; what the
+/// sixth row can usefully say is how many there are. A file waiting in the
+/// write queue carries the queue mark, so the list also says what `w` has
+/// already taken.
+fn draw_file_list(f: &mut Frame, area: Rect, app: &App) {
+    let n = app.files.len();
+    let width = (area.width as usize).saturating_sub(4);
+    let mut lines: Vec<Line> = app
+        .files
+        .iter()
+        .take(LISTED_FILES)
+        .enumerate()
+        .map(|(i, file)| {
+            let queued = app.queue_place(i).is_some();
+            Line::from(vec![
+                Span::styled(
+                    format!(" {} ", if queued { QUEUE_ICON } else { " " }),
+                    Style::default().fg(t::staged()),
+                ),
+                Span::styled(
+                    t::fit(&file_label(&file.path), width),
+                    Style::default().fg(t::header_fg()),
+                ),
+            ])
+        })
+        .collect();
+    if n > LISTED_FILES {
+        lines.push(Line::from(Span::styled(
+            format!("   … {n} files"),
+            Style::default().fg(t::muted()),
+        )));
+    }
+    f.render_widget(Paragraph::new(lines), area);
 }
 
 /// The import menu, in the band the inspector uses: each source with what it
@@ -378,7 +454,23 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
     // beside every value.
     let n_files = format!("{} files", app.files.len());
     let bulk = (app.view.is_none() && app.files.len() > 1)
-        .then(|| format!("bulk edit mode - {n_files}"));
+        .then(|| format!("{BULK_ICON} bulk edit mode - {n_files}"));
+    // In single-file view the rule says instead where this file stands in the
+    // write queue, if it is in it: how many are written before it, or that it
+    // is under the writer now -- which is the one moment an edit here does
+    // not fold into its write.
+    let queued = app.view.and_then(|i| app.queue_place(i)).map(|place| match place {
+        QueuePlace::Busy => format!("{QUEUE_ICON} writing now"),
+        QueuePlace::Waiting(0) => format!("{QUEUE_ICON} queued for write - next up"),
+        QueuePlace::Waiting(k) => {
+            format!("{QUEUE_ICON} queued for write - {k} file{} left", plural(k))
+        }
+    });
+    let heading = match (&bulk, &queued) {
+        (Some(h), _) => Some((h.as_str(), t::muted())),
+        (None, Some(h)) => Some((h.as_str(), t::staged())),
+        (None, None) => None,
+    };
     let mut lines: Vec<Line> = Vec::new();
     let mut cursor_line: Option<(u16, usize)> = None;
     let mut focus_line = 0usize;
@@ -563,7 +655,7 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
         }
         lines.push(Line::from(spans));
         if group_break_after(row) {
-            lines.push(group_rule(inner.width as usize, bulk.as_deref()));
+            lines.push(group_rule(inner.width as usize, heading));
         }
     }
 
@@ -587,17 +679,24 @@ fn group_break_after(row: &Row) -> bool {
 }
 
 /// The rule under Category and Variant. In bulk view it carries the heading
-/// that says every edit below it is about to land on the whole selection.
-fn group_rule(width: usize, heading: Option<&str>) -> Line<'static> {
+/// that says every edit below it is about to land on the whole selection; in
+/// single-file view, the file's place in the write queue. The heading is
+/// drawn inverted, a tab set into the rule: a state that changes what ⏎
+/// does has to be read without being looked for, and a bold grey word on a
+/// grey line was not.
+fn group_rule(width: usize, heading: Option<(&str, ratatui::style::Color)>) -> Line<'static> {
     let rule = |n: usize| Span::styled("\u{2500}".repeat(n), Style::default().fg(t::rule()));
     match heading {
-        Some(h) if h.width() + 4 <= width => {
+        Some((h, colour)) if h.width() + 4 <= width => {
             let text = format!(" {h} ");
             let left = (width - text.width()) / 2;
             let right = width - text.width() - left;
             Line::from(vec![
                 rule(left),
-                Span::styled(text, Style::default().fg(t::muted()).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    text,
+                    Style::default().fg(colour).add_modifier(Modifier::REVERSED | Modifier::BOLD),
+                ),
                 rule(right),
             ])
         }
@@ -1165,52 +1264,6 @@ fn bar(width: usize, frac: f64) -> Line<'static> {
     ])
 }
 
-/// A write in flight. The stage name matters as much as the bar: "remuxing" for
-/// two minutes is patience, the same two minutes unlabelled is a hang.
-fn draw_progress(f: &mut Frame, area: Rect, p: &WriteProgress) {
-    let overall = p.overall();
-    let width = (area.width as usize).saturating_sub(6).clamp(10, 60);
-    let secs = p.started.elapsed().as_secs();
-
-    let mut lines: Vec<Line> = vec![
-        Line::from(Span::styled(
-            format!(" Writing {} of {} ", p.file + 1, p.total),
-            Style::default().bg(t::accent()).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!("  {}", t::fit(&p.name, width)),
-            Style::default().fg(t::header_fg()),
-        )),
-        Line::from(""),
-    ];
-
-    let mut b = vec![Span::raw("  ")];
-    b.extend(bar(width, overall).spans);
-    b.push(Span::styled(
-        format!(" {:>3}%", (overall * 100.0).round() as u32),
-        Style::default().fg(t::value()),
-    ));
-    lines.push(Line::from(b));
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled(format!("  {}", p.label), Style::default().fg(t::value())),
-        Span::styled(format!("   {}m {:02}s elapsed", secs / 60, secs % 60), Style::default().fg(t::muted())),
-    ]));
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "  Originals are replaced only after the result is verified; nothing is half-written.",
-        Style::default().fg(t::muted()),
-    )));
-
-    f.render_widget(
-        Paragraph::new(lines).block(
-            Block::default().borders(Borders::ALL).border_style(Style::default().fg(t::accent())),
-        ),
-        area,
-    );
-}
-
 /// What actually happened, per file. A one-line status is fine for one file and
 /// useless for forty: a batch needs to say which ones failed and why, without
 /// the successes scrolling them away.
@@ -1475,7 +1528,7 @@ mod tests {
         );
         let lines = screen(&app, 80, 20);
         let rule = &lines[3];
-        assert!(rule.contains("bulk edit mode - 2 files"), "{rule:?}");
+        assert!(rule.contains(&format!("{BULK_ICON} bulk edit mode - 2 files")), "{rule:?}");
         assert!(rule.starts_with('\u{2500}') && rule.trim_end().ends_with('\u{2500}'), "{rule:?}");
         let title = lines.iter().find(|l| l.contains("Title")).unwrap();
         assert!(title.contains("Same") && title.contains("2 files"), "{title:?}");
@@ -1494,6 +1547,79 @@ mod tests {
         app.on_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
         let lines = screen(&app, 80, 20);
         assert!(!lines.iter().any(|l| l.contains("files")), "{lines:?}");
+    }
+
+    fn n_files(n: usize) -> crate::ui::app::App {
+        use crate::tags::probe::FileTags;
+        use std::collections::BTreeMap;
+        let files = (0..n)
+            .map(|i| FileTags {
+                path: std::path::PathBuf::from(format!("/nonexistent/clip-{i}.mp4")),
+                atoms: BTreeMap::new(),
+                xmp: BTreeMap::new(),
+            })
+            .collect();
+        crate::ui::app::App::new(files, BTreeMap::new(), false)
+    }
+
+    /// `]`: step to the next file, as the user would.
+    fn next(app: &mut crate::ui::app::App) {
+        app.on_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    }
+
+    fn header(app: &crate::ui::app::App, w: u16, h: u16) -> Vec<String> {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|fr| draw_header(fr, fr.area(), app, None)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect()
+    }
+
+    /// Bulk view's header lists the selection instead of one file's picture,
+    /// five names and then the count. Five files fit whole; a sixth is where
+    /// the list stops and says how many.
+    #[test]
+    fn bulk_header_lists_the_files_and_elides_at_the_sixth() {
+        let app = n_files(7);
+        let lines = header(&app, 60, 6);
+        for i in 0..5 {
+            assert!(lines[i].contains(&format!("clip-{i}.mp4")), "{lines:?}");
+        }
+        assert!(lines[5].contains("… 7 files"), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.contains("clip-5")), "{lines:?}");
+
+        let app = n_files(5);
+        let lines = header(&app, 60, 6);
+        assert!(lines[4].contains("clip-4.mp4") && !lines[5].contains("files"), "{lines:?}");
+
+        // One file in view is that file's header, not a list.
+        let mut app = n_files(7);
+        next(&mut app);
+        let lines = header(&app, 60, 6);
+        assert!(lines[0].contains("clip-0.mp4") && !lines[1].contains("clip-1"), "{lines:?}");
+    }
+
+    /// In single-file view the rule says where the file stands in the write
+    /// queue -- how many go before it -- and nothing when it is not queued.
+    #[test]
+    fn the_rule_says_where_a_queued_file_stands() {
+        let mut app = n_files(3);
+        for i in 0..3 {
+            app.set_staged(i, "title", Value::text("t"));
+            app.enqueue_for_test(i, false);
+        }
+        for _ in 0..3 {
+            next(&mut app); // file 2
+        }
+        let lines = screen(&app, 80, 20);
+        let rule = &lines[3];
+        assert!(rule.contains(&format!("{QUEUE_ICON} queued for write - 2 files left")), "{rule:?}");
+
+        let mut app = n_files(2);
+        next(&mut app);
+        let lines = screen(&app, 80, 20);
+        assert!(!lines[3].contains("queued"), "{:?}", lines[3]);
     }
 
     /// A set the files disagree about lights nothing: highlighting one file's

@@ -7,10 +7,11 @@
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::config::{Enums, KINDS, ORIENTATIONS};
 use crate::fetch;
@@ -195,7 +196,6 @@ pub struct WriteProgress {
     pub label: &'static str,
     /// Fraction of this file's work, 0..1.
     pub frac: f64,
-    pub started: Instant,
 }
 
 impl WriteProgress {
@@ -209,11 +209,57 @@ impl WriteProgress {
     }
 }
 
+/// One file's turn in the write queue: its plan, and the XMP it held when
+/// the plan was built, which the writer checks its result against.
+struct Job {
+    file: usize,
+    plan: FilePlan,
+    xmp: BTreeMap<String, Value>,
+}
+
+/// The write queue, shared with the writer thread (DESIGN §9).
+///
+/// A queue rather than a batch handed over whole, because the form stays
+/// live while it drains. An edit made to a file still waiting its turn
+/// replaces that file's job, so the file is written once, with everything,
+/// instead of needing a second `w`. Only the file under the writer is out of
+/// reach: its edit stays staged and is queued again by the next `w`.
+#[derive(Default)]
+pub struct WriteQueue {
+    waiting: VecDeque<Job>,
+    /// The file being written now.
+    busy: Option<usize>,
+    /// Files finished this run -- the progress bar's numerator.
+    done: usize,
+    /// A writer thread is alive and will take whatever is pushed. Read and
+    /// set under the same lock the thread exits under, so a job pushed as it
+    /// is deciding to stop is never orphaned.
+    running: bool,
+}
+
+/// Where a file stands in the write queue.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum QueuePlace {
+    /// Under the writer right now.
+    Busy,
+    /// Waiting, with this many files to be written before it.
+    Waiting(usize),
+}
+
+fn lock(q: &Mutex<WriteQueue>) -> std::sync::MutexGuard<'_, WriteQueue> {
+    q.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub enum Msg {
     Thumb(usize, Box<image::DynamicImage>),
     Media(usize, MediaInfo),
     /// A stage of the running write, from the writer thread.
     Progress(Box<WriteProgress>),
+    /// One file is done: its index, a fresh probe of it if the write landed,
+    /// and the outcome. Sent per file so the form catches up with each one as
+    /// it finishes rather than at the end of a forty-file run.
+    WroteFile(usize, Option<Box<FileTags>>, Result<(), String>),
+    /// The queue ran dry: the whole run's outcome.
     Wrote(Box<WriteResults>),
     /// One outcome per file a `rename-video` run was given, by file index.
     Renamed(Vec<(usize, Result<Outcome, String>)>),
@@ -304,7 +350,11 @@ pub struct App {
     pub pending: Option<Vec<FilePlan>>,
     /// The outcome of the last write, held until dismissed.
     pub results: Option<WriteResults>,
+    /// A writer thread is draining the queue. Mirrors `queue.running` for
+    /// the painter and the event loop's tick rate.
     pub writing: bool,
+    /// The plans waiting to be written, shared with the writer thread.
+    queue: Arc<Mutex<WriteQueue>>,
     /// A `rename-video` run is in flight. It shells out to ffprobe and exiftool
     /// per file, so it runs off the UI thread like every other probe here --
     /// and while it does, the paths in `files` are the ones about to change,
@@ -382,6 +432,7 @@ impl App {
             enums: Enums::load(),
             faststart: true,
             pending: None,
+            queue: Arc::default(),
             results: None,
             writing: false,
             renaming: false,
@@ -498,6 +549,7 @@ impl App {
                         self.progress = Some(*p);
                     }
                 }
+                Msg::WroteFile(i, fresh, res) => self.file_written(i, fresh.map(|b| *b), res),
                 Msg::Wrote(r) => self.finish_write(*r),
                 Msg::Renamed(r) => self.finish_rename(r),
                 Msg::Fetched(r) => self.finish_fetch(r),
@@ -639,83 +691,137 @@ impl App {
         self.pending = Some(plans);
     }
 
-    /// Start the confirmed plan on its own thread, reporting progress back
-    /// through the same channel the thumbnails use.
+    /// Queue the confirmed plan and make sure a writer thread is draining it.
     ///
     /// Off-thread because a remux is minutes of work and the event loop must
-    /// keep painting: the bar is the whole point, and it cannot move from
-    /// inside a blocking call.
+    /// keep painting and, now, keep editing: the form stays live while the
+    /// queue drains, so the next file's tags can be typed while this one is
+    /// being remuxed. A second `w` while it runs appends to the queue; a file
+    /// already waiting gets its plan replaced rather than a second turn.
     fn apply(&mut self) {
         let Some(plans) = self.pending.take() else { return };
-        let jobs: Vec<(FilePlan, BTreeMap<String, Value>)> = plans
+        let jobs: Vec<Job> = plans
             .into_iter()
-            .map(|p| {
-                let snapshot = self
-                    .files
-                    .iter()
-                    .find(|f| f.path == p.path)
-                    .map(|f| f.xmp.clone())
-                    .unwrap_or_default();
-                (p, snapshot)
+            .filter_map(|plan| {
+                let file = self.files.iter().position(|f| f.path == plan.path)?;
+                Some(Job { file, xmp: self.files[file].xmp.clone(), plan })
             })
             .collect();
         if jobs.is_empty() {
             return;
         }
+        let n = jobs.len();
+        let spawn = {
+            let mut q = lock(&self.queue);
+            for job in jobs {
+                match q.waiting.iter().position(|j| j.file == job.file) {
+                    Some(at) => q.waiting[at] = job,
+                    None => q.waiting.push_back(job),
+                }
+            }
+            if q.running {
+                false
+            } else {
+                q.running = true;
+                q.done = 0;
+                true
+            }
+        };
         self.writing = true;
-        let started = Instant::now();
-        self.progress = Some(WriteProgress {
-            file: 0,
-            total: jobs.len(),
-            name: file_name(&jobs[0].0.path),
-            label: "starting",
-            frac: 0.0,
-            started,
-        });
+        if spawn {
+            self.spawn_writer();
+        } else {
+            self.status =
+                format!("queued {n} file{} behind the running write", if n == 1 { "" } else { "s" });
+        }
+    }
+
+    /// The writer thread: take the front of the queue, write it, report, and
+    /// repeat until the queue is empty. Progress goes back through the same
+    /// channel the thumbnails use.
+    fn spawn_writer(&self) {
+        let queue = Arc::clone(&self.queue);
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let total = jobs.len();
             let mut written: Vec<PathBuf> = Vec::new();
             let mut failed: Vec<(PathBuf, String)> = Vec::new();
-            for (i, (plan, snapshot)) in jobs.iter().enumerate() {
-                let name = file_name(&plan.path);
-                let tick = &tx;
+            loop {
+                let (job, file_no) = {
+                    let mut q = lock(&queue);
+                    match q.waiting.pop_front() {
+                        Some(j) => {
+                            q.busy = Some(j.file);
+                            (j, q.done)
+                        }
+                        None => {
+                            q.busy = None;
+                            q.running = false;
+                            break;
+                        }
+                    }
+                };
+                let name = file_name(&job.plan.path);
                 let mut on = |s: write::Step| {
-                    let _ = tick.send(Msg::Progress(Box::new(WriteProgress {
-                        file: i,
+                    // The denominator is re-read per tick: the queue may have
+                    // grown since this file started.
+                    let total = {
+                        let q = lock(&queue);
+                        q.done + 1 + q.waiting.len()
+                    };
+                    let _ = tx.send(Msg::Progress(Box::new(WriteProgress {
+                        file: file_no,
                         total,
                         name: name.clone(),
                         label: s.label,
                         frac: s.frac,
-                        started,
                     })));
                 };
-                match write::execute(plan, snapshot, &mut on) {
-                    Ok(()) => written.push(plan.path.clone()),
+                let res = write::execute(&job.plan, &job.xmp, &mut on).map_err(|e| e.to_string());
+                match &res {
+                    Ok(()) => written.push(job.plan.path.clone()),
                     // A bad file in a batch must not cost the others their write.
-                    Err(e) => failed.push((plan.path.clone(), e.to_string())),
+                    Err(e) => failed.push((job.plan.path.clone(), e.clone())),
                 }
+                // Probed here, off the UI thread, so the form does not stall
+                // on ffprobe and exiftool between one file and the next.
+                let fresh = res
+                    .is_ok()
+                    .then(|| crate::tags::probe::probe(&job.plan.path).ok())
+                    .flatten()
+                    .map(Box::new);
+                {
+                    let mut q = lock(&queue);
+                    q.done += 1;
+                    q.busy = None;
+                }
+                let _ = tx.send(Msg::WroteFile(job.file, fresh, res));
             }
             let _ = tx.send(Msg::Wrote(Box::new(WriteResults { verb: "Wrote", ok: written, failed })));
         });
     }
 
-    /// The write is over: re-read from disk so the form shows what is actually
-    /// on the files rather than what was hoped for.
+    /// One file is off the queue: show what is now on disk, and drop the
+    /// edits it carries. An edit is dropped only once the file agrees with
+    /// it, so a failed write keeps what was typed (see `finish_write`).
     ///
-    /// An edit is dropped only once the files agree with it. Clearing the whole
-    /// staging map here cost a failed write everything that had been typed into
-    /// it -- the form was the only place those edits existed, and the retry the
-    /// error message invites began with retyping them.
-    fn finish_write(&mut self, results: WriteResults) {
-        for f in self.files.iter_mut() {
-            if let Ok(fresh) = crate::tags::probe::probe(&f.path) {
-                *f = fresh;
-            }
+    /// The file's own job, if `w` queued one again while it was being
+    /// written, is rebuilt from whatever is still staged -- a plan built
+    /// before the write would carry the edits that just landed.
+    fn file_written(&mut self, i: usize, fresh: Option<FileTags>, _res: Result<(), String>) {
+        if let (Some(slot), Some(fresh)) = (self.files.get_mut(i), fresh) {
+            *slot = fresh;
         }
-        // Compared against what is now on disk rather than against the list of
-        // files that succeeded: in a mixed batch an edit can land on four files
-        // and fail on the fifth, and it is still an edit until the fifth has it.
+        self.drop_landed();
+        self.sync_queue(&[i]);
+        self.rebuild_rows();
+    }
+
+    /// Forget every staged edit the files now carry.
+    ///
+    /// Compared against what is on disk rather than against a list of files
+    /// that succeeded: in a mixed batch an edit can land on four files and
+    /// fail on the fifth, and it is still an edit until the fifth has it.
+    fn drop_landed(&mut self) {
         let files = &self.files;
         for (i, edits) in self.staged.iter_mut() {
             let Some(file) = files.get(*i) else { continue };
@@ -726,8 +832,91 @@ impl App {
             self.undo.clear();
             self.redo.clear();
         }
+    }
+
+    /// Where `file` stands in the write queue, if it is in it.
+    pub fn queue_place(&self, file: usize) -> Option<QueuePlace> {
+        let q = lock(&self.queue);
+        if q.busy == Some(file) {
+            return Some(QueuePlace::Busy);
+        }
+        let at = q.waiting.iter().position(|j| j.file == file)?;
+        Some(QueuePlace::Waiting(at + usize::from(q.busy.is_some())))
+    }
+
+    /// Bring the queued jobs for `files` up to date with the staging map.
+    ///
+    /// This is what lets an edit to a queued file be saved with ⏎ alone: the
+    /// file's job is rebuilt from every sound edit it now carries, or removed
+    /// if nothing is left to write. A file under the writer is left alone --
+    /// there is no taking a plan back from a remux in progress -- and the
+    /// caller is told, so the status line can say the edit needs `w` again.
+    /// Unsound edits are skipped the same way `prepare_write` skips them.
+    fn sync_queue(&mut self, files: &[usize]) -> QueueSync {
+        let mut out = QueueSync::default();
+        let mut q = lock(&self.queue);
+        if q.busy.is_none() && q.waiting.is_empty() {
+            return out;
+        }
+        for &i in files {
+            if q.busy == Some(i) {
+                out.busy.push(i);
+                continue;
+            }
+            let Some(at) = q.waiting.iter().position(|j| j.file == i) else { continue };
+            let Some(file) = self.files.get(i) else { continue };
+            let sound: BTreeMap<String, Value> = self
+                .staged
+                .get(&i)
+                .map(|edits| {
+                    edits
+                        .iter()
+                        .filter(|(k, v)| field_error(k, v).is_none())
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let plan = plan::build(file, &sound, self.faststart);
+            if plan.is_empty() {
+                q.waiting.remove(at);
+            } else {
+                q.waiting[at] = Job { file: i, xmp: file.xmp.clone(), plan };
+            }
+            out.refreshed += 1;
+        }
+        out
+    }
+
+    /// Say what `sync_queue` did, where it did anything.
+    fn note_queue(&mut self, sync: &QueueSync) {
+        if let Some(&i) = sync.busy.first() {
+            let name = self.files.get(i).map(|f| file_name(&f.path)).unwrap_or_default();
+            self.status = format!("{name} is being written now · press w to queue this edit");
+            return;
+        }
+        if sync.refreshed > 0 {
+            self.status = match sync.refreshed {
+                1 => "saved to the queued write".into(),
+                n => format!("saved to the queued writes for {n} files"),
+            };
+        }
+    }
+
+    /// The queue ran dry: settle up.
+    ///
+    /// The files were re-read one by one as they finished; what is left is
+    /// the count, and the dialog -- shown only when something failed, since a
+    /// clean run should not interrupt the typing the queue exists to allow.
+    /// An edit is dropped only once the files agree with it. Clearing the
+    /// whole staging map here cost a failed write everything that had been
+    /// typed into it -- the form was the only place those edits existed, and
+    /// the retry the error message invites began with retyping them.
+    fn finish_write(&mut self, results: WriteResults) {
+        self.drop_landed();
         self.rebuild_rows();
-        self.writing = false;
+        // A `w` between the queue running dry and this message arriving has
+        // already started another thread; believe the queue, not the message.
+        self.writing = lock(&self.queue).running;
         self.progress = None;
         let total = results.ok.len() + results.failed.len();
         let kept = self.staged_count();
@@ -743,9 +932,12 @@ impl App {
             )
         };
         self.status_error = !results.failed.is_empty();
-        // The results stay up whether the write was clean or not: any key
-        // returns to the editor, with any unwritten edits still staged.
-        self.results = Some(results);
+        // The results stay up until a key, with any unwritten edits still
+        // staged. Only for a failure: the list of what went wrong is the
+        // point of the dialog, and a clean run has nothing to list.
+        if !results.failed.is_empty() {
+            self.results = Some(results);
+        }
     }
 
     /// `r`: hand the files in scope to `rename-video`, which names each one
@@ -949,6 +1141,8 @@ impl App {
         if before != self.staged {
             self.undo.push(before);
             self.redo.clear();
+            let touched: Vec<usize> = self.staged.keys().copied().collect();
+            self.sync_queue(&touched);
         }
         self.rebuild_rows();
         let n_fields = |n: usize| format!("{n} field{}", if n == 1 { "" } else { "s" });
@@ -1036,11 +1230,6 @@ impl App {
             self.quit = true;
             return;
         }
-        // Nothing to press while a write runs: the files are being replaced
-        // under us, and a stray key must not stage an edit against them.
-        if self.writing {
-            return;
-        }
         if self.results.is_some() {
             self.results = None;
             return;
@@ -1110,10 +1299,12 @@ impl App {
         }
         match key.code {
             // Commit and stop editing.
+            // Cleared first: the commit may have something to say about the
+            // queue, and that has to outlive the keystroke.
             KeyCode::Enter => {
+                self.status.clear();
                 self.commit_editor();
                 self.mode = Mode::Select;
-                self.status.clear();
             }
             // Commit and carry straight on to the next field, which is what
             // tab means in every form.
@@ -1320,6 +1511,13 @@ impl App {
     /// Edit mode already handled that -- so here Esc and q mean quit. Staged
     /// edits are never discarded silently.
     fn escape(&mut self) {
+        // Quitting under a remux would leave its temp file behind; the
+        // original is safe either way, but the wait is short and the mess is
+        // not. ⌃C still leaves at once.
+        if self.writing {
+            self.status = "write in progress · wait for it to finish, or ⌃C to leave anyway".into();
+            return;
+        }
         let n = self.staged_count();
         if n > 0 && !self.confirm_quit {
             self.confirm_quit = true;
@@ -1446,6 +1644,8 @@ impl App {
         if before != self.staged {
             self.undo.push(before);
             self.redo.clear();
+            let sync = self.sync_queue(targets);
+            self.note_queue(&sync);
         }
         n
     }
@@ -1674,15 +1874,46 @@ impl App {
         self.rebuild_rows();
     }
 
+    #[cfg(test)]
+    /// Put `file` on the write queue with a plan built from its staged edits,
+    /// or under the writer, without a writer thread: what the tests need to
+    /// see the form answer to a queue, and what nothing in the UI does.
+    pub fn enqueue_for_test(&mut self, file: usize, busy: bool) {
+        let sound = self.staged.get(&file).cloned().unwrap_or_default();
+        let plan = plan::build(&self.files[file], &sound, self.faststart);
+        let mut q = lock(&self.queue);
+        if busy {
+            q.busy = Some(file);
+            q.running = true;
+        } else {
+            q.waiting.push_back(Job { file, xmp: self.files[file].xmp.clone(), plan });
+        }
+    }
+
+    #[cfg(test)]
+    /// The atoms the queued plan for `file` would write, if it is waiting.
+    pub fn queued_atoms_for_test(&self, file: usize) -> Option<Vec<(String, String)>> {
+        let q = lock(&self.queue);
+        q.waiting.iter().find(|j| j.file == file).map(|j| j.plan.atoms.clone())
+    }
+
     /// Whether a given file carries an edit for a key — the inspector's
     /// question, since it lists the selection file by file.
     pub fn file_is_staged(&self, file: usize, key: &str) -> bool {
         self.staged.get(&file).is_some_and(|m| m.contains_key(key))
     }
 
+    /// After undo or redo the whole map may have moved; every queued file is
+    /// brought back in line with it.
+    fn sync_all_queued(&mut self) {
+        let all: Vec<usize> = (0..self.files.len()).collect();
+        self.sync_queue(&all);
+    }
+
     fn undo(&mut self) {
         if let Some(prev) = self.undo.pop() {
             self.redo.push(std::mem::replace(&mut self.staged, prev));
+            self.sync_all_queued();
             self.rebuild_rows();
             self.status = format!("undo · {} staged", self.staged_count());
         } else {
@@ -1693,6 +1924,7 @@ impl App {
     fn redo(&mut self) {
         if let Some(next) = self.redo.pop() {
             self.undo.push(std::mem::replace(&mut self.staged, next));
+            self.sync_all_queued();
             self.rebuild_rows();
             self.status = format!("redo · {} staged", self.staged_count());
         } else {
@@ -2061,6 +2293,14 @@ fn build_rows(
 }
 
 /// One staged edit as the confirmation dialog needs it.
+/// What `App::sync_queue` found: how many jobs it rebuilt, and which of the
+/// files it was asked about were under the writer and could not be changed.
+#[derive(Default)]
+struct QueueSync {
+    refreshed: usize,
+    busy: Vec<usize>,
+}
+
 pub struct StagedEdit {
     pub label: String,
     pub shown: String,
@@ -2199,7 +2439,7 @@ mod progress_tests {
     use super::*;
 
     fn p(file: usize, total: usize, frac: f64) -> WriteProgress {
-        WriteProgress { file, total, name: String::new(), label: "", frac, started: Instant::now() }
+        WriteProgress { file, total, name: String::new(), label: "", frac }
     }
 
     #[test]
@@ -3000,6 +3240,119 @@ mod tests {
         app.cycle_file(-1);
         assert_eq!(row(&app, "title").shown(), Some(&Value::text("edited")));
         assert!(row(&app, "title").staged);
+    }
+
+    /// ⏎ on a field of a file still waiting in the queue is the save: the
+    /// file's job is rebuilt around the new value, so it is written once, with
+    /// everything, and the user is told so.
+    #[test]
+    fn an_edit_to_a_queued_file_is_folded_into_its_write() {
+        let mut app = pair();
+        app.cycle_file(1); // a.mov
+        app.set_staged(0, "channel", Value::text("first"));
+        app.enqueue_for_test(0, false);
+        assert_eq!(app.queue_place(0), Some(QueuePlace::Waiting(0)));
+
+        focus_on(&mut app, "title");
+        press(&mut app, KeyCode::Enter);
+        for c in "new".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Enter);
+
+        let atoms = app.queued_atoms_for_test(0).expect("still queued");
+        assert!(atoms.iter().any(|(k, v)| k == "title" && v == "Anew"), "{atoms:?}");
+        assert!(atoms.iter().any(|(k, v)| k == "channel" && v == "first"), "{atoms:?}");
+        assert_eq!(app.status, "saved to the queued write");
+        assert!(app.staged[&0].contains_key("title"), "the edit stays staged until it lands");
+    }
+
+    /// Undoing the only edit a queued file had takes the file off the queue:
+    /// there is nothing left to write to it.
+    #[test]
+    fn undoing_a_queued_files_edits_removes_its_job() {
+        let mut app = pair();
+        app.cycle_file(1);
+        focus_on(&mut app, "title");
+        app.stage("title".into(), Value::text("edited"));
+        app.enqueue_for_test(0, false);
+        app.undo();
+        assert_eq!(app.queue_place(0), None);
+    }
+
+    /// The one file an edit cannot reach is the one under the writer. The
+    /// edit stays staged, the plan is left alone, and the status says to
+    /// press w again.
+    #[test]
+    fn an_edit_to_the_file_being_written_waits_for_the_next_w() {
+        let mut app = pair();
+        app.cycle_file(1);
+        app.enqueue_for_test(0, true);
+        assert_eq!(app.queue_place(0), Some(QueuePlace::Busy));
+
+        focus_on(&mut app, "title");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('x'));
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.status.contains("being written now") && app.status.contains("press w"), "{}", app.status);
+        assert_eq!(app.staged[&0].get("title"), Some(&Value::text("Ax")));
+    }
+
+    /// Files ahead in the queue are counted from the one under the writer.
+    #[test]
+    fn queue_place_counts_the_files_written_before_this_one() {
+        let mut app = pair();
+        app.set_staged(0, "title", Value::text("x"));
+        app.set_staged(1, "title", Value::text("y"));
+        app.enqueue_for_test(0, false);
+        app.enqueue_for_test(1, false);
+        assert_eq!(app.queue_place(1), Some(QueuePlace::Waiting(1)));
+    }
+
+    /// A second w while a writer is running appends to its queue rather than
+    /// starting a second writer, and says so.
+    #[test]
+    fn a_write_during_a_write_joins_the_queue() {
+        let mut app = pair();
+        app.enqueue_for_test(1, true); // a writer is alive, on b.mov
+        app.cycle_file(1);
+        focus_on(&mut app, "title");
+        app.stage("title".into(), Value::text("edited"));
+        app.prepare_write();
+        assert!(app.pending.is_some(), "{}", app.status);
+        app.apply();
+        assert_eq!(app.queue_place(0), Some(QueuePlace::Waiting(1)));
+        assert!(app.status.contains("behind the running write"), "{}", app.status);
+        assert!(app.writing);
+    }
+
+    /// Keys stay live during a write -- that is the point of the queue --
+    /// but quitting is refused until it lands.
+    #[test]
+    fn quitting_waits_for_the_write() {
+        let mut app = pair();
+        app.enqueue_for_test(0, true);
+        app.writing = true;
+        press(&mut app, KeyCode::Char('q'));
+        assert!(!app.quit);
+        assert!(app.status.contains("write in progress"), "{}", app.status);
+    }
+
+    /// A clean run reports in the status line and gets out of the way; only
+    /// a failure earns the dialog.
+    #[test]
+    fn only_a_failed_run_raises_the_results_dialog() {
+        let mut app = one(&[]);
+        app.finish_write(WriteResults { verb: "Wrote", ok: vec![PathBuf::from("/x.mov")], failed: vec![] });
+        assert!(app.results.is_none());
+        assert_eq!(app.status, "wrote 1 of 1");
+        app.finish_write(WriteResults {
+            verb: "Wrote",
+            ok: vec![],
+            failed: vec![(PathBuf::from("/x.mov"), "boom".into())],
+        });
+        assert!(app.results.is_some());
     }
 
     /// `w` writes every staged edit, including one made on a file that is no
