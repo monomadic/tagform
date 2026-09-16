@@ -30,6 +30,8 @@ const PAD: u16 = 1;
 /// heading, `􀈏` a file waiting in the write queue.
 const BULK_ICON: &str = "\u{101496}";
 const QUEUE_ICON: &str = "\u{10020f}";
+/// `􀽎` fronts each name in the bulk header's file list.
+const FILE_ICON: &str = "\u{100f4e}";
 /// Names the bulk header lists before it gives up and states the count.
 const LISTED_FILES: usize = 5;
 
@@ -249,12 +251,14 @@ fn draw_file_list(f: &mut Frame, area: Rect, app: &App) {
         .take(LISTED_FILES)
         .enumerate()
         .map(|(i, file)| {
-            let queued = app.queue_place(i).is_some();
+            // The queue mark takes the icon's column when the file is
+            // waiting: one glyph per row, and the row's state is the glyph.
+            let (icon, colour) = match app.queue_place(i) {
+                Some(_) => (QUEUE_ICON, t::staged()),
+                None => (FILE_ICON, t::accent()),
+            };
             Line::from(vec![
-                Span::styled(
-                    format!(" {} ", if queued { QUEUE_ICON } else { " " }),
-                    Style::default().fg(t::staged()),
-                ),
+                Span::styled(format!(" {icon} "), Style::default().fg(colour)),
                 Span::styled(
                     t::fit(&file_label(&file.path), width),
                     Style::default().fg(t::header_fg()),
@@ -1584,7 +1588,7 @@ mod tests {
         let app = n_files(7);
         let lines = header(&app, 60, 6);
         for i in 0..5 {
-            assert!(lines[i].contains(&format!("clip-{i}.mp4")), "{lines:?}");
+            assert!(lines[i].contains(&format!("{FILE_ICON} clip-{i}.mp4")), "{lines:?}");
         }
         assert!(lines[5].contains("… 7 files"), "{lines:?}");
         assert!(!lines.iter().any(|l| l.contains("clip-5")), "{lines:?}");
