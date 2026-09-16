@@ -42,10 +42,20 @@ pub const EXIFTOOL_KEY_NAMES: &[(&str, &str)] = &[
     ("origin", "Origin"),
     ("location", "Location"),
     ("track", "TrackK"),
+    // `com.apple.quicktime.location.ISO6709` is deliberately absent, although
+    // exiftool's own Keys table has it as `GPSCoordinates`: exiftool re-renders
+    // the value on write, so the string would not round-trip, and adding the
+    // key to an ffmpeg-made file in place mis-pairs the whole keys box
+    // (docs/CONTAINER.md). Absent here, coordinates always go through a
+    // rewrite, which writes the string verbatim.
     // `K` suffix like the others: exiftool already has an EXIF `Orientation`,
     // and a bare name would be ambiguous in its messages even under `Keys:`.
     ("orientation", "OrientationK"),
 ];
+
+/// Keys a plan sends through a rewrite even when the file already has them:
+/// the ones an in-place write would not round-trip. See beside the table.
+pub const REWRITE_ONLY_KEYS: &[&str] = &["com.apple.quicktime.location.ISO6709"];
 
 pub fn exiftool_name(key: &str) -> Option<&'static str> {
     EXIFTOOL_KEY_NAMES.iter().find(|(k, _)| *k == key).map(|(_, n)| *n)
@@ -156,8 +166,11 @@ pub fn build(
     atoms.dedup();
 
     let layout = crate::tags::atoms::layout(&file.path);
-    let adds_new_key = atoms.iter().any(|(k, _)| !file.atoms.contains_key(k));
-    let unwritable_in_place = atoms.iter().any(|(k, _)| exiftool_name(k).is_none());
+    // Probed names are lower-cased; a reverse-DNS key is planned in its own
+    // case, and must not read as new on a file that already has it.
+    let adds_new_key = atoms.iter().any(|(k, _)| !file.atoms.contains_key(&k.to_ascii_lowercase()));
+    let unwritable_in_place =
+        atoms.iter().any(|(k, _)| exiftool_name(k).is_none() || REWRITE_ONLY_KEYS.contains(&k.as_str()));
     let has_xmp = !file.xmp.is_empty();
     // Only a remux can move the moov atom.
     let needs_remux_for_faststart = want_faststart && !layout.is_faststart();
@@ -284,7 +297,7 @@ mod tests {
     #[test]
     fn every_schema_write_key_has_an_exiftool_name() {
         for f in crate::model::schema::FIELDS {
-            for k in f.mdta {
+            for k in f.mdta.iter().filter(|k| !REWRITE_ONLY_KEYS.contains(k)) {
                 assert!(
                     exiftool_name(k).is_some(),
                     "{k} has no exiftool name, so it can never be written in place"

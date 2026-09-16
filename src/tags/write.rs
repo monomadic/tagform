@@ -128,20 +128,26 @@ impl std::fmt::Display for WriteError {
 }
 
 fn config_path() -> PathBuf {
-    // Installed beside the binary; the repo copy is the fallback for `cargo run`.
+    asset_path("tagform.exiftool.cfg")
+}
+
+/// A file from `assets/`: installed beside the binary, or the repo copy as the
+/// fallback for `cargo run`. The path is returned whether or not it exists,
+/// so a caller with an embedded copy can decide what to do without one.
+pub fn asset_path(name: &str) -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         for up in [1usize, 2, 3] {
             let mut p = exe.clone();
             for _ in 0..up {
                 p.pop();
             }
-            let c = p.join("assets/tagform.exiftool.cfg");
+            let c = p.join("assets").join(name);
             if c.exists() {
                 return c;
             }
         }
     }
-    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/tagform.exiftool.cfg"))
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/assets")).join(name)
 }
 
 /// How far a write has got, as a fraction of one file's work and a phrase to
@@ -508,7 +514,9 @@ impl Drop for TempGuard {
 fn verify_atoms(path: &Path, wanted: &[(String, String)]) -> Result<()> {
     let got = probe::probe(path).context("re-probing after write")?;
     for (key, value) in wanted {
-        let actual = got.atoms.get(key).map(|v| match v {
+        // ffprobe's names are lower-cased on read; a reverse-DNS key such as
+        // `com.apple.quicktime.location.ISO6709` is written in its own case.
+        let actual = got.atoms.get(&key.to_ascii_lowercase()).map(|v| match v {
             Value::Text(s) => s.clone(),
             Value::List(l) => l.join(", "),
         });

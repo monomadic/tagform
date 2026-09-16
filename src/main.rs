@@ -7,6 +7,7 @@
 
 mod config;
 mod fetch;
+mod geocode;
 mod model;
 mod tags;
 mod thumb;

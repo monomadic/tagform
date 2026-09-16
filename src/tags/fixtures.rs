@@ -98,8 +98,9 @@ fn write_it(path: &Path, edits: &BTreeMap<String, Value>, faststart: bool) -> (W
     (plan.writer, r)
 }
 
+/// Probed names are lower-cased; a key is asked for in the case it is written.
 fn text(t: &FileTags, key: &str) -> Option<String> {
-    t.atoms.get(key).map(|v| match v {
+    t.atoms.get(&key.to_ascii_lowercase()).map(|v| match v {
         Value::Text(s) => s.clone(),
         Value::List(l) => l.join(", "),
     })

@@ -484,10 +484,11 @@ when the file actually carries them:
 
 | Field | Control | XMP tag | Note |
 |---|---|---|---|
-| **Location** | Text | `XMP-iptcExt:LocationCreatedCity` | a place name, and only that |
+| **Place** | Text | `XMP-iptcExt:LocationCreatedSublocation` | the venue: "Coro Hotel" |
+| **Location** | Text | `XMP-iptcExt:LocationCreatedCity` | a city name, and only that |
 | **State** | Text | `XMP-iptcExt:LocationCreatedProvinceState` | |
 | **Country** | Text | `XMP-iptcExt:LocationCreatedCountryName` | |
-| **Coordinates** | ReadOnly | — (atoms `location`, `location-eng`) | the ISO 6709 string the camera wrote |
+| **Coordinates** | Text | — (atom `com.apple.quicktime.location.ISO6709`; read also from `location`, `location-eng`) | the ISO 6709 string the camera wrote, or the lookup did |
 | **Original name** | ReadOnly | `XMP-xmpMM:PreservedFileName` | write-once |
 
 ⟨built, differs⟩ Three corrections to the original design:
@@ -502,11 +503,19 @@ when the file actually carries them:
   it, deliberately, so that the plain-text place and the numbers it came from
   live in one structure. Editing the city without those two visible is how they
   drift apart.
-- **Coordinates is its own read-only field.** It deliberately does not feed
-  Location: ffmpeg maps QuickTime's `com.apple.quicktime.location.ISO6709` onto
-  the `location` key, so a shared field displayed
-  `+13.7165+100.5867+018.071/` as though it were a city — and an edit would
-  have written a place name over a coordinate.
+- **Coordinates is its own field.** It deliberately does not feed Location:
+  a file that has been through ffmpeg carries QuickTime's
+  `com.apple.quicktime.location.ISO6709` string under the `location` key too,
+  so a shared field displayed `+13.7165+100.5867+018.071/` as though it were
+  a city — and an edit would have written a place name over a coordinate. It
+  began read-only; the place lookup (§5.5) made it writable, under the Apple
+  key, which ffprobe reports verbatim on an iPhone file — the `location`
+  aliases alone had been missing every camera original. It is written only
+  by a container rewrite, never in place: exiftool re-renders the value and,
+  on an ffmpeg-made file, mis-pairs the keys box adding it
+  (`REWRITE_ONLY_KEYS` in `plan.rs`, measured in `docs/CONTAINER.md`).
+- **Place was added** for the venue, IPTC's sublocation, so that "Coro Hotel"
+  and "Makati" do not fight over one field.
 
 Notes that are not optional:
 
@@ -897,6 +906,22 @@ off: the command reads each file's own `url` and never the focused row, so the
 only thing focus bought was a walk to a row before pressing a key that could
 not have meant anything else. With no URL anywhere in scope it still says so
 rather than starting `yt-dlp`.
+
+**Place lookup** is `i` then `l`: the third import source
+(`src/geocode.rs`). A prompt opens over the location block as it stands;
+what is typed goes to MapKit through `assets/geocode.swift`, a Swift script
+compiled on each run and a sibling of the `reverse-geocode` helper behind
+`rename-footage --geocode`, so a place typed here, a clip named from its
+coordinates and Finder's "Created in Makati" line all agree — and there is no
+key, no account and no rate limit to mind. A forward lookup is a local
+search, not an address parse, because "Coro Hotel Makati" has to find the
+hotel. One hit is staged on arrival, onto Place, Location, State, Country and
+Coordinates, as one undo step; several are chosen from in the band. An empty
+prompt on a file with coordinates runs the other way and names the camera's
+place — the city, state and country but not the nearest venue, which for a
+clip shot in a street is a shop that was not the subject. macOS only, like
+the helper it mirrors; without `swift` on PATH the lookup says so and
+nothing else is lost.
 
 Recognising a URL is already embedded is why the URL field reads five aliases
 (§4.2): files in this library carry it as `comment` (old `media-write-tags`

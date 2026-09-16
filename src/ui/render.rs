@@ -17,7 +17,7 @@ use crate::model::schema::Control;
 use crate::model::tag;
 use crate::model::value::{Agg, Value};
 use crate::tags::plan::FilePlan;
-use crate::ui::app::{App, ImportSource, Mode, QueuePlace, Row, WriteResults};
+use crate::ui::app::{App, ImportSource, Locate, Mode, QueuePlace, Row, WriteResults};
 use crate::ui::edit::{stars_glyphs, Opt, Validation};
 use crate::ui::keymap::{key_width, KEYMAP};
 use crate::ui::theme as t;
@@ -93,7 +93,9 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
     }
 
     if header_h > 0 {
-        if app.import_menu {
+        if let Some(locate) = &app.locate {
+            draw_locate(f, chunks[2], app, locate);
+        } else if app.import_menu {
             draw_import(f, chunks[2], app);
         } else if app.inspector {
             draw_inspector(f, chunks[2], app);
@@ -301,6 +303,8 @@ fn draw_import(f: &mut Frame, area: Rect, app: &App) {
     // the cursor moves between them.
     let caret = |on: bool| Span::styled(if on { "▸" } else { " " }, Style::default().fg(t::accent()));
     let on_url = app.import_pick == ImportSource::Url;
+    let on_name = app.import_pick == ImportSource::Filename;
+    let on_place = app.import_pick == ImportSource::Location;
     let muted = Style::default().fg(t::muted());
     let width = area.width as usize;
     // Truncate without padding: these are values set side by side, not a
@@ -328,9 +332,9 @@ fn draw_import(f: &mut Frame, area: Rect, app: &App) {
 
     // The filename line, and under it what the parse found.
     lines.push(Line::from(vec![
-        caret(!on_url),
+        caret(on_name),
         key("f"),
-        name("filename", !on_url),
+        name("filename", on_name),
         Span::styled(fit(&p.stem, 16), Style::default().fg(t::value())),
     ]));
     let mut found: Vec<Span> = vec![Span::raw("               ")];
@@ -357,6 +361,20 @@ fn draw_import(f: &mut Frame, area: Rect, app: &App) {
         }
     }
     lines.push(Line::from(found));
+
+    // The place line: what the lookup would start from, or that it would
+    // name the camera's coordinates, or that there is nothing yet to go on.
+    let (place_text, place_fg) = match (&p.place, p.coords) {
+        (Some(place), _) => (fit(place, 16), t::value()),
+        (None, Some((lat, lon))) => (format!("name the place at {}", crate::geocode::iso6709(lat, lon)), t::value()),
+        (None, None) => ("type a place to look up".to_string(), t::value_empty()),
+    };
+    lines.push(Line::from(vec![
+        caret(on_place),
+        key("l"),
+        name("location", on_place),
+        Span::styled(place_text, Style::default().fg(place_fg)),
+    ]));
     lines.push(Line::from(vec![
         Span::raw(" "),
         key("j/k"),
@@ -366,6 +384,79 @@ fn draw_import(f: &mut Frame, area: Rect, app: &App) {
         key("esc"),
         Span::styled(" cancel", muted),
     ]));
+    f.render_widget(Paragraph::new(lines), area);
+}
+
+/// The place lookup, in the import band's place (§5.5): the line being typed,
+/// then the wait, then the hits to choose from. One hit never reaches here --
+/// it is staged on arrival -- so a list on screen always means a choice.
+fn draw_locate(f: &mut Frame, area: Rect, app: &App, locate: &Locate) {
+    let muted = Style::default().fg(t::muted());
+    let key = |k: &str| Span::styled(format!(" {k} "), Style::default().bg(t::rule()).fg(t::accent()).add_modifier(Modifier::BOLD));
+    let chip = Span::styled(" locate ", Style::default().bg(t::rule()).fg(t::label_focus()));
+    let width = area.width as usize;
+    let mut lines: Vec<Line> = Vec::new();
+    match locate {
+        Locate::Ask(ed) => {
+            let p = app.import_preview();
+            let hint = match p.coords {
+                Some(_) => "  a place, or empty to name the camera's coordinates",
+                None => "  a place: a venue, a street, a city",
+            };
+            lines.push(Line::from(vec![chip, Span::styled(hint, muted)]));
+            let (text, cur) = ed.display();
+            const LEAD: u16 = 3;
+            lines.push(Line::from(vec![
+                Span::raw("   "),
+                Span::styled(t::fit(&text, width.saturating_sub(LEAD as usize + 1)), Style::default().fg(t::value())),
+            ]));
+            if let Some(c) = cur {
+                let x = area.x + LEAD + (c as u16).min(area.width.saturating_sub(LEAD + 1));
+                f.set_cursor_position((x, area.y + 1));
+            }
+            lines.push(Line::from(vec![
+                Span::raw(" "),
+                key("⏎"),
+                Span::styled(" look up  ", muted),
+                key("esc"),
+                Span::styled(" cancel", muted),
+            ]));
+        }
+        Locate::Looking => {
+            lines.push(Line::from(vec![chip, Span::styled("  asking MapKit…", muted)]));
+            lines.push(Line::from(vec![Span::raw(" "), key("esc"), Span::styled(" cancel", muted)]));
+        }
+        Locate::Pick { hits, at, .. } => {
+            lines.push(Line::from(vec![
+                chip,
+                Span::styled(format!("  {} places match -- which one?", hits.len()), muted),
+            ]));
+            // The band is short; keep the cursor's row on screen.
+            let room = (area.height as usize).saturating_sub(2).max(1);
+            let first = at.saturating_sub(room - 1);
+            for (i, h) in hits.iter().enumerate().skip(first).take(room) {
+                let on = i == *at;
+                let caret = Span::styled(if on { "▸ " } else { "  " }, Style::default().fg(t::accent()));
+                let style = Style::default().fg(t::value());
+                lines.push(Line::from(vec![
+                    caret,
+                    Span::styled(
+                        t::fit(&h.summary(), width.saturating_sub(3)),
+                        if on { style.add_modifier(Modifier::BOLD) } else { style },
+                    ),
+                ]));
+            }
+            lines.push(Line::from(vec![
+                Span::raw(" "),
+                key("j/k"),
+                Span::styled(" choose  ", muted),
+                key("⏎"),
+                Span::styled(" take it  ", muted),
+                key("esc"),
+                Span::styled(" cancel", muted),
+            ]));
+        }
+    }
     f.render_widget(Paragraph::new(lines), area);
 }
 
@@ -921,17 +1012,26 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
     // appending to it.
     let (mode_name, mode_fg, bar_bg) = if app.format_pending {
         ("FORMAT", t::star(), Some(t::input_bg_focus()))
+    } else if app.locate.is_some() {
+        ("LOCATE", t::star(), Some(t::input_bg_focus()))
     } else if app.import_menu {
         ("IMPORT", t::star(), Some(t::input_bg_focus()))
     } else {
         (mode_name, mode_fg, bar_bg)
     };
-    let pairs: &[(&str, &str)] = if app.import_menu {
+    let pairs: &[(&str, &str)] = if let Some(locate) = &app.locate {
+        match locate {
+            Locate::Ask(_) => &[("(type)", "a place"), ("⏎", "look up"), ("esc", "cancel")],
+            Locate::Looking => &[("esc", "cancel")],
+            Locate::Pick { .. } => &[("jk", "choose"), ("⏎", "take it"), ("esc", "cancel")],
+        }
+    } else if app.import_menu {
         &[
             ("jk", "choose"),
             ("⏎", "import"),
             ("u", "from the URL"),
             ("f", "from the filename"),
+            ("l", "from a place"),
             ("esc", "cancel"),
         ]
     } else if app.format_pending {
@@ -1871,8 +1971,10 @@ mod tests {
         assert!(text[3].contains("Actors Ann"), "{:?}", text[3]);
         assert!(text[3].contains("Rating ★★★☆☆"), "{:?}", text[3]);
         assert!(text[3].contains("keeps Title"), "{:?}", text[3]);
-        assert!(text[4].contains("esc"), "{:?}", text[4]);
-        assert!(text[4].contains("j/k"), "the band must say how to choose: {:?}", text[4]);
+        assert!(text[4].contains(" l  location"), "{:?}", text[4]);
+        assert!(text[4].contains("type a place to look up"), "{:?}", text[4]);
+        assert!(text[5].contains("esc"), "{:?}", text[5]);
+        assert!(text[5].contains("j/k"), "the band must say how to choose: {:?}", text[5]);
 
         // The caret sits on the source the cursor is on, and only on that one.
         assert!(text[2].starts_with("▸"), "{:?}", text[2]);

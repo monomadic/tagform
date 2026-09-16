@@ -205,26 +205,42 @@ pub static FIELDS: &[FieldDef] = &[
     field!("origin", "Origin", Control::Text,
         mdta: ["origin"], read: ["origin"], xmp: [], ilst: None),
 
-    // A place name, and only that. It deliberately does NOT read the `location`
-    // atom: ffmpeg maps QuickTime's com.apple.quicktime.location.ISO6709 to that
-    // key, so the field showed "+13.7165+100.5867+018.071/" as though it were a
-    // city -- and an edit would have written a place name into a coordinate.
-    // The numbers get their own read-only field below.
+    // The venue: "Coro Hotel", where Location below is "Makati". Filled by the
+    // `i l` lookup (src/geocode.rs) from what MapKit calls the place, and the
+    // one part of the block a reverse lookup leaves alone -- asked what is at
+    // a coordinate, the geocoder names the nearest thing it knows, not the
+    // subject. IPTC's sublocation, which is exactly this.
+    FieldDef {
+        id: "location_place", label: "Place", control: Control::Text,
+        mdta: &[], read: &[],
+        xmp: &["XMP-iptcExt:LocationCreatedSublocation"], ilst: None, footage_only: true, clip_only: false, adult_only: false,
+        numeric: false,
+    },
+    // A city name, and only that. It deliberately does NOT read the `location`
+    // atom, which is where ffmpeg puts a coordinate string: the field showed
+    // "+13.7165+100.5867+018.071/" as though it were a city -- and an edit
+    // would have written a place name into a coordinate. The numbers get
+    // their own field below.
     FieldDef {
         id: "location", label: "Location", control: Control::Text,
         mdta: &[], read: &[],
         xmp: &["XMP-iptcExt:LocationCreatedCity"], ilst: None, footage_only: true, clip_only: false, adult_only: false,
         numeric: false,
     },
-    // Written by the camera, never by hand. rename-footage --geocode is what
-    // turns these into the place name above.
-    // The whole ISO 6709 string, which is what the container actually holds.
-    // `location-eng` because ffmpeg language-tags the key it writes. The XMP
-    // latitude is deliberately not read here: on its own it is half a
-    // coordinate, and it shows up in the Custom group alongside its longitude.
+    // The whole ISO 6709 string, which is what the container actually holds,
+    // under the key an iPhone writes and Finder reads. Written by the camera,
+    // or by the `i l` lookup from the place typed above; rename-footage
+    // --geocode turns it back into the place name. ffprobe reports the Apple
+    // key verbatim (lower-cased on read, like every probed name); `location`
+    // and `location-eng` are where a file that has been through ffmpeg
+    // without `use_metadata_tags` carries the same string, language-tagged
+    // from its udta copy. The XMP latitude is deliberately not read here: on
+    // its own it is half a coordinate, and it shows up in the Custom group
+    // alongside its longitude.
     FieldDef {
-        id: "coordinates", label: "Coordinates", control: Control::ReadOnly,
-        mdta: &[], read: &["location", "location-eng"],
+        id: "coordinates", label: "Coordinates", control: Control::Text,
+        mdta: &["com.apple.quicktime.location.ISO6709"],
+        read: &["com.apple.quicktime.location.iso6709", "location", "location-eng"],
         xmp: &[], ilst: None, footage_only: true, clip_only: false, adult_only: false,
         numeric: false,
     },
@@ -440,7 +456,10 @@ mod tests {
     fn write_keys_round_trip_through_read() {
         for f in FIELDS {
             for k in f.mdta {
-                assert!(f.read.contains(k), "{}: writes {k} but cannot read it", f.id);
+                // Probed names are lower-cased, so the read list holds the
+                // lower-cased spelling of a reverse-DNS key.
+                let read = k.to_ascii_lowercase();
+                assert!(f.read.contains(&read.as_str()), "{}: writes {k} but cannot read it", f.id);
             }
         }
     }

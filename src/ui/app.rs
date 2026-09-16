@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use crate::config::{Enums, KINDS, ORIENTATIONS};
 use crate::fetch;
+use crate::geocode::{self, Hit};
 use crate::model::filename;
 use crate::model::schema::{
     self, field_by_id, Control, FieldDef, ADULT, ADULT_HIDDEN, ADULT_ORDER, CLIP, FIELDS, FOOTAGE,
@@ -284,6 +285,10 @@ pub enum Msg {
     /// One result per file a `yt-dlp` fetch was given, by file index: the
     /// field values its URL yielded, or why it yielded none.
     Fetched(Vec<(usize, Result<Vec<(&'static str, Value)>, String>)>),
+    /// The place lookup's answer (§5.5): its hits, or why there are none, and
+    /// whether the lookup was a typed place -- whose venue name is worth
+    /// staging -- or a camera coordinate, whose nearest venue is not.
+    Located(Result<Vec<Hit>, String>, bool),
 }
 
 /// Where an import reads from. The menu keeps a cursor on one of these, so
@@ -293,12 +298,28 @@ pub enum Msg {
 pub enum ImportSource {
     Url,
     Filename,
+    /// A place, looked up: the location block from a typed name, or from
+    /// the coordinates the camera stored.
+    Location,
 }
 
 impl ImportSource {
     /// The sources in the order the band paints them, which is the order the
     /// cursor walks.
-    pub const ALL: [ImportSource; 2] = [ImportSource::Url, ImportSource::Filename];
+    pub const ALL: [ImportSource; 3] = [ImportSource::Url, ImportSource::Filename, ImportSource::Location];
+}
+
+/// The place lookup, after `i l` (§5.5). Modal like the import menu it came
+/// from, and painted in the same band: a place is typed, the helper runs off
+/// the UI thread, and the hits are chosen from -- or, with exactly one, taken.
+pub enum Locate {
+    /// Typing what to look up. Opens holding what the location fields already
+    /// say, so a lookup on a half-filled block is one ⏎.
+    Ask(Editor),
+    /// The helper is running. Esc here drops the answer when it comes.
+    Looking,
+    /// More than one hit: the cursor is on one of them.
+    Pick { hits: Vec<Hit>, at: usize, named: bool },
 }
 
 /// The import menu's preview of one file: what each source has to offer.
@@ -313,6 +334,12 @@ pub struct ImportPreview {
     pub fills: Vec<(String, Value)>,
     /// Fields the name carries that the file already holds, so are kept.
     pub keeps: Vec<String>,
+    /// What the place lookup would start from: the location block as it
+    /// stands, joined, if any of it is set.
+    pub place: Option<String>,
+    /// The coordinates on the file, if it has any -- what an empty lookup
+    /// names.
+    pub coords: Option<(f64, f64)>,
 }
 
 /// Staged edits, keyed by file index then by row key.
@@ -386,6 +413,9 @@ pub struct App {
     /// page extraction is seconds of network, and held to one at a time so
     /// two fetches cannot race each other onto the same field.
     pub fetching: bool,
+    /// The place lookup in progress, if one is (§5.5). Owns every key while
+    /// it is up, like the import menu it is reached from.
+    pub locate: Option<Locate>,
     /// Live position of the running write. The write happens on its own thread
     /// precisely so this can be painted while it runs -- done inline, the event
     /// loop cannot redraw and a multi-gigabyte remux looks like a hang.
@@ -460,6 +490,7 @@ impl App {
             writing: false,
             renaming: false,
             fetching: false,
+            locate: None,
             progress: None,
             editor: None,
             mode: Mode::Select,
@@ -578,6 +609,7 @@ impl App {
                 Msg::Wrote(r) => self.finish_write(*r),
                 Msg::Renamed(r) => self.finish_rename(r),
                 Msg::Fetched(r) => self.finish_fetch(r),
+                Msg::Located(r, named) => self.finish_locate(r, named),
             }
         }
     }
@@ -1280,7 +1312,113 @@ impl App {
                 fills.push((label, value));
             }
         }
-        ImportPreview { files: scope.len(), url, stem, fills, keeps }
+        let place = self.place_text(idx);
+        let place = if place.is_empty() { None } else { Some(place) };
+        ImportPreview { files: scope.len(), url, stem, fills, keeps, place, coords: self.coords_of(idx) }
+    }
+
+    /// The location block as the form shows it for one file, joined into the
+    /// query a lookup would start from: "Coro Hotel, Makati, Metro Manila".
+    fn place_text(&self, idx: usize) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        for id in ["location_place", "location", "location_state", "location_country"] {
+            let disk = self.files.get(idx).and_then(|f| disk_value(f, id));
+            if let Some(Value::Text(s)) = overlay(disk, self.staged.get(&idx).and_then(|m| m.get(id))) {
+                let s = s.trim();
+                if !s.is_empty() && !parts.iter().any(|p| p == s) {
+                    parts.push(s.to_string());
+                }
+            }
+        }
+        parts.join(", ")
+    }
+
+    /// The coordinates the form shows for one file, if they parse.
+    fn coords_of(&self, idx: usize) -> Option<(f64, f64)> {
+        let disk = self.files.get(idx).and_then(|f| disk_value(f, "coordinates"));
+        match overlay(disk, self.staged.get(&idx).and_then(|m| m.get("coordinates")))? {
+            Value::Text(s) => geocode::parse_iso6709(&s),
+            _ => None,
+        }
+    }
+
+    /// `i l`: open the lookup prompt over the location block as it stands.
+    fn open_locate(&mut self) {
+        self.commit_editor();
+        let idx = self.current_file();
+        let seed = Value::text(self.place_text(idx));
+        let editor = Editor::new(crate::model::schema::Control::Text, Some(&seed), Vec::new());
+        self.locate = Some(Locate::Ask(editor));
+        self.status.clear();
+    }
+
+    /// ⏎ on the prompt. A typed place is searched for; an empty prompt on a
+    /// file with coordinates names the place the camera recorded; an empty
+    /// prompt with nothing to go on stays open and says so.
+    fn run_locate(&mut self) {
+        let Some(Locate::Ask(ed)) = &self.locate else { return };
+        let query = match ed.value() {
+            Value::Text(s) => s.trim().to_string(),
+            _ => String::new(),
+        };
+        let coords = self.coords_of(self.current_file());
+        let (job, named): (Box<dyn FnOnce() -> anyhow::Result<Vec<Hit>> + Send>, bool) =
+            if !query.is_empty() {
+                self.status = format!("looking up {query}");
+                let q = query.clone();
+                (Box::new(move || geocode::search(&q)), true)
+            } else if let Some((lat, lon)) = coords {
+                self.status = format!("naming the place at {}", geocode::iso6709(lat, lon));
+                (Box::new(move || geocode::reverse(lat, lon)), false)
+            } else {
+                self.status = "type a place to look up; this file has no coordinates to name".into();
+                self.status_error = true;
+                return;
+            };
+        self.locate = Some(Locate::Looking);
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(Msg::Located(job().map_err(|e| format!("{e:#}")), named));
+        });
+    }
+
+    /// The helper answered. One hit is taken as read -- a single confirmation
+    /// key on "Coro Hotel, Makati" would be a toll, and `u` takes it back --
+    /// and several are offered to choose from. An answer to a lookup that was
+    /// cancelled meanwhile is dropped.
+    fn finish_locate(&mut self, r: Result<Vec<Hit>, String>, named: bool) {
+        if !matches!(self.locate, Some(Locate::Looking)) {
+            return;
+        }
+        match r {
+            Err(e) => {
+                self.locate = None;
+                self.status = e;
+                self.status_error = true;
+            }
+            Ok(mut hits) if hits.len() == 1 => self.stage_hit(hits.remove(0), named),
+            Ok(hits) => self.locate = Some(Locate::Pick { hits, at: 0, named }),
+        }
+    }
+
+    /// Walk the picker, wrapping like the form's own j/k.
+    fn move_pick(&mut self, delta: isize) {
+        if let Some(Locate::Pick { hits, at, .. }) = &mut self.locate {
+            let n = hits.len() as isize;
+            *at = (((*at as isize + delta) % n + n) % n) as usize;
+        }
+    }
+
+    /// Stage one hit's location block onto every file in scope, as one
+    /// undoable step, the way a fetch stages a page's answers.
+    fn stage_hit(&mut self, hit: Hit, named: bool) {
+        self.locate = None;
+        let fields = hit.fields(named);
+        let out = self.scope().into_iter().map(|i| (i, Ok(fields.clone()))).collect();
+        self.stage_import("located", "the place agrees with the file", out, false);
+        if !self.status_error {
+            self.status = format!("{}: {}", hit.summary(), self.status);
+        }
     }
 
     /// `i`: open the menu, with the cursor on a source that has something to
@@ -1310,6 +1448,7 @@ impl App {
         match source {
             ImportSource::Url => self.fetch_tags(),
             ImportSource::Filename => self.import_filename(),
+            ImportSource::Location => self.open_locate(),
         }
     }
 
@@ -1454,6 +1593,43 @@ impl App {
         // treated as a cancel: in a menu you move around in, an unrecognised
         // key is a misfire, and closing on it would throw away the preview
         // the user is still reading.
+        // The lookup owns every key while it is up, in three shapes: a line
+        // being typed, a wait, and a list being chosen from. Esc leaves each
+        // of them, and leaving the wait drops the answer when it arrives.
+        if let Some(locate) = &mut self.locate {
+            match locate {
+                Locate::Ask(ed) => match key.code {
+                    KeyCode::Esc => {
+                        self.locate = None;
+                        self.status = "lookup cancelled".into();
+                    }
+                    KeyCode::Enter => self.run_locate(),
+                    _ => {
+                        ed.handle(key);
+                    }
+                },
+                Locate::Looking => {
+                    if key.code == KeyCode::Esc {
+                        self.locate = None;
+                        self.status = "lookup cancelled".into();
+                    }
+                }
+                Locate::Pick { hits, at, named } => match key.code {
+                    KeyCode::Char('j') | KeyCode::Down | KeyCode::Tab => self.move_pick(1),
+                    KeyCode::Char('k') | KeyCode::Up | KeyCode::BackTab => self.move_pick(-1),
+                    KeyCode::Enter => {
+                        let (hit, named) = (hits[*at].clone(), *named);
+                        self.stage_hit(hit, named);
+                    }
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        self.locate = None;
+                        self.status = "lookup cancelled".into();
+                    }
+                    _ => {}
+                },
+            }
+            return;
+        }
         if self.import_menu {
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down | KeyCode::Tab => self.move_import(1),
@@ -1461,6 +1637,7 @@ impl App {
                 KeyCode::Enter => self.run_import(self.import_pick),
                 KeyCode::Char('u') if !ctrl => self.run_import(ImportSource::Url),
                 KeyCode::Char('f') if !ctrl => self.run_import(ImportSource::Filename),
+                KeyCode::Char('l') if !ctrl => self.run_import(ImportSource::Location),
                 KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('i') => {
                     self.import_menu = false;
                     self.status = "import cancelled".into();
@@ -3009,10 +3186,14 @@ mod tests {
         assert_eq!(app.import_pick, ImportSource::Url);
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(app.import_pick, ImportSource::Filename);
-        // Two entries, so k comes back and j wraps the way the form's j does.
+        // k comes back, and wraps the way the form's k does -- onto the
+        // place lookup, the third source; two j's return to the filename.
         press(&mut app, KeyCode::Char('k'));
         assert_eq!(app.import_pick, ImportSource::Url);
         press(&mut app, KeyCode::Char('k'));
+        assert_eq!(app.import_pick, ImportSource::Location);
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('j'));
         assert_eq!(app.import_pick, ImportSource::Filename);
         // ⏎ runs the source under the cursor -- here the filename, which is
         // synchronous, so the staging is on the far side of the keystroke.
@@ -3028,6 +3209,106 @@ mod tests {
         let mut app = one(&[("title", "T")]);
         press(&mut app, KeyCode::Char('i'));
         assert_eq!(app.import_pick, ImportSource::Filename);
+    }
+
+    fn hit(name: &str, city: &str) -> Hit {
+        Hit {
+            name: name.into(),
+            city: city.into(),
+            state: "Metro Manila".into(),
+            country: "Philippines".into(),
+            lat: 14.5641,
+            lon: 121.03,
+        }
+    }
+
+    /// `i l` opens the prompt over the location block as it stands, so a
+    /// half-filled block is one ⏎ from being looked up.
+    #[test]
+    fn the_lookup_prompt_opens_on_what_the_block_already_says() {
+        let mut app = one(&[("title", "T")]);
+        app.stage("location".into(), Value::text("Makati"));
+        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('l'));
+        assert!(!app.import_menu);
+        match &app.locate {
+            Some(Locate::Ask(ed)) => assert_eq!(ed.value(), Value::text("Makati")),
+            _ => panic!("the prompt should be open"),
+        }
+        press(&mut app, KeyCode::Esc);
+        assert!(app.locate.is_none());
+        assert_eq!(app.status, "lookup cancelled");
+    }
+
+    /// An empty prompt on a file with no coordinates has nothing to ask, so
+    /// it stays open and says so rather than starting the helper.
+    #[test]
+    fn an_empty_lookup_with_nothing_to_go_on_refuses() {
+        let mut app = one(&[("title", "T")]);
+        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(app.locate, Some(Locate::Ask(_))));
+        assert!(app.status_error);
+    }
+
+    /// One hit is staged straight onto the whole block, as one undo step;
+    /// a typed lookup keeps the venue name, and the row it fills appears.
+    #[test]
+    fn a_single_hit_stages_the_block_and_is_one_undo() {
+        let mut app = one(&[("title", "T")]);
+        app.locate = Some(Locate::Looking);
+        app.finish_locate(Ok(vec![hit("Coro Hotel", "Makati")]), true);
+        assert!(app.locate.is_none());
+        assert_eq!(shown(&app, "location_place"), Some(Value::text("Coro Hotel")));
+        assert_eq!(shown(&app, "location"), Some(Value::text("Makati")));
+        assert_eq!(shown(&app, "location_country"), Some(Value::text("Philippines")));
+        assert_eq!(shown(&app, "coordinates"), Some(Value::text("+14.5641+121.0300/")));
+        assert!(app.status.starts_with("Coro Hotel, Makati"), "{}", app.status);
+        press(&mut app, KeyCode::Char('u'));
+        assert_eq!(shown(&app, "location"), None);
+    }
+
+    /// A reverse lookup names the city but not the nearest venue.
+    #[test]
+    fn a_reverse_hit_leaves_the_venue_alone() {
+        let mut app = one(&[("com.apple.quicktime.location.iso6709", "+14.5641+121.0300/")]);
+        assert_eq!(app.import_preview().coords, Some((14.5641, 121.03)));
+        app.locate = Some(Locate::Looking);
+        app.finish_locate(Ok(vec![hit("Some Shop", "Makati")]), false);
+        assert_eq!(shown(&app, "location_place"), None);
+        assert_eq!(shown(&app, "location"), Some(Value::text("Makati")));
+    }
+
+    /// Several hits are chosen from: j/k walk them, ⏎ takes the one under
+    /// the cursor, and nothing is staged until then.
+    #[test]
+    fn several_hits_are_picked_from() {
+        let mut app = one(&[("title", "T")]);
+        app.locate = Some(Locate::Looking);
+        app.finish_locate(Ok(vec![hit("Coro Hotel", "Makati"), hit("Coro Cafe", "Pasay")]), true);
+        assert!(matches!(app.locate, Some(Locate::Pick { at: 0, .. })));
+        assert_eq!(shown(&app, "location"), None);
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(shown(&app, "location_place"), Some(Value::text("Coro Cafe")));
+        assert_eq!(shown(&app, "location"), Some(Value::text("Pasay")));
+    }
+
+    /// Esc during the wait drops the answer when it comes, and a refusal is
+    /// an error in the status line, not a silent nothing.
+    #[test]
+    fn a_cancelled_lookup_drops_its_answer() {
+        let mut app = one(&[("title", "T")]);
+        app.locate = Some(Locate::Looking);
+        press(&mut app, KeyCode::Esc);
+        app.finish_locate(Ok(vec![hit("Coro Hotel", "Makati")]), true);
+        assert_eq!(shown(&app, "location"), None);
+        app.locate = Some(Locate::Looking);
+        app.finish_locate(Err("no hits".into()), true);
+        assert!(app.locate.is_none());
+        assert!(app.status_error);
+        assert_eq!(app.status, "no hits");
     }
 
     /// A source that could not answer says so in the error colour: the words

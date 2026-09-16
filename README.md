@@ -141,7 +141,12 @@ sources with each one's preview under the cursor, `⏎` runs the one selected,
 still yields its tags) and stages Title, Actors, Channel, Description, Tags
 and Date. `f` parses the filename instead: `#tags`, `★` stars, and
 `Actor, Actor (Channel) - Title`, filling only the fields that are still
-empty. Both letters still work without moving the cursor first.
+empty. `l` looks a place up: type `Coro Hotel Makati`, and MapKit -- the
+service behind Finder's "Created in Makati" line -- fills Place, Location,
+State, Country and Coordinates in one undoable step; several matches are
+offered to choose from. Leave the line empty on a file with coordinates and
+it runs the other way, naming the place the camera recorded. The three
+letters still work without moving the cursor first.
 
 ### Help is one key away
 
@@ -176,7 +181,7 @@ ring.
 | `w` | write staged edits (shows a plan first) |
 | `ctrl-s` / `cmd-s` | the same, from either mode — commits the open field first (`cmd` needs a terminal with the kitty keyboard protocol) |
 | `r` | rename the file — or every file in the selection — from its tags, by running `rename-video`. With edits pending, the rename is queued onto the write and runs after it; `r` again unqueues it |
-| `i` | import — `j`/`k` pick a source and `⏎` runs it, or name one outright: `u` fetches the page behind the URL field with `yt-dlp`, `f` reads the filename. A fetch takes the page's word; a filename fills only the fields that are still empty. `u` takes either back in one step |
+| `i` | import — `j`/`k` pick a source and `⏎` runs it, or name one outright: `u` fetches the page behind the URL field with `yt-dlp`, `f` reads the filename, `l` looks a place up with MapKit and fills the location block. A fetch or a lookup takes the source's word; a filename fills only the fields that are still empty. `u` takes any of them back in one step |
 | `m` | merge a list field across every file in the selection |
 | `I` | inspector — per-file values for the focused field |
 | `]` / `[` (or `ctrl-n` / `ctrl-p`) / `a` | next file / previous file / all files |
@@ -211,9 +216,9 @@ while a field is open, so Select mode's single letters are untouched.
 
 ## The fields
 
-Twenty fields in one flat list. The five footage fields (Location, State,
-Country, Coordinates, Original name) appear only when a file in the selection
-carries them. Anything on disk that no field claims gets a row of its own at
+Twenty-one fields in one flat list. The six footage fields (Place, Location,
+State, Country, Coordinates, Original name) appear only when a file in the
+selection carries them, or once an edit or a place lookup fills one. Anything on disk that no field claims gets a row of its own at
 the bottom, atoms and XMP alike.
 
 `--print-schema` is where the vocabulary is documented: every field with the
