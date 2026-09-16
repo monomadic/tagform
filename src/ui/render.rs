@@ -32,6 +32,8 @@ const BULK_ICON: &str = "\u{101496}";
 const QUEUE_ICON: &str = "\u{10020f}";
 /// `􀽎` fronts each name in the bulk header's file list.
 const FILE_ICON: &str = "\u{100f4e}";
+/// `􀆿` sits left of the name in the badge.
+const LOGO_ICON: &str = "\u{1001bf}";
 /// Names the bulk header lists before it gives up and states the count.
 const LISTED_FILES: usize = 5;
 
@@ -152,7 +154,7 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App) {
     ));
     let tail = "  ".to_string();
 
-    let badge = " tagform ";
+    let badge = format!(" {LOGO_ICON} tagform ");
     let used = badge.width() + left.width() + progress_w + right.width() + tail.width();
     let gap = (area.width as usize).saturating_sub(used);
     let bar = Style::default().bg(t::header_bg());
