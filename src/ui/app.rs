@@ -1761,6 +1761,11 @@ impl App {
             Some(row) if row.control == Control::Stars => {
                 self.status = format!("{} · h/l or ←→ to nudge, 0-5 to set", row.label);
             }
+            // Place is not typed into so much as asked: ⏎ on it is `i l`, the
+            // lookup prompt over the block as it stands, and the hit fills
+            // the row. The row itself still takes a value from a fetch, a
+            // paste, or the prompt's own answer.
+            Some(row) if row.key == "location_place" => self.open_locate(),
             // An empty Date opens holding now. A date you meant to be today is
             // the overwhelmingly common one, and typing it out is the kind of
             // work a form is for: ⏎ ⏎ sets it, and Esc still backs out.
@@ -3260,21 +3265,22 @@ mod tests {
         assert_eq!(app.status, "lookup cancelled");
     }
 
-    /// Place is always in the form, and committing text into it *is* the
-    /// lookup: the typed text is staged (so a failed lookup loses nothing),
-    /// the helper runs, and the hit rewrites the row and fills the block.
+    /// Place is always in the form, and ⏎ on it is the lookup prompt -- the
+    /// same one `i l` opens -- over the block as it stands. ⏎ again runs the
+    /// helper, and the hit fills the row and the block beneath it.
     #[test]
-    fn committing_a_place_runs_the_lookup() {
+    fn enter_on_place_opens_the_lookup() {
         let mut app = one(&[("title", "T")]);
         let at = app.rows.iter().position(|r| r.key == "location_place").expect("Place is always shown");
         assert_eq!(shown(&app, "location"), None, "the rest of the block waits for a hit");
         app.jump(at);
         press(&mut app, KeyCode::Enter);
+        assert!(matches!(app.locate, Some(Locate::Ask(_))), "⏎ on Place is the prompt, not an inline edit");
+        assert_eq!(app.mode, Mode::Select);
         for c in "Coro Hotel Makati".chars() {
             press(&mut app, KeyCode::Char(c));
         }
         press(&mut app, KeyCode::Enter);
-        assert_eq!(shown(&app, "location_place"), Some(Value::text("Coro Hotel Makati")));
         assert!(matches!(app.locate, Some(Locate::Looking)), "{}", app.status);
         assert_eq!(app.status, "looking up Coro Hotel Makati");
         app.finish_locate(Ok(vec![hit("Coro Hotel", "Makati")]), true);

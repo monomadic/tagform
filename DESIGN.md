@@ -484,7 +484,7 @@ when the file actually carries them:
 
 | Field | Control | XMP tag | Note |
 |---|---|---|---|
-| **Place** | Text | `XMP-iptcExt:LocationCreatedSublocation` | the venue: "Coro Hotel"; always shown, and committing text into it runs the lookup |
+| **Place** | Text | `XMP-iptcExt:LocationCreatedSublocation` | the venue: "Coro Hotel"; always shown, and `⏎` on it is the lookup prompt |
 | **Location** | Text | `XMP-iptcExt:LocationCreatedCity` | a city name, and only that |
 | **State** | Text | `XMP-iptcExt:LocationCreatedProvinceState` | |
 | **Country** | Text | `XMP-iptcExt:LocationCreatedCountryName` | |
@@ -911,8 +911,8 @@ not have meant anything else. With no URL anywhere in scope it still says so
 rather than starting `yt-dlp`.
 
 **Place lookup** is the Place row: it is the one location row always in
-the form, and committing text into it runs the lookup (`src/geocode.rs`),
-which rewrites the row to what MapKit calls the place and fills the four
+the form, and `⏎` on it opens the lookup prompt -- the row is asked, not
+typed into -- whose answer (`src/geocode.rs`) rewrites the row to what MapKit calls the place and fills the four
 rows beneath. `i` then `l`, the third import source, reaches the same
 lookup through a prompt over the block as it stands -- and is how the
 reverse direction is asked for. What is typed goes to MapKit through `assets/geocode.swift`, a Swift script

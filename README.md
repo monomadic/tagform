@@ -148,8 +148,9 @@ cursor first.
 
 ### Location: type a place, get the block
 
-The Place row is always in the form. Type `Coro Hotel Makati` into it and
-press `⏎`: MapKit -- the service behind Finder's "Created in Makati" line --
+The Place row is always in the form, and `⏎` on it opens the lookup
+prompt rather than an inline edit. Type `Coro Hotel Makati` and press `⏎`
+again: MapKit -- the service behind Finder's "Created in Makati" line --
 answers, the row becomes "Coro Hotel", and Location, State, Country and
 Coordinates appear beneath it, filled from the hit, all as one undoable
 step. Several matches are offered to choose from. A lookup that finds nothing
