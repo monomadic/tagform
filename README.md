@@ -141,12 +141,19 @@ sources with each one's preview under the cursor, `⏎` runs the one selected,
 still yields its tags) and stages Title, Actors, Channel, Description, Tags
 and Date. `f` parses the filename instead: `#tags`, `★` stars, and
 `Actor, Actor (Channel) - Title`, filling only the fields that are still
-empty. `l` looks a place up: type `Coro Hotel Makati`, and MapKit -- the
-service behind Finder's "Created in Makati" line -- fills Place, Location,
-State, Country and Coordinates in one undoable step; several matches are
-offered to choose from. Leave the line empty on a file with coordinates and
-it runs the other way, naming the place the camera recorded. The three
-letters still work without moving the cursor first.
+empty. `l` opens the same place lookup the Place row runs (below), with an
+empty line on a file with coordinates running it the other way: naming the
+place the camera recorded. The three letters still work without moving the
+cursor first.
+
+### Location: type a place, get the block
+
+The Place row is always in the form. Type `Coro Hotel Makati` into it and
+press `⏎`: MapKit -- the service behind Finder's "Created in Makati" line --
+answers, the row becomes "Coro Hotel", and Location, State, Country and
+Coordinates appear beneath it, filled from the hit, all as one undoable
+step. Several matches are offered to choose from. A lookup that finds nothing
+says so and leaves what you typed.
 
 ### Help is one key away
 
@@ -216,9 +223,10 @@ while a field is open, so Select mode's single letters are untouched.
 
 ## The fields
 
-Twenty-one fields in one flat list. The six footage fields (Place, Location,
-State, Country, Coordinates, Original name) appear only when a file in the
-selection carries them, or once an edit or a place lookup fills one. Anything on disk that no field claims gets a row of its own at
+Twenty-one fields in one flat list. Place is always shown; the five other
+footage fields (Location, State, Country, Coordinates, Original name) appear
+only when a file in the selection carries them, or once an edit or a place
+lookup fills one. Anything on disk that no field claims gets a row of its own at
 the bottom, atoms and XMP alike.
 
 `--print-schema` is where the vocabulary is documented: every field with the

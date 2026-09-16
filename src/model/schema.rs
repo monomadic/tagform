@@ -205,15 +205,17 @@ pub static FIELDS: &[FieldDef] = &[
     field!("origin", "Origin", Control::Text,
         mdta: ["origin"], read: ["origin"], xmp: [], ilst: None),
 
-    // The venue: "Coro Hotel", where Location below is "Makati". Filled by the
-    // `i l` lookup (src/geocode.rs) from what MapKit calls the place, and the
-    // one part of the block a reverse lookup leaves alone -- asked what is at
-    // a coordinate, the geocoder names the nearest thing it knows, not the
-    // subject. IPTC's sublocation, which is exactly this.
+    // The venue: "Coro Hotel", where Location below is "Makati". The one
+    // location row that is always in the form, because it is where a place
+    // is typed: committing text here runs the MapKit lookup (src/geocode.rs),
+    // which rewrites it to what MapKit calls the place and fills the four
+    // rows below from the hit. The one part of the block a reverse lookup
+    // leaves alone -- asked what is at a coordinate, the geocoder names the
+    // nearest thing it knows, not the subject. IPTC's sublocation.
     FieldDef {
         id: "location_place", label: "Place", control: Control::Text,
         mdta: &[], read: &[],
-        xmp: &["XMP-iptcExt:LocationCreatedSublocation"], ilst: None, footage_only: true, clip_only: false, adult_only: false,
+        xmp: &["XMP-iptcExt:LocationCreatedSublocation"], ilst: None, footage_only: false, clip_only: false, adult_only: false,
         numeric: false,
     },
     // A city name, and only that. It deliberately does NOT read the `location`
@@ -280,11 +282,11 @@ pub const FOOTAGE: &str = "Footage";
 pub static FOOTAGE_HIDDEN: &[&str] = &["artist", "url", "channel", "synopsis"];
 
 /// The order a footage clip is filled in: what it is, then when, then who,
-/// then how good, then how to find it again -- and only after all that the
-/// prose, which is the part most clips never get. The remaining fields keep
-/// their schema order below these.
+/// then how good, then how to find it again, then where -- and only after
+/// all that the prose, which is the part most clips never get. The remaining
+/// fields keep their schema order below these.
 pub static FOOTAGE_ORDER: &[&str] =
-    &["category", "variant", "date", "actors", "rating", "tags", "title", "description"];
+    &["category", "variant", "date", "actors", "rating", "tags", "location_place", "title", "description"];
 
 /// Where a footage clip wears a different name. `actors` is the container key
 /// and stays one -- yt-dlp's cast list lands there -- but nobody filming a
@@ -306,8 +308,9 @@ pub const ADULT: &str = "Adult";
 pub const CLIP: &str = "Clip";
 
 /// An adult file is published under a channel and credits its actors; there
-/// is no separate artist. Same display-only rule as `FOOTAGE_HIDDEN`.
-pub static ADULT_HIDDEN: &[&str] = &["artist"];
+/// is no separate artist, and no place it was shot that anyone types in.
+/// Same display-only rule as `FOOTAGE_HIDDEN`.
+pub static ADULT_HIDDEN: &[&str] = &["artist", "location_place"];
 
 /// The order an adult file is filled in. Orientation sits with the other two
 /// closed sets, because it is one; Track sits with Title because it

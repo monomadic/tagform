@@ -484,7 +484,7 @@ when the file actually carries them:
 
 | Field | Control | XMP tag | Note |
 |---|---|---|---|
-| **Place** | Text | `XMP-iptcExt:LocationCreatedSublocation` | the venue: "Coro Hotel" |
+| **Place** | Text | `XMP-iptcExt:LocationCreatedSublocation` | the venue: "Coro Hotel"; always shown, and committing text into it runs the lookup |
 | **Location** | Text | `XMP-iptcExt:LocationCreatedCity` | a city name, and only that |
 | **State** | Text | `XMP-iptcExt:LocationCreatedProvinceState` | |
 | **Country** | Text | `XMP-iptcExt:LocationCreatedCountryName` | |
@@ -515,7 +515,10 @@ when the file actually carries them:
   on an ffmpeg-made file, mis-pairs the keys box adding it
   (`REWRITE_ONLY_KEYS` in `plan.rs`, measured in `docs/CONTAINER.md`).
 - **Place was added** for the venue, IPTC's sublocation, so that "Coro Hotel"
-  and "Makati" do not fight over one field.
+  and "Makati" do not fight over one field. It is not gated like the rest of
+  the block: it is where a place is typed, so it has to be there before the
+  block exists. A first attempt put the lookup only behind `i l`, and it was
+  not found there.
 
 Notes that are not optional:
 
@@ -907,9 +910,12 @@ only thing focus bought was a walk to a row before pressing a key that could
 not have meant anything else. With no URL anywhere in scope it still says so
 rather than starting `yt-dlp`.
 
-**Place lookup** is `i` then `l`: the third import source
-(`src/geocode.rs`). A prompt opens over the location block as it stands;
-what is typed goes to MapKit through `assets/geocode.swift`, a Swift script
+**Place lookup** is the Place row: it is the one location row always in
+the form, and committing text into it runs the lookup (`src/geocode.rs`),
+which rewrites the row to what MapKit calls the place and fills the four
+rows beneath. `i` then `l`, the third import source, reaches the same
+lookup through a prompt over the block as it stands -- and is how the
+reverse direction is asked for. What is typed goes to MapKit through `assets/geocode.swift`, a Swift script
 compiled on each run and a sibling of the `reverse-geocode` helper behind
 `rename-footage --geocode`, so a place typed here, a clip named from its
 coordinates and Finder's "Created in Makati" line all agree — and there is no

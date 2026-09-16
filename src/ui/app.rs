@@ -1361,21 +1361,31 @@ impl App {
             Value::Text(s) => s.trim().to_string(),
             _ => String::new(),
         };
-        let coords = self.coords_of(self.current_file());
-        let (job, named): (Box<dyn FnOnce() -> anyhow::Result<Vec<Hit>> + Send>, bool) =
-            if !query.is_empty() {
-                self.status = format!("looking up {query}");
-                let q = query.clone();
-                (Box::new(move || geocode::search(&q)), true)
-            } else if let Some((lat, lon)) = coords {
-                self.status = format!("naming the place at {}", geocode::iso6709(lat, lon));
-                (Box::new(move || geocode::reverse(lat, lon)), false)
-            } else {
-                self.status = "type a place to look up; this file has no coordinates to name".into();
-                self.status_error = true;
-                return;
-            };
+        if !query.is_empty() {
+            self.start_lookup(query);
+        } else if let Some((lat, lon)) = self.coords_of(self.current_file()) {
+            self.status = format!("naming the place at {}", geocode::iso6709(lat, lon));
+            self.spawn_lookup(move || geocode::reverse(lat, lon), false);
+        } else {
+            self.status = "type a place to look up; this file has no coordinates to name".into();
+            self.status_error = true;
+        }
+    }
+
+    /// Search for a typed place, from the Place row or the `i l` prompt.
+    fn start_lookup(&mut self, query: String) {
+        self.status = format!("looking up {query}");
+        self.status_error = false;
+        self.spawn_lookup(move || geocode::search(&query), true);
+    }
+
+    fn spawn_lookup(&mut self, job: impl FnOnce() -> anyhow::Result<Vec<Hit>> + Send + 'static, named: bool) {
         self.locate = Some(Locate::Looking);
+        // The suite must not reach MapKit: a test that commits a place checks
+        // the state and answers the lookup itself.
+        if cfg!(test) {
+            return;
+        }
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let _ = tx.send(Msg::Located(job().map_err(|e| format!("{e:#}")), named));
@@ -2100,7 +2110,17 @@ impl App {
             return;
         }
         let key = row.key.clone();
-        self.stage(key, new);
+        let typed = match &new {
+            Value::Text(s) => s.trim().to_string(),
+            _ => String::new(),
+        };
+        self.stage(key.clone(), new);
+        // Place is the row a place is typed into: committing text there is
+        // the lookup, and the hit rewrites the row and fills the block. A
+        // cleared row is just cleared.
+        if key == "location_place" && !typed.is_empty() {
+            self.start_lookup(typed);
+        }
     }
 
     pub fn validation(&self) -> Validation {
@@ -3240,6 +3260,32 @@ mod tests {
         assert_eq!(app.status, "lookup cancelled");
     }
 
+    /// Place is always in the form, and committing text into it *is* the
+    /// lookup: the typed text is staged (so a failed lookup loses nothing),
+    /// the helper runs, and the hit rewrites the row and fills the block.
+    #[test]
+    fn committing_a_place_runs_the_lookup() {
+        let mut app = one(&[("title", "T")]);
+        let at = app.rows.iter().position(|r| r.key == "location_place").expect("Place is always shown");
+        assert_eq!(shown(&app, "location"), None, "the rest of the block waits for a hit");
+        app.jump(at);
+        press(&mut app, KeyCode::Enter);
+        for c in "Coro Hotel Makati".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(shown(&app, "location_place"), Some(Value::text("Coro Hotel Makati")));
+        assert!(matches!(app.locate, Some(Locate::Looking)), "{}", app.status);
+        assert_eq!(app.status, "looking up Coro Hotel Makati");
+        app.finish_locate(Ok(vec![hit("Coro Hotel", "Makati")]), true);
+        assert_eq!(shown(&app, "location_place"), Some(Value::text("Coro Hotel")));
+        assert_eq!(shown(&app, "location"), Some(Value::text("Makati")));
+        assert_eq!(shown(&app, "coordinates"), Some(Value::text("+14.5641+121.0300/")));
+        // Clearing the row is not a lookup.
+        app.stage("location_place".into(), Value::text(""));
+        assert!(app.locate.is_none());
+    }
+
     /// An empty prompt on a file with no coordinates has nothing to ask, so
     /// it stays open and says so rather than starting the helper.
     #[test]
@@ -3391,14 +3437,14 @@ mod tests {
         for hidden in FOOTAGE_HIDDEN {
             assert!(!k.contains(hidden), "{hidden} should be hidden: {k:?}");
         }
-        let head: Vec<&str> = k.iter().take(8).copied().collect();
+        let head: Vec<&str> = k.iter().take(9).copied().collect();
         assert_eq!(
             head,
-            ["category", "variant", "date", "actors", "rating", "tags", "title", "description"]
+            ["category", "variant", "date", "actors", "rating", "tags", "location_place", "title", "description"]
         );
         // The fields the profile does not name keep their schema order behind
         // the ones it does.
-        assert_eq!(k[8..], ["genre", "kind", "origin"]);
+        assert_eq!(k[9..], ["genre", "kind", "origin"]);
         assert_eq!(row(&app, "actors").label, "People");
     }
 
