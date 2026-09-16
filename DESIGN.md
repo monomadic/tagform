@@ -243,15 +243,18 @@ Built, sitting directly after Kind:
 
 | Field | Control | Keys (`mdta`) | Read also | XMP | ilst |
 |---|---|---|---|---|---|
-| Date | Date (`YYYY-MM-DD`) | `date` | `com.apple.quicktime.creationdate` | `XMP-xmp:CreateDate` | `©day` |
+| Date | Date (`YYYY-MM-DD`) | `date` | `com.apple.quicktime.creationdate`, `creation_time` | `XMP-xmp:CreateDate` | `©day` |
 | Synopsis | TextArea | `synopsis` | — | — | `ldes` |
 | Origin | Text | `origin` | — | — | — |
 
-Date deliberately does **not** read `creation_time`: that is muxer bookkeeping
-(§3.7), and treating it as authored would show every file carrying a date nobody
-set. `com.apple.quicktime.creationdate` is different — a phone writes it, and it
-is a real capture time. `date` is read first, so an edit written there wins on
-the next read.
+Date reads `date` first, so an edit written there wins on the next read; then
+`com.apple.quicktime.creationdate`, which an iPhone writes; then `creation_time`,
+which is the `mvhd` creation time as ffprobe reports it. That last one was
+originally excluded as muxer bookkeeping, on the theory that every file would
+carry a date nobody set — but a plain ffmpeg mux leaves `mvhd` at zero, so a
+present `creation_time` is one a camera authored, and an Android clip keeps its
+capture time *there and nowhere else*. It is read, never written, and the remux
+restores it into every header after ffmpeg has zeroed it (§9, `atoms::Times`).
 
 ⟨designed⟩ Not built, and unlikely to be until something wants them: Comment,
 Composer, Director, Producer, Studio, Copyright, Grouping, Language, Show,
@@ -569,8 +572,10 @@ a mixed selection has no one answer to key off — reshapes the form itself
 ### 3.7 Keys `tagform` never shows
 
 `major_brand`, `minor_version`, `compatible_brands`, `encoder`, `handler_name`,
-`vendor_id`, `creation_time` — muxer bookkeeping, hidden from the form, and
-actively cleared on every write rather than merely ignored (§2.1).
+`vendor_id` — muxer bookkeeping, hidden from the form, and actively cleared on
+every write rather than merely ignored (§2.1). `creation_time` is cleared on the
+remux for the same reason but is not junk: Date reads it (§3.3), and the remux
+puts it back into `mvhd` afterwards.
 
 Everything else found on disk but absent from the schema appears as **Custom**
 rows at the bottom of the form, so no existing tag is ever lost by being

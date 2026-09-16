@@ -53,9 +53,18 @@ impl FileTags {
 
     /// Where the two readers disagree. Surfaced rather than silently resolved,
     /// because a disagreement usually means one writer clobbered the other.
+    ///
+    /// `creation_time` is left out: rename-footage writes `XMP-xmp:CreateDate`
+    /// as the local-time rendering of exactly that `mvhd` instant, so the two
+    /// differ on every footage file without anything having been clobbered.
     pub fn disputes(&self, f: &crate::model::schema::FieldDef) -> Option<(Value, Value)> {
         let x = f.xmp.iter().find_map(|k| self.xmp.get(*k)).filter(|v| !v.is_empty())?;
-        let a = f.read.iter().find_map(|k| self.atoms.get(*k)).filter(|v| !v.is_empty())?;
+        let a = f
+            .read
+            .iter()
+            .filter(|k| **k != "creation_time")
+            .find_map(|k| self.atoms.get(*k))
+            .filter(|v| !v.is_empty())?;
         (x != a).then(|| (x.clone(), a.clone()))
     }
 }
@@ -89,7 +98,16 @@ fn probe_atoms(path: &Path) -> Result<BTreeMap<String, Value>> {
             if crate::model::schema::JUNK_KEYS.contains(&key.as_str()) {
                 continue;
             }
-            if let Some(s) = json_scalar(val) {
+            if let Some(mut s) = json_scalar(val) {
+                // A file that has been through a `use_metadata_tags` remux
+                // with its creation time intact carries it twice, in `mvhd`
+                // and as a promoted mdta key, and ffprobe joins the two as
+                // `X;X`. They are copies of one instant; show it once.
+                if key == "creation_time" {
+                    if let Some((first, _)) = s.split_once(';') {
+                        s = first.to_string();
+                    }
+                }
                 map.insert(key, Value::text(s));
             }
         }

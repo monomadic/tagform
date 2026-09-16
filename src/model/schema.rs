@@ -181,18 +181,22 @@ pub static FIELDS: &[FieldDef] = &[
     field!("kind", "Kind", Control::Enum,
         mdta: ["media_type"], read: ["media_type"], xmp: [], ilst: Some("stik")),
 
-    // Deliberately does NOT read `creation_time`: that is muxer-generated
-    // bookkeeping (JUNK_KEYS), not an authored date, and treating it as one
-    // would show every file carrying a date nobody set. Resolving a date for a
-    // footage filename from exif/ctime is a separate concern (rename-footage's
-    // resolve_date), not a field value.
-    // `com.apple.quicktime.creationdate` is what a phone writes and is a real
-    // authored capture time, unlike `creation_time`, which is muxer bookkeeping
-    // (JUNK_KEYS). Without it a camera clip showed "Date —" while its actual
-    // date sat in the Custom section a few rows below. `date` stays first, so an
-    // edit written there wins on the next read.
+    // `com.apple.quicktime.creationdate` is what an iPhone writes: a real
+    // authored capture time. Without it a camera clip showed "Date —" while its
+    // actual date sat in the Custom section a few rows below.
+    //
+    // `creation_time` is the `mvhd` creation time, which ffprobe reports under
+    // that name. It used to be excluded as muxer bookkeeping on the theory
+    // that every file would carry a date nobody set -- but a plain ffmpeg mux
+    // leaves it at zero (ffprobe then omits it), so when it is present someone
+    // authored it. An Android camera, and most cameras that are not iPhones,
+    // store the capture time *only* there, so without it every such clip read
+    // "Date —" while mediainfo showed the date plainly. It reads last, so an
+    // authored `date` or a phone's `creationdate` wins; it is never written,
+    // and the remux takes care to keep it (write.rs, atoms::restore_times).
     field!("date", "Date", Control::Date,
-        mdta: ["date"], read: ["date", "com.apple.quicktime.creationdate"],
+        mdta: ["date"],
+        read: ["date", "com.apple.quicktime.creationdate", "creation_time"],
         xmp: ["XMP-xmp:CreateDate"], ilst: Some("\u{a9}day")),
 
     field!("synopsis", "Synopsis", Control::TextArea,
@@ -308,9 +312,14 @@ pub fn profile_rank(order: &[&str], id: &str) -> usize {
 /// Muxer bookkeeping. Hidden from the form, and actively cleared on write —
 /// with `-map_metadata 0` plus `use_metadata_tags`, ffmpeg promotes these to
 /// real readable tags that then accumulate on every rewrite (docs/CONTAINER.md).
+///
+/// `creation_time` is not here: it is the container's capture time and the
+/// Date field reads it. The remux still clears it from ffmpeg's metadata
+/// dictionary, for the same accumulation reason, and restores it into `mvhd`
+/// afterwards (plan::junk_clears).
 pub static JUNK_KEYS: &[&str] = &[
     "major_brand", "minor_version", "compatible_brands", "encoder",
-    "handler_name", "vendor_id", "creation_time",
+    "handler_name", "vendor_id",
 ];
 
 /// Every XMP tag any field claims, for splitting known from custom. Without

@@ -18,7 +18,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::model::schema::field_by_id;
 use crate::model::value::Value;
+use crate::tags::atoms;
 use crate::tags::plan::{self, Writer};
 use crate::tags::probe::{self, FileTags};
 use crate::tags::write;
@@ -434,5 +436,49 @@ fn only_mov_gets_the_mov_muxer() {
         ("a", "mp4"),
     ] {
         assert_eq!(write::muxer_for(Path::new(name)), want, "for {name}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// the capture time -- where a camera that is not an iPhone keeps it
+// ---------------------------------------------------------------------------
+
+/// An Android clip stores when it was shot only in `mvhd`, which ffprobe
+/// reports as `creation_time`. The Date field must read it, and a remux must
+/// hand it back: ffmpeg zeroes it when the key is cleared, and when it is not,
+/// promotes it to an mdta key that reads as `X;X` and zeroes `mvhd` on the
+/// *next* remux instead. Two writes in a row, so both halves are checked.
+#[test]
+fn a_cameras_creation_time_is_the_date_and_survives_a_remux() {
+    let dir = workspace("creation-time");
+    // No `use_metadata_tags`: the time lands in `mvhd` and nowhere else, as
+    // a camera leaves it. No mdta box either, so the native writer declines
+    // and the remux is the path taken.
+    let path = generate(&dir, "cam.mp4", &["-metadata", "creation_time=2024-02-04T03:18:59Z"]);
+    let date = field_by_id("date").unwrap();
+    let shot = Value::text("2024-02-04T03:18:59.000000Z");
+    let before = probe::probe(&path).unwrap();
+    assert_eq!(before.lookup(date), Some(shot.clone()), "the Date field reads mvhd");
+    let t = atoms::times(&path).expect("a readable mvhd");
+    assert_ne!(t.creation, 0);
+
+    // A new key each round, so neither write can go in place. The first is
+    // the remux; that gives the file an mdta box, so the native writer takes
+    // the second and must leave `mvhd` alone rather than clear it as junk.
+    for (round, key, value, writer) in [
+        ("first", "title", "One", Writer::Ffmpeg),
+        ("second", "genre", "Two", Writer::Native),
+    ] {
+        let (w, r) = write_it(&path, &staged(&[(key, value)]), false);
+        assert_eq!(r, Ok(()), "{round} write");
+        assert_eq!(w, writer, "{round} write took the expected path");
+        assert_eq!(atoms::times(&path), Some(t), "{round} write kept mvhd");
+        let after = probe::probe(&path).unwrap();
+        assert_eq!(after.lookup(date), Some(shot.clone()), "{round} write: Date still reads");
+        assert_eq!(text(&after, key).as_deref(), Some(value));
+        assert!(
+            !text(&after, "creation_time").unwrap_or_default().contains(';'),
+            "{round} write promoted creation_time into a second, accumulating copy"
+        );
     }
 }

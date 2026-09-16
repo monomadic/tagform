@@ -209,8 +209,22 @@ pub fn build(
 /// Muxer bookkeeping is cleared on every remux. With `-map_metadata 0` plus
 /// `use_metadata_tags`, ffmpeg promotes these to real readable tags that then
 /// accumulate on each rewrite (docs/CONTAINER.md §1.3).
+///
+/// `creation_time` is cleared too, though it is not junk: it is the `mvhd`
+/// capture time the Date field reads. Left in the dictionary, ffmpeg writes
+/// it into `mvhd` *and* promotes it to an mdta key, ffprobe then reports the
+/// pair as `X;X`, and the next remux fails to parse that and zeroes `mvhd` --
+/// so the date is lost on the second write instead of the first. Clearing it
+/// zeroes `mvhd` at once; the remux restores it from the source afterwards
+/// (atoms::restore_times). The native writer applies the same clear, where it
+/// only ever removes a promoted copy, since that writer never touches `mvhd`.
 pub fn junk_clears() -> Vec<(String, String)> {
-    JUNK_KEYS.iter().map(|k| (k.to_string(), String::new())).collect()
+    JUNK_KEYS
+        .iter()
+        .copied()
+        .chain(std::iter::once("creation_time"))
+        .map(|k| (k.to_string(), String::new()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -415,6 +429,8 @@ mod tests {
         let clears = junk_clears();
         assert!(clears.iter().any(|(k, v)| k == "major_brand" && v.is_empty()));
         assert!(clears.iter().any(|(k, _)| k == "compatible_brands"));
+        // Not junk, but cleared so it is not promoted; restored by the remux.
+        assert!(clears.iter().any(|(k, v)| k == "creation_time" && v.is_empty()));
     }
 
     #[test]

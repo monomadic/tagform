@@ -116,6 +116,20 @@ loss.
 | other 23 keys | all preserved |
 | tag growth (+8 KB) | absorbed by consuming the `wide`/`free` padding atom; moov stayed ahead of mdat |
 
+`creation_time` is the awkward one. It is the `mvhd` creation time, not a tag,
+but ffprobe reports it in `format.tags` and `-map_metadata 0` carries it back
+in as a tag. Measured on an Android clip (mvhd set, no mdta box):
+
+| remux | `mvhd` | `Keys:CreationTime` | ffprobe `creation_time` |
+|---|---|---|---|
+| `-map_metadata 0`, key left alone | kept | **promoted** | `X;X` |
+| the same file remuxed again | **zeroed** | `X;X` | `X;X` |
+| `-metadata creation_time=` (cleared) | zeroed | — | — |
+
+So clearing it costs the date at once and keeping it costs the date on the
+next write, when ffmpeg cannot parse `X;X`. `tagform` clears it and writes the
+source's `mvhd`/`tkhd`/`mdhd` times back into the result itself.
+
 ### 3.1 Custom `Keys:` tags need a user-defined config
 
 Out of the box exiftool refuses them:

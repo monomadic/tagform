@@ -380,6 +380,14 @@ fn remux(
     })
     .map_err(WriteError::Failed)?;
 
+    // ffmpeg was told to forget `creation_time` (plan::junk_clears), which
+    // zeroes the capture time in every header. Put the source's back before
+    // the result is judged, so the original is only ever replaced by a file
+    // that still knows when it was shot.
+    if let Some(t) = atoms::times(path).filter(|t| t.creation != 0) {
+        atoms::restore_times(&tmp, t).map_err(WriteError::Failed)?;
+    }
+
     step(on, "verifying", REMUX_SHARE);
     verify_duration(path, &tmp).map_err(WriteError::Failed)?;
     verify_streams(&shapes, &tmp).map_err(WriteError::Failed)?;
