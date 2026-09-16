@@ -923,8 +923,8 @@ key, no account and no rate limit to mind. A forward lookup is a local
 search, not an address parse, because "Coro Hotel Makati" has to find the
 hotel. One hit is staged on arrival, onto Place, Location, State, Country and
 Coordinates, as one undo step; several are chosen from in the band. An empty
-prompt on a file with coordinates runs the other way and names the camera's
-place — the city, state and country but not the nearest venue, which for a
+prompt on a file with coordinates -- or `⏎` on the Coordinates row itself --
+runs the other way and names the camera's place — the city, state and country but not the nearest venue, which for a
 clip shot in a street is a shop that was not the subject. macOS only, like
 the helper it mirrors; without `swift` on PATH the lookup says so and
 nothing else is lost.

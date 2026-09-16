@@ -1363,13 +1363,20 @@ impl App {
         };
         if !query.is_empty() {
             self.start_lookup(query);
-        } else if let Some((lat, lon)) = self.coords_of(self.current_file()) {
-            self.status = format!("naming the place at {}", geocode::iso6709(lat, lon));
-            self.spawn_lookup(move || geocode::reverse(lat, lon), false);
-        } else {
+        } else if !self.name_the_coordinates() {
             self.status = "type a place to look up; this file has no coordinates to name".into();
             self.status_error = true;
         }
+    }
+
+    /// Reverse lookup of the coordinates in view, from the Coordinates row
+    /// or an empty prompt. False when the file has none to name.
+    fn name_the_coordinates(&mut self) -> bool {
+        let Some((lat, lon)) = self.coords_of(self.current_file()) else { return false };
+        self.status = format!("naming the place at {}", geocode::iso6709(lat, lon));
+        self.status_error = false;
+        self.spawn_lookup(move || geocode::reverse(lat, lon), false);
+        true
     }
 
     /// Search for a typed place, from the Place row or the `i l` prompt.
@@ -1766,6 +1773,13 @@ impl App {
             // the row. The row itself still takes a value from a fetch, a
             // paste, or the prompt's own answer.
             Some(row) if row.key == "location_place" => self.open_locate(),
+            // Coordinates the file already holds are named, not retyped: ⏎
+            // runs the reverse lookup straight away. An empty row opens for
+            // typing like any other.
+            Some(row) if row.key == "coordinates" && self.coords_of(self.current_file()).is_some() => {
+                self.commit_editor();
+                self.name_the_coordinates();
+            }
             // An empty Date opens holding now. A date you meant to be today is
             // the overwhelmingly common one, and typing it out is the kind of
             // work a form is for: ⏎ ⏎ sets it, and Esc still backs out.
@@ -3321,12 +3335,17 @@ mod tests {
         assert_eq!(shown(&app, "location"), None);
     }
 
-    /// A reverse lookup names the city but not the nearest venue.
+    /// ⏎ on a Coordinates row that holds something runs the reverse lookup
+    /// at once; a reverse hit names the city but not the nearest venue.
     #[test]
     fn a_reverse_hit_leaves_the_venue_alone() {
         let mut app = one(&[("com.apple.quicktime.location.iso6709", "+14.5641+121.0300/")]);
         assert_eq!(app.import_preview().coords, Some((14.5641, 121.03)));
-        app.locate = Some(Locate::Looking);
+        let at = app.rows.iter().position(|r| r.key == "coordinates").unwrap();
+        app.jump(at);
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(app.locate, Some(Locate::Looking)), "{}", app.status);
+        assert_eq!(app.mode, Mode::Select);
         app.finish_locate(Ok(vec![hit("Some Shop", "Makati")]), false);
         assert_eq!(shown(&app, "location_place"), None);
         assert_eq!(shown(&app, "location"), Some(Value::text("Makati")));

@@ -154,7 +154,10 @@ again: MapKit -- the service behind Finder's "Created in Makati" line --
 answers, the row becomes "Coro Hotel", and Location, State, Country and
 Coordinates appear beneath it, filled from the hit, all as one undoable
 step. Several matches are offered to choose from. A lookup that finds nothing
-says so and leaves what you typed.
+says so and leaves what you typed. `⏎` on a Coordinates row the camera filled
+runs it the other way, naming the place those numbers are at. In the
+filename, `rename-video` names a clip by its Location, and by its Place when
+no city was written.
 
 ### Help is one key away
 
