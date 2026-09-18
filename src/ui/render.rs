@@ -39,9 +39,13 @@ const LISTED_FILES: usize = 5;
 /// Files the write-queue panel lists before it gives up and states the
 /// count. One more than the selection list: a queue is worth a row more.
 const LISTED_QUEUE: usize = 6;
-/// The column a stage name ("remuxing", "waiting") is padded into, so every
-/// bar in the queue starts at the same column.
-const STAGE_COLS: usize = 10;
+/// The column a stage name is right-aligned into in the queue, so every bar
+/// starts at the same column: wide enough for the longest stage `write.rs`
+/// reports, "rewriting the container".
+const STAGE_COLS: usize = 23;
+/// Columns left clear at the right of the queue, matching where the badge
+/// bar's own text stops.
+const RIGHT_MARGIN: usize = 2;
 
 /// Cells are about twice as tall as they are wide, so an image of pixel aspect
 /// `a` needs `2 * rows * a` columns to keep its proportions. Sizing the band
@@ -209,11 +213,18 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
     // had or the header loses its left edge.
     let pad = if has_thumb { 2 } else { 1 };
 
+    // The same mark the bulk list gives this file, so the name reads the
+    // same in either view: the file icon, or the queue mark while it waits.
+    let (icon, icon_fg) = match app.queue_place(idx) {
+        Some(QueuePlace::Busy) => (QUEUE_ICON, t::accent()),
+        Some(_) => (QUEUE_ICON, t::staged()),
+        None => (FILE_ICON, t::accent()),
+    };
     let mut lines = vec![
-        Line::from(Span::styled(
-            name,
-            Style::default().fg(t::header_fg()).add_modifier(Modifier::BOLD),
-        )),
+        Line::from(vec![
+            Span::styled(format!("{icon}  "), Style::default().fg(icon_fg)),
+            Span::styled(name, Style::default().fg(t::header_fg()).add_modifier(Modifier::BOLD)),
+        ]),
         Line::from(Span::styled(
             if summary.is_empty() { "probing…".into() } else { summary },
             Style::default().fg(t::muted()),
@@ -225,7 +236,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
     // does not. The bar bottom-right is the batch; this one is this file.
     if let Some(place) = app.queue_place(idx) {
         let w = (cols[1].width as usize).saturating_sub(pad as usize + 1);
-        let bar_w = w.saturating_sub(STAGE_COLS + 6).clamp(4, 48);
+        let bar_w = w.saturating_sub(STAGE_COLS + 8).clamp(4, 48);
         let (stage, frac) = match (place, &app.progress) {
             (QueuePlace::Busy, Some(p)) => (p.label.to_string(), Some(p.frac)),
             (QueuePlace::Busy, None) => ("writing".into(), Some(0.0)),
@@ -233,7 +244,21 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
             (QueuePlace::Waiting(n), _) => (format!("{n} ahead"), None),
         };
         lines.push(Line::from(""));
-        lines.push(Line::from(progress_row(&stage, frac, bar_w)));
+        // Bar first, stage after: the bar holds still at the left edge of the
+        // facts while the stage beside it changes length from "preparing" to
+        // "replacing the original".
+        let mut row = bar(bar_w, frac.unwrap_or(0.0)).spans;
+        if let Some(fr) = frac {
+            row.push(Span::styled(
+                format!(" {:>3}%", (fr * 100.0).round() as u32),
+                Style::default().fg(t::accent()),
+            ));
+        }
+        row.push(Span::styled(
+            format!("  {stage}"),
+            Style::default().fg(if frac.is_some() { t::accent() } else { t::muted() }),
+        ));
+        lines.push(Line::from(row));
     }
     f.render_widget(
         Paragraph::new(lines)
@@ -260,7 +285,7 @@ fn draw_file_list(f: &mut Frame, area: Rect, app: &App) {
         return draw_queue(f, area, app, &queue, queued);
     }
     let n = app.files.len();
-    let width = (area.width as usize).saturating_sub(4);
+    let width = (area.width as usize).saturating_sub(5);
     let mut lines: Vec<Line> = app
         .files
         .iter()
@@ -274,7 +299,9 @@ fn draw_file_list(f: &mut Frame, area: Rect, app: &App) {
                 None => (FILE_ICON, t::accent()),
             };
             Line::from(vec![
-                Span::styled(format!(" {icon} "), Style::default().fg(colour)),
+                // Two spaces after: an SF Symbol draws wider than the one
+                // cell it is counted as, and with one it touches the name.
+                Span::styled(format!(" {icon}  "), Style::default().fg(colour)),
                 Span::styled(
                     t::fit(&file_label(&file.path), width),
                     Style::default().fg(t::header_fg()),
@@ -284,7 +311,7 @@ fn draw_file_list(f: &mut Frame, area: Rect, app: &App) {
         .collect();
     if n > LISTED_FILES {
         lines.push(Line::from(Span::styled(
-            format!("   … {n} files"),
+            format!("    … {n} files"),
             Style::default().fg(t::muted()),
         )));
     }
@@ -298,14 +325,15 @@ fn draw_file_list(f: &mut Frame, area: Rect, app: &App) {
 /// much is left.
 fn draw_queue(f: &mut Frame, area: Rect, app: &App, rows: &[QueueRow], total: usize) {
     let width = area.width as usize;
-    let bar_w = width.saturating_sub(STAGE_COLS + 30).clamp(6, 24);
-    // Names share one column so the bars line up -- a ragged column of bars
-    // cannot be read as a queue -- but the column is the longest name, not
-    // the room available: padding six short names out to forty columns puts
-    // the bars off in the margin where nothing else is.
-    let room = width.saturating_sub(bar_w + STAGE_COLS + 12);
-    let longest = rows.iter().map(|r| r.name.width()).max().unwrap_or(0);
-    let name_w = longest.min(room).clamp(8, 48);
+    // Stage, bar and percentage sit against the right edge, the same two
+    // columns in from it the badge bar's own text stops at; the name takes
+    // everything to their left. Anchored there, the bars form one column
+    // whatever the names are, and a long name costs its own tail rather than
+    // pushing the one thing that moves off into the middle of the row.
+    let bar_w = width.saturating_sub(STAGE_COLS + 40).clamp(6, 24);
+    let stage_w = STAGE_COLS.min(width / 4);
+    let right_w = stage_w + 1 + bar_w + 5 + RIGHT_MARGIN;
+    let name_w = width.saturating_sub(4 + 1 + right_w).max(4);
     let mut lines: Vec<Line> = rows
         .iter()
         .map(|r| {
@@ -319,7 +347,7 @@ fn draw_queue(f: &mut Frame, area: Rect, app: &App, rows: &[QueueRow], total: us
                 // queue, and which one is moving is said by the bar and the
                 // stage beside it, not by a second vocabulary of icons.
                 Span::styled(
-                    format!(" {QUEUE_ICON} "),
+                    format!(" {QUEUE_ICON}  "),
                     Style::default().fg(if r.busy { t::accent() } else { t::staged() }),
                 ),
                 Span::styled(
@@ -327,13 +355,13 @@ fn draw_queue(f: &mut Frame, area: Rect, app: &App, rows: &[QueueRow], total: us
                     Style::default().fg(if r.busy { t::header_fg() } else { t::muted() }),
                 ),
             ];
-            spans.extend(progress_row(&stage, frac, bar_w));
+            spans.extend(progress_row(&stage, stage_w, frac, bar_w));
             Line::from(spans)
         })
         .collect();
     if total > rows.len() {
         lines.push(Line::from(Span::styled(
-            format!("   … {} more waiting", total - rows.len()),
+            format!("    … {} more waiting", total - rows.len()),
             Style::default().fg(t::muted()),
         )));
     }
@@ -343,11 +371,13 @@ fn draw_queue(f: &mut Frame, area: Rect, app: &App, rows: &[QueueRow], total: us
 /// One progress row: the stage, a bar, and a percentage -- or, for a file
 /// still waiting its turn, the same geometry with the bar left empty. The
 /// geometry is shared so a column of them reads as one queue rather than as
-/// six unrelated rows.
-fn progress_row(stage: &str, frac: Option<f64>, bar_w: usize) -> Vec<Span<'static>> {
+/// six unrelated rows. The stage is right-aligned in its `stage_w` columns so
+/// it sits against its bar however long it is.
+fn progress_row(stage: &str, stage_w: usize, frac: Option<f64>, bar_w: usize) -> Vec<Span<'static>> {
     let running = frac.is_some();
+    let stage = t::fit(stage, stage.width().min(stage_w));
     let mut spans = vec![Span::styled(
-        format!("{} ", t::fit(stage, STAGE_COLS)),
+        format!("{}{stage} ", " ".repeat(stage_w.saturating_sub(stage.width()))),
         Style::default().fg(if running { t::accent() } else { t::muted() }),
     )];
     spans.extend(bar(bar_w, frac.unwrap_or(0.0)).spans);
@@ -781,8 +811,8 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
             .then(|| tag_list(row))
             .flatten();
         let value_spans = match set {
-            Some((labels, sel)) => {
-                set_spans(&labels, sel, text_w + PAD as usize - lead, bg, focused, staged)
+            Some((labels, sel, counts)) => {
+                set_spans(&labels, sel, &counts, text_w + PAD as usize - lead, bg, focused, staged)
             }
             None => {
                 // The count is dropped, not the value, when the box is too
@@ -892,13 +922,39 @@ fn group_rule(width: usize, heading: Option<(&str, ratatui::style::Color)>) -> L
 /// A value the set does not know is appended rather than dropped, the same way
 /// `nudge` appends it: an unfamiliar Category has to be visible and steppable,
 /// or the first h would silently replace it.
-fn closed_set(app: &App, row: &Row) -> Option<(Vec<String>, Option<usize>)> {
+///
+/// The third part is the mixed row's answer instead of a selection: how many
+/// files in the selection hold each option, zero for the ones none do, empty
+/// when the row agrees. `Original 4  Clip 2` says what the files disagree
+/// about, where a row with nothing lit only said that they do.
+fn closed_set(app: &App, row: &Row) -> Option<(Vec<String>, Option<usize>, Vec<usize>)> {
     if row.control != Control::Enum {
         return None;
     }
     let mut opts = app.options_for(row);
     if opts.is_empty() {
         return None;
+    }
+    let mut counts = Vec::new();
+    if let Agg::Mixed { values } = &row.eff {
+        for v in values {
+            let Some(Value::Text(code)) = v else { continue };
+            if code.trim().is_empty() {
+                continue;
+            }
+            let i = match opts.iter().position(|o| &o.code == code) {
+                Some(i) => i,
+                None => {
+                    opts.push(Opt { code: code.clone(), label: code.clone() });
+                    opts.len() - 1
+                }
+            };
+            counts.resize(opts.len(), 0);
+            counts[i] += 1;
+        }
+        if !counts.is_empty() {
+            counts.resize(opts.len(), 0);
+        }
     }
     let sel = match app.shown_value(row) {
         Some(Value::Text(s))
@@ -914,7 +970,7 @@ fn closed_set(app: &App, row: &Row) -> Option<(Vec<String>, Option<usize>)> {
         }
         _ => None,
     };
-    Some((opts.into_iter().map(|o| o.label).collect(), sel))
+    Some((opts.into_iter().map(|o| o.label).collect(), sel, counts))
 }
 
 /// The set, laid out along the value box with the current one lit.
@@ -928,19 +984,33 @@ fn closed_set(app: &App, row: &Row) -> Option<(Vec<String>, Option<usize>)> {
 /// a selection that is about to be written is drawn the way a staged text
 /// value is -- staged green on the box's own ground, bold -- so the edit reads
 /// on the value as well as on the label, focused or not.
+///
+/// `counts`, when the row is mixed, puts each held option's file count after
+/// its name -- `Original 4` -- the name in the value colour and the number in
+/// the lighter mixed one, so the options the files actually hold stand out
+/// from the ones none do without any of them reading as chosen.
 fn set_spans(
     labels: &[String],
     sel: Option<usize>,
+    counts: &[usize],
     width: usize,
     bg: ratatui::style::Color,
     lit: bool,
     staged: bool,
 ) -> Vec<Span<'static>> {
-    let cell = |i: usize| format!(" {} ", labels[i]);
+    let held = |i: usize| counts.get(i).copied().unwrap_or(0);
+    let tail = |i: usize| match held(i) {
+        0 => " ".to_string(),
+        n => format!(" {n} "),
+    };
+    let cell_w = |i: usize| 1 + labels[i].width() + tail(i).width();
+    // Scroll to keep the selection in view -- or, on a mixed row, the first
+    // option anyone holds, since that is what the row is there to say.
+    let anchor = sel.or_else(|| (0..labels.len()).find(|&i| held(i) > 0)).unwrap_or(0);
     let mut first = 0usize;
     loop {
-        let used: usize = (first..labels.len()).map(|i| cell(i).width()).sum();
-        if used <= width || first >= sel.unwrap_or(0) {
+        let used: usize = (first..labels.len()).map(cell_w).sum();
+        if used <= width || first >= anchor {
             break;
         }
         first += 1;
@@ -948,14 +1018,21 @@ fn set_spans(
 
     let mut spans = Vec::new();
     let mut used = 0usize;
-    for i in first..labels.len() {
-        let text = cell(i);
-        if used + text.width() > width {
+    for (i, label) in labels.iter().enumerate().skip(first) {
+        if used + cell_w(i) > width {
             break;
         }
-        used += text.width();
+        used += cell_w(i);
+        if held(i) > 0 {
+            spans.push(Span::styled(
+                format!(" {label}"),
+                Style::default().bg(bg).fg(t::value()).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(tail(i), Style::default().bg(bg).fg(t::mixed())));
+            continue;
+        }
         spans.push(Span::styled(
-            text,
+            format!(" {label} "),
             match (Some(i) == sel, staged, lit) {
                 (true, true, _) => Style::default().bg(bg).fg(t::staged()).add_modifier(Modifier::BOLD),
                 (true, false, true) => {
@@ -1870,7 +1947,7 @@ mod tests {
         let app = n_files(7);
         let lines = header(&app, 60, 6);
         for i in 0..5 {
-            assert!(lines[i].contains(&format!("{FILE_ICON} clip-{i}.mp4")), "{lines:?}");
+            assert!(lines[i].contains(&format!("{FILE_ICON}  clip-{i}.mp4")), "{lines:?}");
         }
         assert!(lines[5].contains("… 7 files"), "{lines:?}");
         assert!(!lines.iter().any(|l| l.contains("clip-5")), "{lines:?}");
@@ -1914,11 +1991,50 @@ mod tests {
     fn a_mixed_set_lights_no_option() {
         let app = two_files(&[("category", "Adult")], &[("category", "Meme")]);
         let row = app.rows.iter().find(|r| r.key == "category").unwrap();
-        let (_, sel) = closed_set(&app, row).unwrap();
+        let (_, sel, _) = closed_set(&app, row).unwrap();
         assert_eq!(sel, None);
         let agreed = two_files(&[("category", "Meme")], &[("category", "Meme")]);
         let row = agreed.rows.iter().find(|r| r.key == "category").unwrap();
         assert!(closed_set(&agreed, row).unwrap().1.is_some());
+    }
+
+    /// A mixed set says what the files hold: each held option followed by
+    /// its count, the count in the lighter mixed colour, and the options no
+    /// file holds left without one.
+    #[test]
+    fn a_mixed_set_counts_each_answer() {
+        let app = two_files(&[("variant", "Clip")], &[("variant", "Original")]);
+        let row = app.rows.iter().find(|r| r.key == "variant").unwrap();
+        let (labels, sel, counts) = closed_set(&app, row).unwrap();
+        assert_eq!(sel, None);
+        let held = |l: &str| counts[labels.iter().position(|x| x == l).unwrap()];
+        assert_eq!((held("Original"), held("Enhanced"), held("Clip")), (1, 0, 1));
+
+        let lines = screen(&app, 100, 20);
+        let at = lines.iter().position(|l| l.contains("Variant")).unwrap();
+        let line = &lines[at];
+        assert!(line.contains("Original 1"), "{line:?}");
+        assert!(line.contains("Clip 1"), "{line:?}");
+        assert!(!line.contains("Enhanced 0"), "{line:?}");
+
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let mut term = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        term.draw(|fr| draw_fields(fr, fr.area(), &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let col = line.find("Original 1").unwrap() + "Original ".len();
+        let col = line[..col].chars().count() as u16;
+        assert_eq!(buf[(col, at as u16)].style().fg, Some(t::mixed()), "{line:?}");
+    }
+
+    /// An unknown value in a mixed set is counted too, not dropped.
+    #[test]
+    fn a_mixed_set_counts_a_value_it_does_not_know() {
+        let app = two_files(&[("variant", "Bootleg")], &[("variant", "Clip")]);
+        let row = app.rows.iter().find(|r| r.key == "variant").unwrap();
+        let (labels, _, counts) = closed_set(&app, row).unwrap();
+        let i = labels.iter().position(|l| l == "Bootleg").expect("dropped");
+        assert_eq!(counts[i], 1);
     }
 
     /// Category's set is painted on the closed row, and the value it holds is

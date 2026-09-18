@@ -195,6 +195,29 @@ impl WriteResults {
     }
 }
 
+/// The answer most of a mixed set's files hold, by code. A tie goes to the
+/// one earlier in the set's own order, so the same selection always settles
+/// the same way; values the set does not know rank after the ones it does.
+/// None when no file holds anything.
+fn majority(values: &[Option<Value>], opts: &[Opt]) -> Option<String> {
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for v in values {
+        let Some(Value::Text(code)) = v else { continue };
+        if code.trim().is_empty() {
+            continue;
+        }
+        match counts.iter_mut().find(|(c, _)| c == code) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((code.clone(), 1)),
+        }
+    }
+    let rank = |c: &str| opts.iter().position(|o| o.code == c).unwrap_or(usize::MAX);
+    counts
+        .into_iter()
+        .min_by(|(a, na), (b, nb)| nb.cmp(na).then_with(|| rank(a).cmp(&rank(b))))
+        .map(|(c, _)| c)
+}
+
 fn file_name(p: &std::path::Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
@@ -1793,6 +1816,7 @@ impl App {
                 self.faststart = !self.faststart;
                 self.status = format!("faststart {}", if self.faststart { "on" } else { "off" });
             }
+            (KeyCode::Esc, _) if self.revert_focused_set() => {}
             (KeyCode::Char('q'), false) | (KeyCode::Esc, _) => self.escape(),
             _ => {}
         }
@@ -1906,6 +1930,21 @@ impl App {
         let mut opts = self.options_for(row);
         if opts.is_empty() {
             return;
+        }
+        // A set the files disagree about is consolidated before it is
+        // stepped: the first h or l puts every file on the answer most of
+        // them already hold. Stepping from "no selection" would land on the
+        // first option in the list, and the press that ends a disagreement
+        // should end it on the likeliest answer, not the alphabetically first.
+        if let Agg::Mixed { values } = &row.eff {
+            if let Some(code) = majority(values, &opts) {
+                let label = opts.iter().find(|o| o.code == code).map_or(code.clone(), |o| o.label.clone());
+                let field = row.label.clone();
+                let n = values.len();
+                self.stage(key, Value::Text(code));
+                self.status = format!("{field} · all {n} files on {label} · esc to put them back");
+                return;
+            }
         }
         let current = match self.shown_value(row) {
             Some(Value::Text(code)) if !code.trim().is_empty() => {
@@ -2424,6 +2463,45 @@ impl App {
         let (key, label) = (row.key.clone(), row.label.clone());
         self.stage(key, value);
         self.status = format!("pasted into {label}");
+    }
+
+    /// Esc on a fixed set whose choice is staged puts the files back the way
+    /// they were -- for a mixed set, back to each file's own answer, which is
+    /// the `Original 4  Clip 2` row again. Returns false when there is nothing
+    /// to put back, so Esc keeps its ordinary meaning everywhere else.
+    ///
+    /// Only sets: they are the one control h/l change without opening, so
+    /// they are the one place an edit is made without an Esc of its own to
+    /// back out of it. Undoable like any other staging change.
+    fn revert_focused_set(&mut self) -> bool {
+        let Some(row) = self.rows.get(self.focus) else { return false };
+        if row.control != Control::Enum || !row.staged {
+            return false;
+        }
+        let (key, label) = (row.key.clone(), row.label.clone());
+        let scope = self.scope();
+        let before = self.staged.clone();
+        for i in &scope {
+            if let Some(edits) = self.staged.get_mut(i) {
+                edits.remove(&key);
+            }
+        }
+        self.staged.retain(|_, edits| !edits.is_empty());
+        if before == self.staged {
+            return false;
+        }
+        self.undo.push(before);
+        self.redo.clear();
+        let sync = self.sync_queue(&scope);
+        self.note_queue(&sync);
+        self.rebuild_rows();
+        let mixed = self.rows.get(self.focus).is_some_and(|r| r.is_mixed());
+        self.status = if mixed {
+            format!("{label} put back · each file keeps its own")
+        } else {
+            format!("{label} put back")
+        };
+        true
     }
 
     fn clear_focused(&mut self) {
@@ -4020,5 +4098,95 @@ mod tests {
         app.move_focus(1);
         app.move_focus(-1);
         assert_eq!(app.staged[&0].get("title"), Some(&Value::text("")));
+    }
+}
+
+#[cfg(test)]
+mod mixed_set_tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn press(app: &mut App, code: KeyCode) {
+        app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    /// Three files, two of them Clip and one Original: a mixed Variant.
+    fn trio() -> App {
+        use crate::tags::probe::FileTags;
+        let mk = |name: &str, variant: &str| FileTags {
+            path: PathBuf::from(format!("/nonexistent/{name}.mov")),
+            atoms: BTreeMap::from([("variant".to_string(), Value::text(variant))]),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = App::new(
+            vec![mk("a", "Clip"), mk("b", "Original"), mk("c", "Clip")],
+            BTreeMap::new(),
+            false,
+        );
+        app.focus = app.rows.iter().position(|r| r.key == "variant").unwrap();
+        app
+    }
+
+    fn variant(app: &App) -> &Row {
+        app.rows.iter().find(|r| r.key == "variant").unwrap()
+    }
+
+    /// Either direction settles on the answer most files already hold, not
+    /// on the first or last option in the list.
+    #[test]
+    fn a_step_on_a_mixed_set_puts_every_file_on_the_commonest_answer() {
+        for key in [KeyCode::Char('l'), KeyCode::Char('h'), KeyCode::Right, KeyCode::Left] {
+            let mut app = trio();
+            assert!(variant(&app).is_mixed());
+            press(&mut app, key);
+            assert_eq!(variant(&app).shown(), Some(&Value::text("Clip")), "{key:?}");
+            // Only the file that disagreed carries an edit.
+            assert_eq!(app.staged_count(), 1, "{key:?}");
+        }
+    }
+
+    /// Consolidated, the set steps as any agreed set does.
+    #[test]
+    fn a_second_step_moves_off_the_consolidated_answer() {
+        let mut app = trio();
+        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(variant(&app).shown(), Some(&Value::text("Original")));
+    }
+
+    /// Esc on the field puts every file back on its own answer: mixed again,
+    /// nothing staged, and the quit prompt not raised.
+    #[test]
+    fn esc_on_a_consolidated_set_puts_it_back_to_mixed() {
+        let mut app = trio();
+        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Esc);
+        assert!(variant(&app).is_mixed());
+        assert!(app.staged.is_empty(), "{:?}", app.staged);
+        assert!(!app.quit && !app.confirm_quit);
+        // And it is an ordinary edit: undo brings the consolidation back.
+        press(&mut app, KeyCode::Char('u'));
+        assert_eq!(variant(&app).shown(), Some(&Value::text("Original")));
+    }
+
+    /// With nothing staged on the set, Esc means what it always meant.
+    #[test]
+    fn esc_on_an_untouched_set_still_quits() {
+        let mut app = trio();
+        press(&mut app, KeyCode::Esc);
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn a_tie_goes_to_the_earlier_option() {
+        let opts: Vec<Opt> = ["Original", "Enhanced", "Clip"]
+            .iter()
+            .map(|s| Opt { code: s.to_string(), label: s.to_string() })
+            .collect();
+        let v = |s: &str| Some(Value::text(s));
+        assert_eq!(majority(&[v("Clip"), v("Original")], &opts).as_deref(), Some("Original"));
+        assert_eq!(majority(&[v("Clip"), v("Clip"), v("Original")], &opts).as_deref(), Some("Clip"));
+        assert_eq!(majority(&[None, v("")], &opts), None);
     }
 }

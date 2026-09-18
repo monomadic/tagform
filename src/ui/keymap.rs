@@ -33,7 +33,7 @@ pub const KEYMAP: &[Section] = &[
         binds: &[
             b("j k ↑ ↓ ⇥", "move between fields"),
             b("g G", "first / last field"),
-            b("h l ← →", "step a fixed set, or nudge a rating"),
+            b("h l ← →", "step a fixed set, or nudge a rating — on a mixed set, put every file on the commonest answer"),
             b("0-5", "on a rating: jump straight to that many stars"),
             b("0-9", "on Track: start typing that number, no ⏎ first"),
             b("⏎", "edit the focused field — a set and a rating never open"),
@@ -56,6 +56,7 @@ pub const KEYMAP: &[Section] = &[
             b("t", "cycle the colour scheme"),
             b("F", "toggle MOV faststart on the write"),
             b("?", "this key map, inside the form"),
+            b("esc", "on a staged set, put its files back as they were"),
             b("q esc", "quit (asks if edits are staged)"),
         ],
     },

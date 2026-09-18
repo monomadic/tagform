@@ -109,7 +109,7 @@ pub static PALETTES: &[Palette] = &[
         muted: c(0x9d, 0x8e, 0xcb),
         rule: c(0x3d, 0x2d, 0x63),
         star: c(0xfe, 0xde, 0x5d),
-        path: c(0xa9, 0x9b, 0xd0),
+        path: c(0x72, 0xd6, 0xff),
         tags: &[
             c(0xff, 0x7e, 0xdb),
             c(0x36, 0xf9, 0xf6),
@@ -149,7 +149,7 @@ pub static PALETTES: &[Palette] = &[
         muted: c(0x9a, 0x8f, 0xd4),
         rule: c(0x45, 0x3a, 0x92),
         star: c(0xbf, 0xce, 0x72),
-        path: c(0xa7, 0x9c, 0xe0),
+        path: c(0xe0, 0xc0, 0x80),
         tags: &[
             c(0x8a, 0xd4, 0xdb),
             c(0x94, 0xe0, 0x89),
@@ -189,7 +189,7 @@ pub static PALETTES: &[Palette] = &[
         muted: c(0x6e, 0x77, 0x8c),
         rule: c(0x2a, 0x2f, 0x3c),
         star: c(0xe0, 0xaf, 0x68),
-        path: c(0x7d, 0x87, 0x9e),
+        path: c(0x73, 0xda, 0xca),
         tags: &[
             c(0x7a, 0xa2, 0xf7),
             c(0x7d, 0xcf, 0xff),
@@ -227,7 +227,7 @@ pub static PALETTES: &[Palette] = &[
         muted: c(0x92, 0x83, 0x74),
         rule: c(0x50, 0x49, 0x45),
         star: c(0xfa, 0xbd, 0x2f),
-        path: c(0xa8, 0x99, 0x84),
+        path: c(0x8e, 0xc0, 0x7c),
         tags: &[
             c(0x8e, 0xc0, 0x7c),
             c(0xb8, 0xbb, 0x26),
@@ -267,7 +267,7 @@ pub static PALETTES: &[Palette] = &[
         muted: c(0x84, 0x8e, 0xa3),
         rule: c(0x43, 0x4c, 0x5e),
         star: c(0xeb, 0xcb, 0x8b),
-        path: c(0x9a, 0xa5, 0xb8),
+        path: c(0x8f, 0xbc, 0xbb),
         tags: &[
             c(0x88, 0xc0, 0xd0),
             c(0xa3, 0xbe, 0x8c),
@@ -305,7 +305,7 @@ pub static PALETTES: &[Palette] = &[
         muted: c(0x82, 0x7d, 0x9c),
         rule: c(0x35, 0x31, 0x4d),
         star: c(0xf6, 0xc1, 0x77),
-        path: c(0x9c, 0x97, 0xb8),
+        path: c(0xc4, 0xa7, 0xe7),
         tags: &[
             c(0x9c, 0xcf, 0xd8),
             c(0xa3, 0xd2, 0xa5),
@@ -345,7 +345,7 @@ pub static PALETTES: &[Palette] = &[
         muted: c(0xb0, 0x88, 0x4c),
         rule: c(0x4a, 0x36, 0x18),
         star: c(0xff, 0xd7, 0x5f),
-        path: c(0xc2, 0x96, 0x58),
+        path: c(0xe8, 0xc9, 0xa0),
         tags: &[
             c(0xff, 0xb0, 0x00),
             c(0xff, 0xd7, 0x5f),
@@ -698,6 +698,18 @@ mod tests {
         for p in PALETTES {
             let d = delta_e(p.label, p.label_custom);
             assert!(d >= 15.0, "{}: custom label is only ΔE {d:.1} from the normal one", p.name);
+        }
+    }
+
+    /// The header's second and third lines are two different facts -- what
+    /// the file is, and where it lives -- and they sit on top of each other.
+    /// In the same grey they read as one paragraph, which every scheme did
+    /// until this test.
+    #[test]
+    fn the_path_is_distinguishable_from_the_file_info() {
+        for p in PALETTES {
+            let d = delta_e(p.path, p.muted);
+            assert!(d >= 15.0, "{}: path is only ΔE {d:.1} from the info line", p.name);
         }
     }
 

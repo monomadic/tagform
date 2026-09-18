@@ -1000,9 +1000,19 @@ table of contents, made the open row draw *identically* to the closed one; at
 that point the only thing the mode still did was decide whether the lit cell
 was accent or grey.
 
-What is lost with it is per-field `esc`: a set has no pending value to revert,
-so a mis-step is undone by stepping back, or by `u`. That is the same deal
-Stars has always had.
+Per-field `esc` came back without the mode. With no pending value, `esc` on a
+set whose choice is *staged* puts the staged choice back — every file in scope
+returns to what it holds on disk — and on a set with nothing staged `esc`
+means quit, as everywhere else in Select. It is one undoable staging change,
+like any other.
+
+**A mixed set counts its answers.** In bulk view a set the files disagree
+about lights nothing, but each option some file holds is drawn with its count
+— `Original 4  Enhanced  Clip 2` — the name in the value colour, the count in
+the lighter mixed one, the options no file holds left muted. The first `h` or
+`l` consolidates rather than steps: every file goes onto the answer most of
+them already hold (a tie goes to the earlier option), and only then do further
+presses step. `esc` puts it back to the counted row.
 
 **No free text, for now.** Typing into a set is rejected outright — every key
 a set does not use is handed straight back, which is what leaves `j`/`k`, `w`,
