@@ -254,6 +254,17 @@ pub struct WriteQueue {
     running: bool,
 }
 
+/// One line of the write-queue panel (DESIGN §7): a file waiting its turn,
+/// or the one the writer has now.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct QueueRow {
+    /// Index into `files`, so the panel can mark the focused row.
+    pub file: usize,
+    pub name: String,
+    /// Under the writer right now -- the row that carries the live bar.
+    pub busy: bool,
+}
+
 /// Where a file stands in the write queue.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum QueuePlace {
@@ -927,6 +938,52 @@ impl App {
             self.undo.clear();
             self.redo.clear();
         }
+    }
+
+    /// Load the queue with jobs that write nothing, so a test can paint the
+    /// queue panel without starting a writer thread. The plans are empty:
+    /// nothing put here by a test ever reaches `write::execute`.
+    #[cfg(test)]
+    pub fn fake_queue(&mut self, busy: Option<usize>, waiting: &[usize]) {
+        let plan = |file: usize| FilePlan {
+            path: self.files[file].path.clone(),
+            writer: crate::tags::plan::Writer::Native,
+            atoms: Vec::new(),
+            xmp: Vec::new(),
+            faststart: false,
+            layout: crate::tags::atoms::Layout::FastStart,
+            why: "test",
+        };
+        let jobs: Vec<Job> = waiting
+            .iter()
+            .map(|&file| Job { file, plan: plan(file), xmp: BTreeMap::new(), rename: false })
+            .collect();
+        let mut q = lock(&self.queue);
+        q.busy = busy;
+        q.waiting = jobs.into();
+    }
+
+    /// The queue as the header panel lists it: the file under the writer
+    /// first, then the ones waiting in the order they will be taken, capped
+    /// at `max` rows with the true length beside it. A panel six rows tall
+    /// cannot show forty files, and a list that silently stops at six is a
+    /// list that lies about how much is left -- so the count comes with it.
+    pub fn queue_rows(&self, max: usize) -> (Vec<QueueRow>, usize) {
+        let q = lock(&self.queue);
+        let total = usize::from(q.busy.is_some()) + q.waiting.len();
+        let rows = q
+            .busy
+            .map(|f| (f, true))
+            .into_iter()
+            .chain(q.waiting.iter().map(|j| (j.file, false)))
+            .take(max)
+            .map(|(file, busy)| QueueRow {
+                file,
+                name: self.files.get(file).map(|f| file_name(&f.path)).unwrap_or_default(),
+                busy,
+            })
+            .collect();
+        (rows, total)
     }
 
     /// Where `file` stands in the write queue, if it is in it.

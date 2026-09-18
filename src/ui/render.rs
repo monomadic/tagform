@@ -17,7 +17,7 @@ use crate::model::schema::Control;
 use crate::model::tag;
 use crate::model::value::{Agg, Value};
 use crate::tags::plan::FilePlan;
-use crate::ui::app::{App, ImportSource, Locate, Mode, QueuePlace, Row, WriteResults};
+use crate::ui::app::{App, ImportSource, Locate, Mode, QueuePlace, QueueRow, Row, WriteResults};
 use crate::ui::edit::{stars_glyphs, Opt, Validation};
 use crate::ui::keymap::{key_width, KEYMAP};
 use crate::ui::theme as t;
@@ -36,6 +36,12 @@ const FILE_ICON: &str = "\u{100f4e}";
 const LOGO_ICON: &str = "\u{1001bf}";
 /// Names the bulk header lists before it gives up and states the count.
 const LISTED_FILES: usize = 5;
+/// Files the write-queue panel lists before it gives up and states the
+/// count. One more than the selection list: a queue is worth a row more.
+const LISTED_QUEUE: usize = 6;
+/// The column a stage name ("remuxing", "waiting") is padded into, so every
+/// bar in the queue starts at the same column.
+const STAGE_COLS: usize = 10;
 
 /// Cells are about twice as tall as they are wide, so an image of pixel aspect
 /// `a` needs `2 * rows * a` columns to keep its proportions. Sizing the band
@@ -76,11 +82,15 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
     // and the bar sits in the badge bar instead.
     if app.help || app.pending.is_some() || app.results.is_some() {
         let top = chunks[2].y;
+        // The last row is not the dialog's: a write already draining keeps
+        // its bar there. `w` over a running queue raises the confirmation
+        // for the next batch while the writer works, and a bar that vanishes
+        // under that dialog is hidden at the one moment it is most wanted.
         let body = Rect {
             x: area.x,
             y: top,
             width: area.width,
-            height: area.height.saturating_sub(top.saturating_sub(area.y)),
+            height: area.height.saturating_sub(top.saturating_sub(area.y)).saturating_sub(1),
         };
         if app.help {
             draw_help(f, body, app);
@@ -89,6 +99,7 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
         } else if let Some(r) = &app.results {
             draw_results(f, body, r);
         }
+        write_line(f, chunks[5], app);
         return;
     }
 
@@ -120,30 +131,9 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App) {
     if app.n_custom > 0 {
         left.push_str(&format!(" · {} custom", app.n_custom));
     }
-    // The running write, ahead of everything else on the right: which file
-    // of how many, what stage, and a short bar. The stage name matters as
-    // much as the bar -- "remuxing" for two minutes is patience, the same
-    // two minutes unlabelled is a hang.
-    let progress: Vec<Span> = match &app.progress {
-        Some(p) => {
-            let overall = p.overall();
-            let mut v = vec![Span::styled(
-                format!("writing {}/{} · {} · {} ", p.file + 1, p.total, t::fit(&p.name, 24), p.label),
-                Style::default().bg(t::header_bg()).fg(t::accent()),
-            )];
-            v.extend(bar(10, overall).spans.into_iter().map(|s| {
-                let st = s.style.bg(t::header_bg());
-                s.style(st)
-            }));
-            v.push(Span::styled(
-                format!(" {:>3}% · ", (overall * 100.0).round() as u32),
-                Style::default().bg(t::header_bg()).fg(t::accent()),
-            ));
-            v
-        }
-        None => Vec::new(),
-    };
-    let progress_w: usize = progress.iter().map(|s| s.content.width()).sum();
+    // The running write is not here: it reads bottom-right, under the
+    // shortcut strip, with the queue itself in the header panel (§7). The
+    // badge bar says what the selection is, and nothing that moves.
     let mut right = String::new();
     if !app.staged.is_empty() {
         right.push_str(&format!("{} staged · ", app.staged_count()));
@@ -161,7 +151,7 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App) {
     let tail = "  ".to_string();
 
     let badge = format!(" {LOGO_ICON} tagform ");
-    let used = badge.width() + left.width() + progress_w + right.width() + tail.width();
+    let used = badge.width() + left.width() + right.width() + tail.width();
     let gap = (area.width as usize).saturating_sub(used);
     let bar = Style::default().bg(t::header_bg());
 
@@ -173,17 +163,12 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App) {
             ),
             Span::styled(left, bar.fg(t::header_fg())),
             Span::styled(" ".repeat(gap), bar),
-        ]
-        .into_iter()
-        .chain(progress)
-        .chain([
             Span::styled(
                 right,
                 bar.fg(if app.staged.is_empty() { t::muted() } else { t::staged() }),
             ),
             Span::styled(tail, bar),
-        ])
-        .collect::<Vec<_>>()))
+        ]))
         .style(bar),
         area,
     );
@@ -224,7 +209,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
     // had or the header loses its left edge.
     let pad = if has_thumb { 2 } else { 1 };
 
-    let lines = vec![
+    let mut lines = vec![
         Line::from(Span::styled(
             name,
             Style::default().fg(t::header_fg()).add_modifier(Modifier::BOLD),
@@ -235,6 +220,21 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
         )),
         Line::from(Span::styled(dir, Style::default().fg(t::path()))),
     ];
+    // The file in front of you is the file being written: its own bar goes
+    // under its facts, wide, because this panel has the room the status line
+    // does not. The bar bottom-right is the batch; this one is this file.
+    if let Some(place) = app.queue_place(idx) {
+        let w = (cols[1].width as usize).saturating_sub(pad as usize + 1);
+        let bar_w = w.saturating_sub(STAGE_COLS + 6).clamp(4, 48);
+        let (stage, frac) = match (place, &app.progress) {
+            (QueuePlace::Busy, Some(p)) => (p.label.to_string(), Some(p.frac)),
+            (QueuePlace::Busy, None) => ("writing".into(), Some(0.0)),
+            (QueuePlace::Waiting(0), _) => ("next".into(), None),
+            (QueuePlace::Waiting(n), _) => (format!("{n} ahead"), None),
+        };
+        lines.push(Line::from(""));
+        lines.push(Line::from(progress_row(&stage, frac, bar_w)));
+    }
     f.render_widget(
         Paragraph::new(lines)
             .block(Block::new().padding(Padding::left(pad)))
@@ -251,6 +251,14 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
 /// write queue carries the queue mark, so the list also says what `w` has
 /// already taken.
 fn draw_file_list(f: &mut Frame, area: Rect, app: &App) {
+    // A write running replaces the selection with the queue: while `w` is
+    // draining, what the panel is for is "which file, and how far", and the
+    // selection is the thing you already know.
+    let listed = (area.height as usize).saturating_sub(1).min(LISTED_QUEUE);
+    let (queue, queued) = app.queue_rows(listed);
+    if queued > 0 {
+        return draw_queue(f, area, app, &queue, queued);
+    }
     let n = app.files.len();
     let width = (area.width as usize).saturating_sub(4);
     let mut lines: Vec<Line> = app
@@ -281,6 +289,76 @@ fn draw_file_list(f: &mut Frame, area: Rect, app: &App) {
         )));
     }
     f.render_widget(Paragraph::new(lines), area);
+}
+
+/// The write queue, in the order it will be taken: the file under the writer
+/// on top with a live bar, the ones behind it with the same geometry and an
+/// empty one. Six rows and then the count -- the band cannot grow, and a
+/// queue of forty that stops at six without saying so is a lie about how
+/// much is left.
+fn draw_queue(f: &mut Frame, area: Rect, app: &App, rows: &[QueueRow], total: usize) {
+    let width = area.width as usize;
+    let bar_w = width.saturating_sub(STAGE_COLS + 30).clamp(6, 24);
+    // Names share one column so the bars line up -- a ragged column of bars
+    // cannot be read as a queue -- but the column is the longest name, not
+    // the room available: padding six short names out to forty columns puts
+    // the bars off in the margin where nothing else is.
+    let room = width.saturating_sub(bar_w + STAGE_COLS + 12);
+    let longest = rows.iter().map(|r| r.name.width()).max().unwrap_or(0);
+    let name_w = longest.min(room).clamp(8, 48);
+    let mut lines: Vec<Line> = rows
+        .iter()
+        .map(|r| {
+            let (stage, frac) = match (r.busy, &app.progress) {
+                (true, Some(p)) => (p.label.to_string(), Some(p.frac)),
+                (true, None) => ("writing".to_string(), Some(0.0)),
+                (false, _) => ("waiting".to_string(), None),
+            };
+            let mut spans = vec![
+                // One glyph for the whole column: every row here is in the
+                // queue, and which one is moving is said by the bar and the
+                // stage beside it, not by a second vocabulary of icons.
+                Span::styled(
+                    format!(" {QUEUE_ICON} "),
+                    Style::default().fg(if r.busy { t::accent() } else { t::staged() }),
+                ),
+                Span::styled(
+                    format!("{} ", t::fit(&r.name, name_w)),
+                    Style::default().fg(if r.busy { t::header_fg() } else { t::muted() }),
+                ),
+            ];
+            spans.extend(progress_row(&stage, frac, bar_w));
+            Line::from(spans)
+        })
+        .collect();
+    if total > rows.len() {
+        lines.push(Line::from(Span::styled(
+            format!("   … {} more waiting", total - rows.len()),
+            Style::default().fg(t::muted()),
+        )));
+    }
+    f.render_widget(Paragraph::new(lines), area);
+}
+
+/// One progress row: the stage, a bar, and a percentage -- or, for a file
+/// still waiting its turn, the same geometry with the bar left empty. The
+/// geometry is shared so a column of them reads as one queue rather than as
+/// six unrelated rows.
+fn progress_row(stage: &str, frac: Option<f64>, bar_w: usize) -> Vec<Span<'static>> {
+    let running = frac.is_some();
+    let mut spans = vec![Span::styled(
+        format!("{} ", t::fit(stage, STAGE_COLS)),
+        Style::default().fg(if running { t::accent() } else { t::muted() }),
+    )];
+    spans.extend(bar(bar_w, frac.unwrap_or(0.0)).spans);
+    spans.push(match frac {
+        Some(fr) => Span::styled(
+            format!(" {:>3}%", (fr * 100.0).round() as u32),
+            Style::default().fg(t::accent()),
+        ),
+        None => Span::raw("     "),
+    });
+    spans
 }
 
 /// The import menu, in the band the inspector uses: each source with what it
@@ -1274,10 +1352,68 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
         Validation::Ok if !app.status.is_empty() => (app.status.clone(), t::muted()),
         Validation::Ok => (String::new(), t::muted()),
     };
+    // The running write lives at the far right of this line -- under the
+    // shortcut strip, the last thing on the screen (§7). It is the global
+    // view: which file of how many, what stage, and the batch's own bar.
+    // The per-file detail is in the header panel; this line is for the
+    // glance that asks "is it still going, and how far".
+    let right_w = write_line(f, area, app);
+    // The status text yields to it rather than overrunning it: a truncated
+    // message is readable, two messages overlapping are not.
+    let room = (area.width as usize).saturating_sub(right_w + 1);
+    let text = t::fit(&text, text.width().min(room));
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(format!(" {text}"), Style::default().fg(fg)))),
-        area,
+        Rect { width: (room + 1) as u16, ..area },
     );
+}
+
+/// The global write status, painted hard against the right edge of `area`.
+/// Returns the columns it took, so the caller knows what is left of the row.
+fn write_line(f: &mut Frame, area: Rect, app: &App) -> usize {
+    let spans = write_status(app, area.width as usize);
+    let w: usize = spans.iter().map(|s| s.content.width()).sum();
+    if w == 0 {
+        return 0;
+    }
+    let x = area.width.saturating_sub(w as u16);
+    f.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect { x: area.x + x, width: area.width - x, ..area },
+    );
+    w
+}
+
+/// The global write status: the spans that sit bottom-right while a write
+/// runs, and nothing at all when none does.
+///
+/// The stage name carries as much as the bar does -- "remuxing" for two
+/// minutes is patience, the same two minutes unlabelled is a hang -- so it
+/// is the last thing dropped when the line is short.
+fn write_status(app: &App, width: usize) -> Vec<Span<'static>> {
+    let Some(p) = &app.progress else { return Vec::new() };
+    let overall = p.overall();
+    // The name is the first thing to go on a narrow terminal: the panel
+    // above already names the file, and a name that squeezes out the stage
+    // has traded the useful half of the line for the decorative one.
+    let head = if width >= 72 {
+        format!(
+            "writing {}/{} · {} · {} ",
+            p.file + 1,
+            p.total,
+            t::fit(&p.name, p.name.width().min(24)),
+            p.label
+        )
+    } else {
+        format!("writing {}/{} · {} ", p.file + 1, p.total, p.label)
+    };
+    let mut v = vec![Span::styled(head, Style::default().fg(t::accent()))];
+    v.extend(bar(12, overall).spans);
+    v.push(Span::styled(
+        format!(" {:>3}% ", (overall * 100.0).round() as u32),
+        Style::default().fg(t::accent()),
+    ));
+    v
 }
 
 /// The plan, in the terms the user thinks in: which field, to what, and by
@@ -2036,6 +2172,166 @@ mod tests {
     }
 
 
+}
+
+#[cfg(test)]
+mod progress_panel_tests {
+    use super::*;
+    use crate::tags::probe::FileTags;
+    use crate::ui::app::WriteProgress;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use std::collections::BTreeMap;
+
+    fn app(n: usize) -> App {
+        let files = (0..n)
+            .map(|i| FileTags {
+                path: std::path::PathBuf::from(format!("/tmp/clip-{i:03}.mov")),
+                atoms: BTreeMap::new(),
+                xmp: BTreeMap::new(),
+            })
+            .collect();
+        App::new(files, BTreeMap::new(), false)
+    }
+
+    fn progress(file: usize, total: usize, label: &'static str, frac: f64) -> WriteProgress {
+        WriteProgress { file, total, name: format!("clip-{file:03}.mov"), label, frac }
+    }
+
+    /// The whole screen, as rows of text.
+    fn paint(a: &App, w: u16, h: u16) -> Vec<String> {
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|fr| draw(fr, a, None)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect()
+    }
+
+    /// Where the status went: the last row, under the shortcut strip -- not
+    /// the badge bar it used to share with the title.
+    #[test]
+    fn the_global_bar_reads_bottom_right_and_not_in_the_badge_bar() {
+        let mut a = app(3);
+        a.fake_queue(Some(0), &[1, 2]);
+        a.progress = Some(progress(0, 3, "remuxing", 0.5));
+        let rows = paint(&a, 100, 30);
+        let last = rows.last().unwrap();
+        assert!(last.contains("writing 1/3"), "{last:?}");
+        assert!(last.contains("remuxing"), "{last:?}");
+        assert!(last.contains('\u{2588}'), "no bar on the status line: {last:?}");
+        // Right-aligned: the left third of the line is untouched, and the
+        // percentage is the last thing on the screen.
+        assert!(last[..40].trim().is_empty(), "not right-aligned: {last:?}");
+        assert!(last.trim_end().ends_with('%'), "{last:?}");
+        // The batch, not this file: half of one file of three is 17%.
+        assert!(last.contains("17%"), "the bar is not the whole batch: {last:?}");
+        assert!(!rows[0].contains("writing"), "still in the badge bar: {:?}", rows[0]);
+    }
+
+    /// One file in the panel, and it is the one under the writer: its own
+    /// bar goes under its facts, wider than the one on the status line.
+    #[test]
+    fn the_focused_file_gets_its_own_bar_under_its_facts() {
+        let mut a = app(1);
+        a.fake_queue(Some(0), &[]);
+        a.progress = Some(progress(0, 1, "remuxing", 0.5));
+        let rows = paint(&a, 100, 30);
+        let band = rows[2..8].join("\n");
+        assert!(band.contains("clip-000.mov"), "{band}");
+        assert!(band.contains("remuxing"), "the stage is not in the panel: {band}");
+        let wide = band.matches('\u{2588}').count();
+        let narrow = rows.last().unwrap().matches('\u{2588}').count();
+        assert!(wide > narrow, "panel bar {wide} is not bigger than the status bar {narrow}");
+    }
+
+    /// A file still in the queue says where it stands rather than pretending
+    /// to be running: an empty bar, and how many go first.
+    #[test]
+    fn a_file_waiting_its_turn_shows_a_waiting_bar() {
+        let mut a = app(3);
+        a.view = Some(2);
+        a.fake_queue(Some(0), &[1, 2]);
+        a.progress = Some(progress(0, 3, "remuxing", 0.5));
+        let band = paint(&a, 100, 30)[2..8].join("\n");
+        assert!(band.contains("2 ahead"), "{band}");
+        assert!(!band.contains('\u{2588}'), "a waiting file must not show a filled bar: {band}");
+        assert!(band.contains('\u{2591}'), "no empty bar: {band}");
+    }
+
+    /// Bulk view: the queue itself, in the order it will be taken, with the
+    /// live bar on the file under the writer and empty ones behind it.
+    #[test]
+    fn bulk_view_lists_the_queue_with_the_running_file_on_top() {
+        let mut a = app(9);
+        a.fake_queue(Some(3), &[4, 5, 6, 7, 8]);
+        a.progress = Some(progress(0, 6, "verifying", 0.75));
+        let rows = paint(&a, 120, 30);
+        let band = rows[2..8].join("\n");
+        assert!(band.contains("clip-003.mov"), "the busy file is not on top: {band}");
+        assert!(band.contains("verifying"), "{band}");
+        assert!(band.contains("waiting"), "the files behind it are not listed: {band}");
+        // One live bar, on the busy row alone.
+        let filled: Vec<usize> =
+            rows[2..8].iter().filter(|r| r.contains('\u{2588}')).map(|r| r.len()).collect();
+        assert_eq!(filled.len(), 1, "more than one row is running: {band}");
+    }
+
+    /// Six rows of queue and then the count: a panel that stops at six
+    /// without saying so is a lie about how much is left.
+    #[test]
+    fn a_queue_longer_than_the_band_says_how_many_it_did_not_list() {
+        let mut a = app(40);
+        let waiting: Vec<usize> = (1..40).collect();
+        a.fake_queue(Some(0), &waiting);
+        a.progress = Some(progress(0, 40, "remuxing", 0.1));
+        let band = paint(&a, 120, 30)[2..9].join("\n");
+        assert!(band.contains("more waiting"), "{band}");
+        assert!(band.contains("35 more") || band.contains("34 more"), "{band}");
+    }
+
+    /// `w` over a draining queue raises the confirmation for the next batch
+    /// while the writer works: the dialog takes the screen, but not the row
+    /// the running write reports on.
+    #[test]
+    fn a_dialog_does_not_cover_the_running_bar() {
+        let mut a = app(3);
+        a.fake_queue(Some(0), &[1]);
+        a.progress = Some(progress(0, 3, "remuxing", 0.5));
+        a.results = Some(WriteResults {
+            verb: "Wrote",
+            ok: vec![a.files[0].path.clone()],
+            failed: Vec::new(),
+            not_renamed: Vec::new(),
+        });
+        let rows = paint(&a, 100, 30);
+        assert!(rows.iter().any(|r| r.contains("Wrote 1 of 1")), "no dialog: {rows:?}");
+        let last = rows.last().unwrap();
+        assert!(last.contains("writing 1/3"), "the bar went under the dialog: {last:?}");
+    }
+
+    /// A long status message is cut rather than run under the bar: two
+    /// messages sharing a row is worse than one short one.
+    #[test]
+    fn a_long_status_message_yields_to_the_bar() {
+        let mut a = app(2);
+        a.fake_queue(Some(0), &[1]);
+        a.progress = Some(progress(0, 2, "remuxing", 0.5));
+        a.status = "x".repeat(200);
+        let rows = paint(&a, 100, 30);
+        let last = rows.last().unwrap();
+        assert!(last.contains("writing 1/2"), "the message overran the bar: {last:?}");
+        assert!(last.contains('…'), "the message was not cut: {last:?}");
+    }
+
+    /// Nothing running: the panel is the selection again, and the status
+    /// line is the status line.
+    #[test]
+    fn an_idle_screen_carries_no_bar_at_all() {
+        let a = app(4);
+        let rows = paint(&a, 100, 30);
+        let all = rows.join("\n");
+        assert!(!all.contains("writing"), "{all}");
+        assert!(!all.contains('\u{2588}'), "a bar with nothing to report: {all}");
+    }
 }
 
 #[cfg(test)]

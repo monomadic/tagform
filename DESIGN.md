@@ -1319,8 +1319,14 @@ the whole of it.
 
 ⟨built, differs⟩ The confirmed plan is not run as one blocking batch behind a
 progress dialog. It goes onto a queue drained by a writer thread while the form
-stays live: the bar sits in the badge bar, the rule under Category says where
-the file in view stands (`􀈏 queued for write - 2 files left`), and an edit to a
+stays live. The batch's own bar reads bottom-right, under the shortcut strip —
+`writing 4/9 · clip-003.mov · verifying ██████░░░░ 42%` — and the header band
+carries the detail: in single-file view a wide bar under the file's three facts
+when that file is the one being written (an empty one, `2 ahead`, when it is
+still in the queue), and in bulk view the queue itself, six files in the order
+they will be taken, the running one with a live bar and the rest with empty
+ones. The rule under Category says where the file in view stands (`􀈏 queued for
+write - 2 files left`), and an edit to a
 file still waiting is rebuilt into its queued plan on `⏎`, so the file is
 written once with everything. The file under the writer is the one exception;
 its edit stays staged for the next `w`. A second `w` mid-run appends to the

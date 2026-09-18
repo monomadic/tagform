@@ -126,8 +126,11 @@ only then renames it over the original. Any failure leaves the original
 untouched. Keys no field claims are carried through unchanged.
 
 The write runs in the background, as a queue. The form stays live while it
-drains: the badge bar carries the bar, and in single-file view the rule under
-Category says where that file stands — `􀈏 queued for write - 2 files left`.
+drains. The batch's bar sits bottom right, under the shortcut strip; the panel
+at the top carries the detail — a wide bar under the file's facts when that
+file is the one being written, or, in bulk view, the queue itself with the
+running file on top. In single-file view the rule under Category also says
+where that file stands — `􀈏 queued for write - 2 files left`.
 An edit to a file still waiting is saved into its queued write by `⏎` alone;
 only the file under the writer needs a second `w`. A clean run reports in the
 status line; a run with a failure raises the results dialog.
