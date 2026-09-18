@@ -228,7 +228,6 @@ pub struct WriteProgress {
     /// 0-based index of the file being written.
     pub file: usize,
     pub total: usize,
-    pub name: String,
     pub label: &'static str,
     /// Fraction of this file's work, 0..1.
     pub frac: f64,
@@ -383,8 +382,6 @@ pub struct App {
     pub files: Vec<FileTags>,
     pub media: Vec<MediaInfo>,
     pub rows: Vec<Row>,
-    /// How many trailing rows are unrecognised keys rather than schema fields.
-    pub n_custom: usize,
     /// Keys no field claims, kept as names so their aggregate can be recomputed
     /// for whichever files are in scope -- otherwise a custom key would still
     /// read ‹multiple› while looking at a single file.
@@ -404,7 +401,7 @@ pub struct App {
     /// has something to offer when the menu opens on a file with no URL.
     pub import_pick: ImportSource,
     /// The key-map overlay (§11). A screen of its own rather than a longer
-    /// shortcut strip: the strip has room for a mode's commands, not for the
+    /// hint list: the badge bar has room for a mode's commands, not for the
     /// forty bindings the form actually has.
     pub help: bool,
     /// First line of the map on screen, so the overlay survives a terminal
@@ -494,7 +491,6 @@ pub struct App {
 impl App {
     pub fn new(files: Vec<FileTags>, custom: BTreeMap<String, Agg>, thumbnails: bool) -> Self {
         let custom_keys: Vec<String> = custom.keys().cloned().collect();
-        let n_custom = custom_keys.len();
         let scope: Vec<usize> = (0..files.len()).collect();
         let rows = build_rows(&files, &scope, &Staged::new(), &custom_keys);
         let (tx, rx) = mpsc::channel();
@@ -503,7 +499,6 @@ impl App {
             media: vec![MediaInfo::default(); n],
             files,
             rows,
-            n_custom,
             custom_keys,
             focus: 0,
             view: None,
@@ -721,6 +716,27 @@ impl App {
             .collect()
     }
 
+    /// What one file is about to have changed, field by field, for its line
+    /// in the write dialog. The list above it says what each field becomes;
+    /// this says which of them land on which file -- in a batch they need not
+    /// be the same.
+    pub fn file_edits(&self, path: &std::path::Path) -> Vec<FileEdit> {
+        let Some(i) = self.files.iter().position(|f| f.path == path) else { return Vec::new() };
+        self.staged
+            .get(&i)
+            .map(|edits| {
+                edits
+                    .iter()
+                    .map(|(key, v)| FileEdit {
+                        label: key_label(key),
+                        removed: v.is_empty(),
+                        refused: field_error(key, v).is_some(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Build the plan for the files in scope and hold it for confirmation.
     fn prepare_write(&mut self) {
         self.commit_editor();
@@ -853,7 +869,6 @@ impl App {
                         }
                     }
                 };
-                let name = file_name(&job.plan.path);
                 let mut on = |s: write::Step| {
                     // The denominator is re-read per tick: the queue may have
                     // grown since this file started.
@@ -864,7 +879,6 @@ impl App {
                     let _ = tx.send(Msg::Progress(Box::new(WriteProgress {
                         file: file_no,
                         total,
-                        name: name.clone(),
                         label: s.label,
                         frac: s.frac,
                     })));
@@ -1007,6 +1021,28 @@ impl App {
             })
             .collect();
         (rows, total)
+    }
+
+    /// How many files stand where, between an edit and the disk. Counted in
+    /// files rather than fields: "8 staged" meaning eight *fields* stayed at
+    /// eight until the last file of a batch landed, and read as stuck while
+    /// the writes went through underneath it. A file is counted once, at the
+    /// furthest point it has reached -- a queued file still carries its
+    /// staged edits, but "queued" is the news.
+    pub fn pending(&self) -> Pending {
+        let q = lock(&self.queue);
+        let mut out = Pending::default();
+        for i in 0..self.files.len() {
+            if q.busy == Some(i) {
+                out.writing += 1;
+            } else if q.waiting.iter().any(|j| j.file == i) {
+                out.queued += 1;
+            } else if self.staged.get(&i).is_some_and(|e| !e.is_empty()) {
+                out.staged += 1;
+            }
+        }
+        out.rename = self.rename_after.len();
+        out
     }
 
     /// Where `file` stands in the write queue, if it is in it.
@@ -2752,6 +2788,25 @@ struct QueueSync {
     busy: Vec<usize>,
 }
 
+/// Files by where they stand between an edit and the disk (`App::pending`).
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pending {
+    pub staged: usize,
+    pub queued: usize,
+    pub writing: usize,
+    /// Flagged to be renamed once their write lands.
+    pub rename: usize,
+}
+
+/// One field of one file's pending write, as the dialog lists it.
+pub struct FileEdit {
+    pub label: String,
+    /// The edit clears the field rather than setting it.
+    pub removed: bool,
+    /// Staged, but left out of the write (§5.4).
+    pub refused: bool,
+}
+
 pub struct StagedEdit {
     pub label: String,
     pub shown: String,
@@ -2890,7 +2945,7 @@ mod progress_tests {
     use super::*;
 
     fn p(file: usize, total: usize, frac: f64) -> WriteProgress {
-        WriteProgress { file, total, name: String::new(), label: "", frac }
+        WriteProgress { file, total, label: "", frac }
     }
 
     #[test]

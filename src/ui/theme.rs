@@ -701,6 +701,34 @@ mod tests {
         }
     }
 
+    /// The badge bar carries the key hints: descriptions in `muted` on the
+    /// header's own ground. On a terminal too short for the band it carries
+    /// the view line too, in every colour that line uses.
+    #[test]
+    fn the_hints_read_on_the_badge_bar() {
+        for p in PALETTES {
+            for (name, fg) in [
+                ("muted", p.muted), ("staged", p.staged), ("label", p.label),
+                ("star", p.star), ("accent", p.accent),
+            ] {
+                let r = contrast(fg, p.header_bg);
+                assert!(r >= 3.0, "{}: {name} is {r:.2}:1 on the badge bar", p.name);
+            }
+        }
+    }
+
+    /// The write bar is drawn in background colour with its percentage on
+    /// top: dark text on the filled `accent` half, `value` on the `rule` one.
+    #[test]
+    fn the_percentage_reads_on_both_halves_of_the_bar() {
+        for p in PALETTES {
+            let on = contrast(p.badge_fg, p.accent);
+            let off = contrast(p.value, p.rule);
+            assert!(on >= 4.5, "{}: {on:.2}:1 on the filled half", p.name);
+            assert!(off >= 4.5, "{}: {off:.2}:1 on the empty half", p.name);
+        }
+    }
+
     /// The header's second and third lines are two different facts -- what
     /// the file is, and where it lives -- and they sit on top of each other.
     /// In the same grey they read as one paragraph, which every scheme did

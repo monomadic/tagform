@@ -1237,6 +1237,16 @@ one rather than being a dimmer shade. Both guards exist because both mistakes
 were made — 16-colour `DarkGray` labels, and a file path drawn in a divider
 colour at 1.4:1.
 
+⟨built, differs⟩ The rows around the form are not the mock above. The badge
+bar carries the logo and then the keys the current mode takes, and nothing
+else. The view line sits at the top of the band: which file it shows and where
+the edits stand — `file 1 of 9 · queued, 2 ahead`, or in bulk `9 files ·
+1 writing · 2 queued · 3 staged`, counted in files and said only when non-zero.
+It falls back to the badge bar on a terminal too short for the band. At the
+bottom, the mode bar holds the mode (`NORMAL`, `EDIT`, …) on its lit or dark
+ground, with `faststart on|off` at its right; under it, the status line, with
+the running write at its right.
+
 The focused row is filled across its whole width, label included, rather than
 marked only by the caret and its lit input box: on twenty rows the marker is a
 thing you hunt for and a band is a thing you land on. The fill is the *focus*
@@ -1329,8 +1339,8 @@ the whole of it.
 
 ⟨built, differs⟩ The confirmed plan is not run as one blocking batch behind a
 progress dialog. It goes onto a queue drained by a writer thread while the form
-stays live. The batch's own bar reads bottom-right, under the shortcut strip —
-`writing 4/9 · clip-003.mov · verifying ██████░░░░ 42%` — and the header band
+stays live. The batch's own bar reads bottom-right, under the mode bar —
+`4/9` and the bar, with the batch's percentage drawn inside it — and the header band
 carries the detail: in single-file view a wide bar under the file's three facts
 when that file is the one being written (an empty one, `2 ahead`, when it is
 still in the queue), and in bulk view the queue itself, six files in the order

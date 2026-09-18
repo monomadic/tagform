@@ -126,7 +126,7 @@ only then renames it over the original. Any failure leaves the original
 untouched. Keys no field claims are carried through unchanged.
 
 The write runs in the background, as a queue. The form stays live while it
-drains. The batch's bar sits bottom right, under the shortcut strip; the panel
+drains. The batch's bar sits bottom right, under the mode bar; the panel
 at the top carries the detail — a wide bar under the file's facts when that
 file is the one being written, or, in bulk view, the queue itself with the
 running file on top. In single-file view the rule under Category also says

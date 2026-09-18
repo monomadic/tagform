@@ -1,9 +1,10 @@
 //! Drawing (DESIGN §7).
 //!
-//! The shape of a screen: a badge bar that reads as a title, a band of facts
-//! about the file, the form itself, a shortcut strip for the current mode, and
-//! one line of status. Every field paints its editable region, so the form
-//! looks like a form before you focus anything.
+//! The shape of a screen: a badge bar that reads as a title and carries the
+//! keys the current mode takes, a band of facts about the file under a line
+//! saying which file it is, the form itself, a mode bar, and one line of
+//! status. Every field paints its editable region, so the form looks like a
+//! form before you focus anything.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -16,8 +17,9 @@ use unicode_width::UnicodeWidthStr;
 use crate::model::schema::Control;
 use crate::model::tag;
 use crate::model::value::{Agg, Value};
+use crate::tags::atoms::Layout as Container;
 use crate::tags::plan::FilePlan;
-use crate::ui::app::{App, ImportSource, Locate, Mode, QueuePlace, QueueRow, Row, WriteResults};
+use crate::ui::app::{App, FileEdit, ImportSource, Locate, Mode, QueuePlace, QueueRow, Row, WriteResults};
 use crate::ui::edit::{stars_glyphs, Opt, Validation};
 use crate::ui::keymap::{key_width, KEYMAP};
 use crate::ui::theme as t;
@@ -69,21 +71,25 @@ fn header_rows(area_h: u16, aspect: Option<f32>) -> u16 {
 pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
     let area = f.area();
     let header_h = header_rows(area.height, app.thumb_aspect);
+    // The view line belongs to the band: it says which file the band is
+    // showing, so it goes where the band goes and not where it does not.
+    let view_h = u16::from(header_h > 0);
     let chunks = Layout::vertical([
-        Constraint::Length(1),        // badge bar
+        Constraint::Length(1),        // badge bar: the name and this mode's keys
         Constraint::Length(1),        // breathing room under it
+        Constraint::Length(view_h),   // "file 1/6" or "6 files", over the band
         Constraint::Length(header_h), // thumbnail + file facts
         Constraint::Min(3),           // the form
-        Constraint::Length(1),        // shortcuts for this mode
+        Constraint::Length(1),        // the mode, and faststart
         Constraint::Length(1),        // status / validation
     ])
     .split(area);
 
-    draw_badge_bar(f, chunks[0], app);
+    draw_badge_bar(f, chunks[0], app, view_h == 0);
 
     // A dialog takes everything below the header: it is the whole message.
     // A running write is not one: the form stays live while the queue drains,
-    // and the bar sits in the badge bar instead.
+    // with its bar on the status line and the queue in the band.
     if app.help || app.pending.is_some() || app.results.is_some() {
         let top = chunks[2].y;
         // The last row is not the dialog's: a write already draining keeps
@@ -103,79 +109,120 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
         } else if let Some(r) = &app.results {
             draw_results(f, body, r);
         }
-        write_line(f, chunks[5], app);
+        write_line(f, chunks[6], app);
         return;
     }
 
     if header_h > 0 {
+        draw_view_line(f, chunks[2], app);
         if let Some(locate) = &app.locate {
-            draw_locate(f, chunks[2], app, locate);
+            draw_locate(f, chunks[3], app, locate);
         } else if app.import_menu {
-            draw_import(f, chunks[2], app);
+            draw_import(f, chunks[3], app);
         } else if app.inspector {
-            draw_inspector(f, chunks[2], app);
+            draw_inspector(f, chunks[3], app);
         } else {
-            draw_header(f, chunks[2], app, proto);
+            draw_header(f, chunks[3], app, proto);
         }
     }
-    draw_fields(f, chunks[3], app);
-    draw_shortcuts(f, chunks[4], app);
-    draw_status(f, chunks[5], app);
+    draw_fields(f, chunks[4], app);
+    draw_mode_bar(f, chunks[5], app);
+    draw_status(f, chunks[6], app);
+}
+
+/// Which file the band below is about, or that it is about all of them, and
+/// where the edits stand: the line that used to sit beside the logo, moved to
+/// the thing it describes. The state is said only when there is one -- a
+/// clean selection reads "9 files" and nothing more.
+///
+/// Bulk counts files in each state (`9 files · 1 writing · 3 queued · 2
+/// staged`); a single file says its own (`file 1 of 9 · queued, 2 ahead`).
+fn view_spans(app: &App) -> Vec<Span<'static>> {
+    let n = app.files.len();
+    let mut spans = Vec::new();
+    let mut part = |text: String, fg: ratatui::style::Color| {
+        spans.push(Span::styled(if spans.is_empty() { text } else { format!(" · {text}") }, Style::default().fg(fg)));
+    };
+    match app.view {
+        Some(i) => {
+            part(format!("file {} of {n}", i + 1), t::label());
+            match app.queue_place(i) {
+                Some(QueuePlace::Busy) => part("writing".into(), t::accent()),
+                Some(QueuePlace::Waiting(0)) => part("queued, next".into(), t::star()),
+                Some(QueuePlace::Waiting(k)) => part(format!("queued, {k} ahead"), t::star()),
+                None if app.staged.get(&i).is_some_and(|e| !e.is_empty()) => {
+                    part("staged changes".into(), t::staged())
+                }
+                None => {}
+            }
+            if app.rename_after.contains(&i) {
+                part("renamed after the write".into(), t::muted());
+            }
+        }
+        None => {
+            part(format!("{n} file{}", plural(n)), t::label());
+            let p = app.pending();
+            if p.writing > 0 {
+                part(format!("{} writing", p.writing), t::accent());
+            }
+            if p.queued > 0 {
+                part(format!("{} queued", p.queued), t::star());
+            }
+            if p.staged > 0 {
+                part(format!("{} staged", p.staged), t::staged());
+            }
+            if p.rename > 0 {
+                part(format!("{} to rename", p.rename), t::muted());
+            }
+        }
+    }
+    spans
+}
+
+fn draw_view_line(f: &mut Frame, area: Rect, app: &App) {
+    let mut spans = vec![Span::raw(" ")];
+    spans.extend(view_spans(app));
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// The name sits in a filled badge and the bar carries its own background the
 /// full width, so the header reads as a title rather than as one more row of
-/// text competing with the form.
-fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App) {
-    let view = match app.view {
-        Some(i) => format!("file {}/{}", i + 1, app.files.len()),
-        None => format!("{} file{}", app.files.len(), plural(app.files.len())),
+/// text competing with the form. Beside the name: the keys this mode takes.
+/// They lead the screen because they are what you read before you act; the
+/// mode that governs them stays at the bottom, where it has always been.
+///
+/// `view` puts the view line here after all, for a terminal too short to
+/// have the band that normally carries it.
+fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App, view: bool) {
+    let bar = Style::default().bg(t::header_bg());
+    // Nothing on the right in the ordinary case: the counts that used to be
+    // here are on the view line, beside the files they count.
+    let right: Vec<Span> = if view {
+        view_spans(app).into_iter().map(|s| s.patch_style(bar)).collect()
+    } else {
+        Vec::new()
     };
-    let mut left = format!("  {view}");
-    if app.n_custom > 0 {
-        left.push_str(&format!(" · {} custom", app.n_custom));
-    }
-    // The running write is not here: it reads bottom-right, under the
-    // shortcut strip, with the queue itself in the header panel (§7). The
-    // badge bar says what the selection is, and nothing that moves.
-    let mut right = String::new();
-    if !app.staged.is_empty() {
-        right.push_str(&format!("{} staged · ", app.staged_count()));
-    }
-    if !app.rename_after.is_empty() {
-        let n = app.rename_after.len();
-        right.push_str(&format!("{n} to rename · "));
-    }
-    // The mode lives in the shortcut strip now, next to the keys it governs;
-    // saying it twice, in two vocabularies, was worse than saying it once.
-    right.push_str(&format!(
-        "faststart {}",
-        if app.faststart { "on" } else { "off" }
-    ));
-    let tail = "  ".to_string();
+    let right_w: usize = right.iter().map(|s| s.content.width()).sum();
+    let tail = "  ";
 
     let badge = format!(" {LOGO_ICON} tagform ");
-    let used = badge.width() + left.width() + right.width() + tail.width();
+    let room = (area.width as usize).saturating_sub(badge.width() + 1 + right_w + tail.width() + 1);
+    let (hints, hints_w) = hint_spans(shortcut_pairs(app), room);
+    let used = badge.width() + 1 + hints_w + right_w + tail.width();
     let gap = (area.width as usize).saturating_sub(used);
-    let bar = Style::default().bg(t::header_bg());
 
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                badge,
-                Style::default().bg(t::badge_bg()).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(left, bar.fg(t::header_fg())),
-            Span::styled(" ".repeat(gap), bar),
-            Span::styled(
-                right,
-                bar.fg(if app.staged.is_empty() { t::muted() } else { t::staged() }),
-            ),
-            Span::styled(tail, bar),
-        ]))
-        .style(bar),
-        area,
-    );
+    let mut spans = vec![
+        Span::styled(
+            badge,
+            Style::default().bg(t::badge_bg()).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", bar),
+    ];
+    spans.extend(hints);
+    spans.push(Span::styled(" ".repeat(gap), bar));
+    spans.extend(right);
+    spans.push(Span::styled(tail, bar));
+    f.render_widget(Paragraph::new(Line::from(spans)).style(bar), area);
 }
 
 fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut StatefulProtocol>) {
@@ -311,7 +358,9 @@ fn draw_file_list(f: &mut Frame, area: Rect, app: &App) {
         .collect();
     if n > LISTED_FILES {
         lines.push(Line::from(Span::styled(
-            format!("    … {n} files"),
+            // The total is on the view line just above; what this row owes
+            // is how many the list did not show.
+            format!("    … {} more", n - LISTED_FILES),
             Style::default().fg(t::muted()),
         )));
     }
@@ -1144,37 +1193,65 @@ fn display_row(app: &App, row: &Row) -> Option<String> {
     })
 }
 
-/// The keys that matter right now, and only those. Which keys are live depends
-/// on the mode, so a fixed strip would be wrong half the time.
-///
-/// The strip opens with a vim-style mode indicator, and the bar is always
-/// painted -- dark in Select, lit while a field is open or the case menu is
-/// armed. The keymap alone changing under you is easy to miss, and typing into
-/// a field you thought was closed is the mistake worth pricing a colour
-/// against; a permanent ground is what makes the lit states read as a change
-/// rather than as the bar simply appearing.
-fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
+/// The mode bar: a vim-style mode indicator on a ground that is always
+/// painted, lit while a field is open or a one-key menu is armed. The keys
+/// themselves are in the badge bar; typing into a field you thought was
+/// closed is the mistake worth pricing a colour against, so the colour stays
+/// here, at the bottom, where the eye goes after a keystroke.
+fn draw_mode_bar(f: &mut Frame, area: Rect, app: &App) {
+    let (mode_name, mode_fg, bar_bg) = mode_of(app);
+    let badge = format!(" {mode_name} ");
+    // Faststart is a standing setting of the writer, not a fact about the
+    // selection, so it lives with the other standing state -- the mode --
+    // rather than in the title.
+    let fast = format!("faststart {}  ", if app.faststart { "on" } else { "off" });
+    let gap = (area.width as usize).saturating_sub(badge.width() + fast.width());
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                badge,
+                Style::default().bg(mode_fg).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" ".repeat(gap)),
+            Span::styled(fast, Style::default().fg(t::muted())),
+        ]))
+        .style(Style::default().bg(bar_bg)),
+        area,
+    );
+}
+
+/// The mode the keys are in: its name, its badge colour, and the ground the
+/// mode bar takes. The ground is always painted -- dark in Normal, lit while
+/// a field is open or a one-key menu is armed -- because the keys changing
+/// under you is easy to miss, and a permanent ground is what makes the lit
+/// states read as a change rather than as the bar simply appearing.
+fn mode_of(app: &App) -> (&'static str, ratatui::style::Color, ratatui::style::Color) {
     // There is no third mode any more: a fixed set is stepped from Normal
-    // with h/l and never opens, so the strip has only the two states the app
+    // with h/l and never opens, so there are only the two states the app
     // actually has.
     let (mode_name, mode_fg, bar_bg) = if app.mode == Mode::Edit {
-        ("EDIT", t::staged(), Some(t::input_bg_edit()))
+        ("EDIT", t::staged(), t::input_bg_edit())
     } else {
-        ("NORMAL", t::accent(), Some(t::bar_bg()))
+        ("NORMAL", t::accent(), t::bar_bg())
     };
-    // The case menu is modal for exactly one keystroke, and the strip is the
-    // only place that says so -- so it replaces the strip outright rather than
-    // appending to it.
-    let (mode_name, mode_fg, bar_bg) = if app.format_pending {
-        ("FORMAT", t::star(), Some(t::input_bg_focus()))
+    // The case menu is modal for exactly one keystroke, and the mode bar is
+    // the only place that says so -- so it names the menu outright.
+    if app.format_pending {
+        ("FORMAT", t::star(), t::input_bg_focus())
     } else if app.locate.is_some() {
-        ("LOCATE", t::star(), Some(t::input_bg_focus()))
+        ("LOCATE", t::star(), t::input_bg_focus())
     } else if app.import_menu {
-        ("IMPORT", t::star(), Some(t::input_bg_focus()))
+        ("IMPORT", t::star(), t::input_bg_focus())
     } else {
         (mode_name, mode_fg, bar_bg)
-    };
-    let pairs: &[(&str, &str)] = if let Some(locate) = &app.locate {
+    }
+}
+
+/// The keys that matter right now, and only those, in the order the badge bar
+/// lists them. Which keys are live depends on the mode, so a fixed list would
+/// be wrong half the time.
+fn shortcut_pairs(app: &App) -> &'static [(&'static str, &'static str)] {
+    if let Some(locate) = &app.locate {
         match locate {
             Locate::Ask(_) => &[("(type)", "a place"), ("⏎", "look up"), ("esc", "cancel")],
             Locate::Looking => &[("esc", "cancel")],
@@ -1237,25 +1314,23 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
             ("F", "fast"),
             ("q", "quit"),
         ]
-    };
-    // Drop hints that do not fit rather than letting the strip run off the
-    // edge: a half-rendered key name is worse than one fewer hint.
-    let badge = format!(" {mode_name} ");
-    let mut used = badge.width() + 1;
-    let mut spans = vec![
-        Span::styled(
-            badge,
-            Style::default().bg(mode_fg).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-    ];
-    let mut dropped = 0usize;
+    }
+}
+
+/// Key chips and their descriptions, fitted to `width`. Hints that do not fit
+/// are dropped rather than let run off the edge -- a half-rendered key name is
+/// worse than one fewer hint -- and an ellipsis says some were. Returns the
+/// spans and the columns they take.
+fn hint_spans(pairs: &[(&str, &str)], width: usize) -> (Vec<Span<'static>>, usize) {
+    let mut spans = Vec::new();
+    let mut used = 0usize;
+    let mut dropped = false;
     for (k, d) in pairs {
         let key = format!(" {k} ");
         let desc = format!(" {d}  ");
         let w = key.width() + desc.width();
-        if used + w + 2 > area.width as usize {
-            dropped += 1;
+        if used + w + 1 > width {
+            dropped = true;
             continue;
         }
         used += w;
@@ -1263,19 +1338,13 @@ fn draw_shortcuts(f: &mut Frame, area: Rect, app: &App) {
             key,
             Style::default().bg(t::rule()).fg(t::accent()).add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::styled(desc, Style::default().fg(t::muted())));
+        spans.push(Span::styled(desc, Style::default().bg(t::header_bg()).fg(t::muted())));
     }
-    if dropped > 0 {
-        spans.push(Span::styled("…", Style::default().fg(t::rule())));
+    if dropped {
+        spans.push(Span::styled("…", Style::default().bg(t::header_bg()).fg(t::muted())));
+        used += 1;
     }
-    let strip = Paragraph::new(Line::from(spans));
-    f.render_widget(
-        match bar_bg {
-            Some(bg) => strip.style(Style::default().bg(bg)),
-            None => strip,
-        },
-        area,
-    );
+    (spans, used)
 }
 
 /// One section of the key map as painted rows, each with the width it
@@ -1430,7 +1499,7 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
         Validation::Ok => (String::new(), t::muted()),
     };
     // The running write lives at the far right of this line -- under the
-    // shortcut strip, the last thing on the screen (§7). It is the global
+    // mode bar, the last thing on the screen (§7). It is the global
     // view: which file of how many, what stage, and the batch's own bar.
     // The per-file detail is in the header panel; this line is for the
     // glance that asks "is it still going, and how far".
@@ -1448,7 +1517,7 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
 /// The global write status, painted hard against the right edge of `area`.
 /// Returns the columns it took, so the caller knows what is left of the row.
 fn write_line(f: &mut Frame, area: Rect, app: &App) -> usize {
-    let spans = write_status(app, area.width as usize);
+    let spans = write_status(app);
     let w: usize = spans.iter().map(|s| s.content.width()).sum();
     if w == 0 {
         return 0;
@@ -1464,33 +1533,38 @@ fn write_line(f: &mut Frame, area: Rect, app: &App) -> usize {
 /// The global write status: the spans that sit bottom-right while a write
 /// runs, and nothing at all when none does.
 ///
-/// The stage name carries as much as the bar does -- "remuxing" for two
-/// minutes is patience, the same two minutes unlabelled is a hang -- so it
-/// is the last thing dropped when the line is short.
-fn write_status(app: &App, width: usize) -> Vec<Span<'static>> {
+/// Just the position and the bar, with the percentage inside it. The file's
+/// name and stage are in the panel at the top, which has the room for them;
+/// said here as well, the line read "writing" three times over.
+fn write_status(app: &App) -> Vec<Span<'static>> {
     let Some(p) = &app.progress else { return Vec::new() };
     let overall = p.overall();
-    // The name is the first thing to go on a narrow terminal: the panel
-    // above already names the file, and a name that squeezes out the stage
-    // has traded the useful half of the line for the decorative one.
-    let head = if width >= 72 {
-        format!(
-            "writing {}/{} · {} · {} ",
-            p.file + 1,
-            p.total,
-            t::fit(&p.name, p.name.width().min(24)),
-            p.label
-        )
-    } else {
-        format!("writing {}/{} · {} ", p.file + 1, p.total, p.label)
-    };
-    let mut v = vec![Span::styled(head, Style::default().fg(t::accent()))];
-    v.extend(bar(12, overall).spans);
-    v.push(Span::styled(
-        format!(" {:>3}% ", (overall * 100.0).round() as u32),
-        Style::default().fg(t::accent()),
-    ));
+    let mut v = vec![Span::styled(format!("{}/{} ", p.file + 1, p.total), Style::default().fg(t::accent()))];
+    v.extend(labelled_bar(16, overall, &format!("{}%", (overall * 100.0).round() as u32)));
+    // The same two columns in from the edge the mode bar's faststart stops at.
+    v.push(Span::raw("  "));
     v
+}
+
+/// A bar drawn in background colour rather than in glyphs, so a label can sit
+/// inside it: the label is centred, and each of its characters takes the
+/// colour of the half of the bar it lands on -- dark on the filled part,
+/// light on the rest -- so it reads the whole way across.
+fn labelled_bar(width: usize, frac: f64, label: &str) -> Vec<Span<'static>> {
+    let filled = ((width as f64) * frac.clamp(0.0, 1.0)).round() as usize;
+    let chars: Vec<char> = label.chars().collect();
+    let start = width.saturating_sub(chars.len()) / 2;
+    (0..width)
+        .map(|i| {
+            let ch = i.checked_sub(start).and_then(|j| chars.get(j)).copied().unwrap_or(' ');
+            let style = if i < filled {
+                Style::default().bg(t::accent()).fg(t::badge_fg()).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().bg(t::rule()).fg(t::value())
+            };
+            Span::styled(ch.to_string(), style)
+        })
+        .collect()
 }
 
 /// The plan, in the terms the user thinks in: which field, to what, and by
@@ -1541,16 +1615,82 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
     }
     lines.push(Line::from(""));
 
+    // One line per file: its name, elided, and the fields it is about to
+    // have changed. The route used to repeat under every name; it is the
+    // same for most of a batch, so it is said once per route below, and a
+    // name carries its own only when the batch is split between routes.
+    let mut routes: Vec<(&str, &str, usize)> = Vec::new();
     for p in plans {
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {}", t::fit(&file_label(&p.path), 28)), Style::default().fg(t::header_fg())),
-            Span::styled(t::fit(p.writer.label(), 22), Style::default().fg(t::accent())),
-            Span::styled(p.why, Style::default().fg(t::muted())),
-        ]));
+        match routes.iter_mut().find(|(w, why, _)| *w == p.writer.label() && *why == p.why) {
+            Some((_, _, n)) => *n += 1,
+            None => routes.push((p.writer.label(), p.why, 1)),
+        }
+    }
+    let split = routes.len() > 1;
+    let width = (area.width as usize).saturating_sub(2);
+    let route_w = if split { plans.iter().map(|p| p.writer.label().width()).max().unwrap_or(0) + 3 } else { 0 };
+    let names: Vec<String> = plans.iter().map(|p| file_label(&p.path)).collect();
+    // The name identifies; the fields are the news. The name gets two fifths
+    // at most, so a long one does not squeeze the changes down to "+8".
+    let name_w = names.iter().map(|n| n.width()).max().unwrap_or(0).min(width * 2 / 5).max(8);
+    let fields_w = width.saturating_sub(2 + name_w + 3 + route_w);
+
+    // The dialog cannot scroll, so a batch longer than the room left is
+    // listed as far as it fits and then counted.
+    let renames_n = plans
+        .iter()
+        .filter(|p| {
+            app.files
+                .iter()
+                .position(|f| f.path == p.path)
+                .is_some_and(|i| app.rename_after.contains(&i))
+        })
+        .count();
+    let fixed = lines.len() + 1 + routes.len() + if renames_n > 0 { 2 } else { 0 } + 4;
+    let room = (area.height as usize).saturating_sub(2 + fixed).max(1);
+    let shown = if plans.len() > room { room.saturating_sub(1).max(1) } else { plans.len() };
+
+    for (p, name) in plans.iter().zip(&names).take(shown) {
+        let mut spans = vec![Span::styled(
+            format!("  {}   ", t::fit(name, name_w)),
+            Style::default().fg(t::header_fg()),
+        )];
+        // The container's layout only when it is not the usual one: a
+        // moov-at-end file is about to be restructured, and that is worth a
+        // word; nine lines of "FastStart" were not.
+        let layout = match p.layout {
+            Container::FastStart => "",
+            Container::MoovAtEnd => "moov at end",
+            Container::Fragmented => "fragmented",
+            Container::Inconclusive => "layout unknown",
+        };
+        let note = if layout.is_empty() { 0 } else { layout.width() + 3 };
+        spans.extend(field_chips(&app.file_edits(&p.path), fields_w.saturating_sub(note)));
+        if !layout.is_empty() {
+            spans.push(Span::styled(format!(" · {layout}"), Style::default().fg(t::muted())));
+        }
+        if split {
+            let used: usize = spans.iter().map(|s| s.content.width()).sum();
+            let pad = width.saturating_sub(used + route_w - 3 + 1);
+            spans.push(Span::raw(" ".repeat(pad)));
+            spans.push(Span::styled(p.writer.label(), Style::default().fg(t::accent())));
+        }
+        lines.push(Line::from(spans));
+    }
+    if shown < plans.len() {
         lines.push(Line::from(Span::styled(
-            format!("  {}{:?}", " ".repeat(28), p.layout),
-            Style::default().fg(t::rule()),
+            format!("  … {} more", plans.len() - shown),
+            Style::default().fg(t::muted()),
         )));
+    }
+    lines.push(Line::from(""));
+    for (writer, why, n) in &routes {
+        let count = if split || plans.len() > 1 { format!(" · {n} file{}", plural(*n)) } else { String::new() };
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {writer}"), Style::default().fg(t::accent())),
+            Span::styled(format!("{count}  "), Style::default().fg(t::muted())),
+            Span::styled(*why, Style::default().fg(t::muted())),
+        ]));
     }
 
     // A rename that waited for this write is part of it, and the plan is
@@ -1598,6 +1738,40 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
         ),
         area,
     );
+}
+
+/// A file's changed fields as the write dialog lists them: the names in the
+/// staged colour, a cleared field in the warning one and a refused field in
+/// the error one, and as many as fit before a `+N` counts the rest. The names
+/// are the point -- "+4" alone says a file changes without saying how.
+fn field_chips(edits: &[FileEdit], width: usize) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut used = 0usize;
+    for (i, e) in edits.iter().enumerate() {
+        let sep = if i == 0 { "" } else { ", " };
+        let rest = edits.len() - i - 1;
+        // Leave room for the "+N" that would have to follow this one.
+        let tail = if rest > 0 { format!(" +{rest}").width() } else { 0 };
+        let w = sep.width() + e.label.width();
+        if used + w + tail > width {
+            spans.push(Span::styled(
+                format!(" +{}", edits.len() - i),
+                Style::default().fg(t::mixed()),
+            ));
+            break;
+        }
+        used += w;
+        let fg = if e.refused {
+            t::error()
+        } else if e.removed {
+            t::warn()
+        } else {
+            t::staged()
+        };
+        spans.push(Span::styled(sep, Style::default().fg(t::muted())));
+        spans.push(Span::styled(e.label.clone(), Style::default().fg(fg)));
+    }
+    spans
 }
 
 /// The bar, drawn by hand rather than with `Gauge` so the filled and unfilled
@@ -1949,12 +2123,12 @@ mod tests {
         for i in 0..5 {
             assert!(lines[i].contains(&format!("{FILE_ICON}  clip-{i}.mp4")), "{lines:?}");
         }
-        assert!(lines[5].contains("… 7 files"), "{lines:?}");
+        assert!(lines[5].contains("… 2 more"), "{lines:?}");
         assert!(!lines.iter().any(|l| l.contains("clip-5")), "{lines:?}");
 
         let app = n_files(5);
         let lines = header(&app, 60, 6);
-        assert!(lines[4].contains("clip-4.mp4") && !lines[5].contains("files"), "{lines:?}");
+        assert!(lines[4].contains("clip-4.mp4") && !lines[5].contains("more"), "{lines:?}");
 
         // One file in view is that file's header, not a list.
         let mut app = n_files(7);
@@ -2176,20 +2350,32 @@ mod tests {
         let app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
         // Wide enough for the whole vocabulary including the help key, which
         // leads the strip and so is never the hint that gets dropped.
-        let w = 256;
-        let mut term = Terminal::new(TestBackend::new(w, 1)).unwrap();
-        term.draw(|fr| draw_shortcuts(fr, fr.area(), &app)).unwrap();
+        // The name shares the row now, so the vocabulary needs its width too.
+        let w = 280;
+        let mut term = Terminal::new(TestBackend::new(w, 2)).unwrap();
+        term.draw(|fr| {
+            let a = fr.area();
+            draw_badge_bar(fr, Rect { height: 1, ..a }, &app, false);
+            draw_mode_bar(fr, Rect { y: 1, height: 1, ..a }, &app);
+        })
+        .unwrap();
         let buf = term.backend().buffer().clone();
-        let strip: String = (0..w).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+        let row = |y: u16| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>();
+        let (strip, mode) = (row(0), row(1));
 
         // Two spaces of padding plus the one the key carries, so the gap
         // still reads as one column once the terminal draws the glyph wide.
         assert!(strip.contains(" ⌫   clear"), "{strip:?}");
         assert!(!strip.contains("…"), "the whole strip should fit at {w} cols: {strip:?}");
-        assert!(strip.starts_with(" NORMAL   ?  help "), "help must lead the strip: {strip:?}");
+        // The keys follow the name, with help first.
+        assert!(strip.contains(&format!("{LOGO_ICON} tagform   ?  help ")), "help must lead: {strip:?}");
         for key in ["o", "b", "f ~", "F", "t"] {
             assert!(strip.contains(&format!(" {key}  ")), "{key} crowded: {strip:?}");
         }
+        // The mode stayed at the bottom, and faststart went with it.
+        assert!(mode.starts_with(" NORMAL "), "{mode:?}");
+        assert!(mode.trim_end().ends_with("faststart on"), "{mode:?}");
+        assert!(!strip.contains("faststart"), "{strip:?}");
     }
 
     /// The import band names both sources and previews the filename's
@@ -2293,6 +2479,7 @@ mod tests {
 #[cfg(test)]
 mod progress_panel_tests {
     use super::*;
+    use crate::model::value::Value;
     use crate::tags::probe::FileTags;
     use crate::ui::app::WriteProgress;
     use ratatui::backend::TestBackend;
@@ -2311,7 +2498,7 @@ mod progress_panel_tests {
     }
 
     fn progress(file: usize, total: usize, label: &'static str, frac: f64) -> WriteProgress {
-        WriteProgress { file, total, name: format!("clip-{file:03}.mov"), label, frac }
+        WriteProgress { file, total, label, frac }
     }
 
     /// The whole screen, as rows of text.
@@ -2322,8 +2509,8 @@ mod progress_panel_tests {
         (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect()
     }
 
-    /// Where the status went: the last row, under the shortcut strip -- not
-    /// the badge bar it used to share with the title.
+    /// Where the status went: the last row, under the mode bar -- not the
+    /// badge bar it used to share with the title.
     #[test]
     fn the_global_bar_reads_bottom_right_and_not_in_the_badge_bar() {
         let mut a = app(3);
@@ -2331,15 +2518,17 @@ mod progress_panel_tests {
         a.progress = Some(progress(0, 3, "remuxing", 0.5));
         let rows = paint(&a, 100, 30);
         let last = rows.last().unwrap();
-        assert!(last.contains("writing 1/3"), "{last:?}");
-        assert!(last.contains("remuxing"), "{last:?}");
-        assert!(last.contains('\u{2588}'), "no bar on the status line: {last:?}");
+        assert!(last.contains("1/3"), "{last:?}");
+        // Said once, by the panel: not "writing", not the stage, not the name.
+        assert!(!last.contains("writing") && !last.contains("remuxing"), "{last:?}");
+        assert!(!last.contains("clip-000"), "{last:?}");
         // Right-aligned: the left third of the line is untouched, and the
         // percentage is the last thing on the screen.
         assert!(last[..40].trim().is_empty(), "not right-aligned: {last:?}");
-        assert!(last.trim_end().ends_with('%'), "{last:?}");
-        // The batch, not this file: half of one file of three is 17%.
-        assert!(last.contains("17%"), "the bar is not the whole batch: {last:?}");
+        // The batch, not this file: half of one file of three is 17% -- and
+        // it is inside the bar, which runs on past it to the edge.
+        let at = last.find("17%").expect("the bar is not the whole batch");
+        assert!(last[at + 3..].trim_end().is_empty() && last[at + 3..].len() > 4, "{last:?}");
         assert!(!rows[0].contains("writing"), "still in the badge bar: {:?}", rows[0]);
     }
 
@@ -2421,7 +2610,7 @@ mod progress_panel_tests {
         let rows = paint(&a, 100, 30);
         assert!(rows.iter().any(|r| r.contains("Wrote 1 of 1")), "no dialog: {rows:?}");
         let last = rows.last().unwrap();
-        assert!(last.contains("writing 1/3"), "the bar went under the dialog: {last:?}");
+        assert!(last.contains("1/3") && last.contains('%'), "the bar went under the dialog: {last:?}");
     }
 
     /// A long status message is cut rather than run under the bar: two
@@ -2434,8 +2623,126 @@ mod progress_panel_tests {
         a.status = "x".repeat(200);
         let rows = paint(&a, 100, 30);
         let last = rows.last().unwrap();
-        assert!(last.contains("writing 1/2"), "the message overran the bar: {last:?}");
+        assert!(last.contains("1/2") && last.contains("25%"), "the message overran the bar: {last:?}");
         assert!(last.contains('…'), "the message was not cut: {last:?}");
+    }
+
+    /// The view line sits over the band, not beside the logo; the band keeps
+    /// its six rows under it, and the badge bar carries neither the count nor
+    /// the custom-key tally.
+    #[test]
+    fn the_view_line_sits_over_the_band() {
+        let mut a = app(6);
+        let rows = paint(&a, 100, 30);
+        assert!(!rows[0].contains("6 files") && !rows[0].contains("custom"), "{:?}", rows[0]);
+        assert!(rows[2].trim_start().starts_with("6 files"), "{:?}", rows[2]);
+        assert!(rows[3].contains("clip-000.mov"), "the list is not under it: {:?}", rows[3]);
+        a.view = Some(0);
+        let rows = paint(&a, 100, 30);
+        assert!(rows[2].trim_start().starts_with("file 1 of 6"), "{:?}", rows[2]);
+        assert!(rows[3].contains("clip-000.mov"), "{:?}", rows[3]);
+        // Too short for the band: the count goes back to the badge bar
+        // rather than vanishing.
+        let rows = paint(&a, 100, 16);
+        assert!(rows[0].contains("file 1 of 6"), "{:?}", rows[0]);
+    }
+
+    fn confirm(n: usize, fields: &[(&str, &str)], h: u16) -> Vec<String> {
+        let files = (0..n)
+            .map(|i| FileTags {
+                path: std::path::PathBuf::from(format!(
+                    "/nonexistent/Anna Cherry, Milalzt - A Very Long Title That Will Not Fit {i:02}.mp4"
+                )),
+                atoms: BTreeMap::new(),
+                xmp: BTreeMap::new(),
+            })
+            .collect();
+        let mut a = App::new(files, BTreeMap::new(), false);
+        for i in 0..n {
+            for (k, v) in fields {
+                a.set_staged(i, k, Value::text(*v));
+            }
+        }
+        a.on_key(crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('w')));
+        assert!(a.pending.is_some(), "w did not raise the dialog: {}", a.status);
+        paint(&a, 100, h)
+    }
+
+    /// One line per file: the name cut short, then the fields it changes --
+    /// and the route said once for the batch, not under every name.
+    #[test]
+    fn the_write_dialog_lists_each_file_once_with_its_fields() {
+        let rows = confirm(3, &[("title", "T"), ("channel", "C"), ("url", "https://x.test/v")], 40);
+        let named: Vec<&String> = rows.iter().filter(|r| r.contains("A Very Long")).collect();
+        assert_eq!(named.len(), 3, "{rows:#?}");
+        for r in &named {
+            assert!(r.contains('…'), "the name was not elided: {r:?}");
+            assert!(r.contains("Title") && r.contains("Channel") && r.contains("URL"), "{r:?}");
+        }
+        let routes = rows.iter().filter(|r| r.contains("· 3 files")).count();
+        assert_eq!(routes, 1, "the route should be said once: {rows:#?}");
+        assert!(!rows.iter().any(|r| r.contains("FastStart")), "{rows:#?}");
+    }
+
+    /// More fields than the line holds: the names that fit, then a count.
+    #[test]
+    fn a_long_field_list_ends_in_a_count() {
+        let edits: Vec<FileEdit> = ["Actors", "Category", "Channel", "Orientation", "Tags", "Title"]
+            .iter()
+            .map(|l| FileEdit { label: l.to_string(), removed: false, refused: false })
+            .collect();
+        let text: String = field_chips(&edits, 26).iter().map(|s| s.content.to_string()).collect();
+        assert!(text.starts_with("Actors, Category"), "{text:?}");
+        assert!(text.ends_with(" +4") || text.ends_with(" +3"), "{text:?}");
+        assert!(text.width() <= 26, "{text:?}");
+    }
+
+    /// A batch too long for the dialog lists what fits and counts the rest,
+    /// so the keys at the bottom are never pushed off it.
+    #[test]
+    fn a_long_batch_is_counted_rather_than_cut_off() {
+        let rows = confirm(40, &[("title", "T")], 30);
+        assert!(rows.iter().any(|r| r.contains("more")), "{rows:#?}");
+        assert!(rows.iter().any(|r| r.contains("esc") && r.contains("cancel")), "{rows:#?}");
+    }
+
+    /// The percentage sits inside the bar, and each of its characters takes
+    /// the colour of the half it lands on.
+    #[test]
+    fn the_percentage_is_drawn_inside_the_bar() {
+        let spans = labelled_bar(10, 0.5, "50%");
+        let text: String = spans.iter().map(|s| s.content.to_string()).collect();
+        assert_eq!(text, "   50%    ");
+        assert_eq!(spans[3].style.bg, Some(t::accent()), "5 is on the filled half");
+        assert_eq!(spans[5].style.bg, Some(t::rule()), "% is on the empty half");
+        assert_eq!(spans[3].style.fg, Some(t::badge_fg()));
+        assert_eq!(spans[5].style.fg, Some(t::value()));
+    }
+
+    /// The view line says where the edits stand, in files, and only when
+    /// there is something to say; the badge bar no longer says it at all.
+    #[test]
+    fn the_view_line_counts_files_by_state() {
+        let mut a = app(9);
+        let line = |a: &App| paint(a, 120, 30)[2].trim().to_string();
+        assert_eq!(line(&a), "9 files");
+        for i in 0..6 {
+            a.set_staged(i, "title", Value::text("T"));
+            a.set_staged(i, "channel", Value::text("C"));
+        }
+        assert_eq!(line(&a), "9 files · 6 staged", "files, not fields");
+        a.fake_queue(Some(0), &[1, 2]);
+        assert_eq!(line(&a), "9 files · 1 writing · 2 queued · 3 staged");
+        assert!(!paint(&a, 120, 30)[0].contains("staged"), "still in the badge bar");
+
+        a.view = Some(0);
+        assert_eq!(line(&a), "file 1 of 9 · writing");
+        a.view = Some(2);
+        assert_eq!(line(&a), "file 3 of 9 · queued, 2 ahead");
+        a.view = Some(4);
+        assert_eq!(line(&a), "file 5 of 9 · staged changes");
+        a.view = Some(8);
+        assert_eq!(line(&a), "file 9 of 9");
     }
 
     /// Nothing running: the panel is the selection again, and the status
