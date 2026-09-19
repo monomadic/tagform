@@ -87,7 +87,7 @@ pub fn run(path: &Path) -> Result<Outcome> {
     if same_entry(path, &target) {
         return Ok(Outcome::Unchanged);
     }
-    if entry_exists(&target) {
+    if taken(path, &target) {
         return Ok(Outcome::Taken(target));
     }
     let before = ident(path);
@@ -121,6 +121,24 @@ pub fn run(path: &Path) -> Result<Outcome> {
         }
     }
     Ok(Outcome::Renamed(target))
+}
+
+/// The file another file would be overwritten by, if `r` ran on `path` now:
+/// the target, when something other than `path` already holds it. Asked
+/// ahead of any `r`, so a collision is on screen before the rename that
+/// would meet it -- the rename refuses it either way.
+pub fn conflict(path: &Path) -> Result<Option<PathBuf>> {
+    let target = target(path)?;
+    Ok((!same_entry(path, &target) && taken(path, &target)).then_some(target))
+}
+
+/// Something other than `path` already answers to `target`. The exact entry,
+/// or -- on a case-insensitive volume -- a different file that the name
+/// resolves to anyway: `Clip.mov` over an unrelated `clip.mov` is still an
+/// overwrite, though no entry is spelled `Clip.mov`. A case-only rename of
+/// the file itself resolves to its own inode and is not taken.
+fn taken(path: &Path, target: &Path) -> bool {
+    entry_exists(target) || ident(target).is_some_and(|t| Some(t) != ident(path))
 }
 
 /// The two paths name one directory entry: the same last component, and the
@@ -228,6 +246,24 @@ mod tests {
         assert!(!same_entry(&file, &link));
 
         assert!(!same_entry(&file, &dir.join("absent.mov")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A target is taken by any other file, and never by the file itself.
+    #[test]
+    fn taken_is_any_file_but_this_one() {
+        let dir = std::env::temp_dir().join("tagform-rename-taken");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("clip.mov");
+        let other = dir.join("other.mov");
+        std::fs::write(&file, b"x").unwrap();
+        std::fs::write(&other, b"y").unwrap();
+        assert!(taken(&file, &other));
+        assert!(!taken(&file, &dir.join("free.mov")));
+        // A case-only rename: on a case-insensitive volume the new spelling
+        // resolves to this same file, which is not a collision.
+        assert!(!taken(&file, &dir.join("Clip.mov")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -315,6 +315,10 @@ pub enum Msg {
     Wrote(Box<WriteResults>),
     /// One outcome per file a `rename-video` run was given, by file index.
     Renamed(Vec<(usize, Result<Outcome, String>)>),
+    /// Whether `r` would collide on one file: its index, the path that was
+    /// asked about -- so an answer for a name the file has since left is
+    /// dropped -- and the file already holding its target, if one does.
+    Conflict(usize, PathBuf, Option<PathBuf>),
     /// One result per file a `yt-dlp` fetch was given, by file index: the
     /// field values its URL yielded, or why it yielded none.
     Fetched(Vec<(usize, Result<Vec<(&'static str, Value)>, String>)>),
@@ -440,6 +444,12 @@ pub struct App {
     /// and while it does, the paths in `files` are the ones about to change,
     /// which is why `w` and a second `r` are held off until it lands.
     pub renaming: bool,
+    /// Files whose rename would land on a name another file already holds,
+    /// with that file's path. Asked of `rename-video` in the background on
+    /// open and whenever a file's tags or name change, so the collision is
+    /// on screen before `r` meets it. Nothing is ever renamed over it: the
+    /// rename refuses a taken name whatever this says.
+    pub conflicts: BTreeMap<usize, PathBuf>,
     /// A `yt-dlp` fetch is in flight (§5.5). Off the UI thread because a
     /// page extraction is seconds of network, and held to one at a time so
     /// two fetches cannot race each other onto the same field.
@@ -518,6 +528,7 @@ impl App {
             results: None,
             writing: false,
             renaming: false,
+            conflicts: BTreeMap::new(),
             fetching: false,
             locate: None,
             progress: None,
@@ -637,6 +648,14 @@ impl App {
                 }
                 Msg::Wrote(r) => self.finish_write(*r),
                 Msg::Renamed(r) => self.finish_rename(r),
+                Msg::Conflict(i, asked, taken) => {
+                    if self.files.get(i).is_some_and(|f| f.path == asked) {
+                        match taken {
+                            Some(p) => self.conflicts.insert(i, p),
+                            None => self.conflicts.remove(&i),
+                        };
+                    }
+                }
                 Msg::Fetched(r) => self.finish_fetch(r),
                 Msg::Located(r, named) => self.finish_locate(r, named),
             }
@@ -957,6 +976,8 @@ impl App {
         self.drop_landed();
         self.sync_queue(&[i]);
         self.rebuild_rows();
+        // New tags are a new name to want, and possibly a taken one.
+        self.check_renames(vec![i]);
     }
 
     /// Forget every staged edit the files now carry.
@@ -1249,11 +1270,15 @@ impl App {
                 }
                 Ok(Outcome::Unchanged) => unchanged += 1,
                 Ok(Outcome::Taken(to)) => {
-                    failed.push((path, format!("name taken by {}", file_name(&to))))
+                    failed.push((path, format!("name taken by {}", file_name(&to))));
+                    self.conflicts.insert(i, to);
                 }
                 Err(e) => failed.push((path, e)),
             }
         }
+        // A name one file left may be the name another was blocked on, so
+        // the whole selection is asked again rather than only the files run.
+        self.check_renames((0..self.files.len()).collect());
         self.status_error = !failed.is_empty();
         self.status = match (renamed, total) {
             (0, 1) if unchanged == 1 => "already named from its tags".into(),
@@ -1269,6 +1294,80 @@ impl App {
         if !failed.is_empty() {
             self.results = Some(WriteResults { verb: "Renamed", ok, failed, not_renamed: vec![] });
         }
+    }
+
+    /// Ask `rename-video` where each of `files` wants to live, off the UI
+    /// thread and one file at a time, and record the ones whose name is
+    /// already held by another file. A missing tool, or a file it declines,
+    /// is not a conflict -- it is a rename that cannot run, which `r` says
+    /// when asked.
+    pub fn check_renames(&self, files: Vec<usize>) {
+        let jobs: Vec<(usize, PathBuf)> = files
+            .into_iter()
+            .filter_map(|i| self.files.get(i).map(|f| (i, f.path.clone())))
+            .collect();
+        if jobs.is_empty() {
+            return;
+        }
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            for (i, path) in jobs {
+                let taken = rename::conflict(&path).ok().flatten();
+                if tx.send(Msg::Conflict(i, path, taken)).is_err() {
+                    return;
+                }
+            }
+        });
+    }
+
+    /// What is wrong with one file, as the sentences its page raises: a
+    /// rename that would land on another file, and staged values the write
+    /// will leave out. Empty for a file with nothing to warn about. The file
+    /// list colours a file by whether this is empty, so the two cannot
+    /// disagree about which files need looking at.
+    pub fn file_alerts(&self, i: usize) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some(to) = self.conflicts.get(&i) {
+            // The reason before the name: a composed name runs past the
+            // width of the band, and what is cut off is the name.
+            out.push(format!("rename blocked: another file is already named {}", file_name(to)));
+        }
+        if let Some(edits) = self.staged.get(&i) {
+            for (key, value) in edits {
+                if let Some(why) = field_error(key, value) {
+                    out.push(format!("{}: {why}", key_label(key)));
+                }
+            }
+        }
+        out
+    }
+
+    /// On open: read the fields a structured filename carries into the fields
+    /// the file leaves empty, the same import `i f` runs, staged and undoable
+    /// in one step. Only a name with structure -- people, a channel, tags,
+    /// stars, a date -- is read. A bare stem is all title to the parser, and
+    /// `IMG_0412` or `clip-3` is not a title anyone chose.
+    pub fn seed_from_filenames(&mut self) {
+        let out: Vec<(usize, Result<Vec<(&'static str, Value)>, String>)> = (0..self.files.len())
+            .map(|i| (i, filename::parse_path(&self.files[i].path)))
+            .filter(|(_, fields)| fields.iter().any(|(id, _)| *id != "title"))
+            .map(|(i, fields)| (i, Ok(fields)))
+            .collect();
+        if out.is_empty() {
+            return;
+        }
+        let before = self.staged.clone();
+        self.stage_import("filled", "", out, true);
+        // A name that told the form nothing new says nothing on open: the
+        // status line is for what happened, and nothing did.
+        if before == self.staged {
+            self.status.clear();
+            self.status_error = false;
+        } else {
+            let from = if self.files.len() == 1 { "the filename" } else { "the filenames" };
+            self.status = format!("{} from {from} · u undoes", self.status);
+        }
+        self.open_editor();
     }
 
     /// `i` then `u`: ask yt-dlp what the page behind the URL field says and
@@ -1826,7 +1925,8 @@ impl App {
                 self.commit_editor();
                 self.view = None;
                 self.rebuild_rows();
-                self.status = "aggregate view".into();
+                // Which view this is, is the view line's to say.
+                self.status.clear();
             }
             (KeyCode::Char('m'), false) => self.merge_focused(),
             (KeyCode::Char('o'), false) => self.open_file(),
@@ -2603,10 +2703,9 @@ impl App {
             self.request_thumb(i);
         }
         self.rebuild_rows();
-        self.status = match self.view {
-            Some(i) => format!("file {} of {}", i + 1, self.files.len()),
-            None => "aggregate view".into(),
-        };
+        // The view line over the band already says which file this is; the
+        // status line saying it too was the same fact twice.
+        self.status.clear();
     }
 }
 
@@ -2876,6 +2975,8 @@ pub fn run(files: Vec<FileTags>, custom: BTreeMap<String, Agg>, no_thumbnail: bo
     let picker = make_picker(no_thumbnail);
 
     let mut app = App::new(files, custom, !no_thumbnail);
+    app.seed_from_filenames();
+    app.check_renames((0..app.files.len()).collect());
     let mut proto: Option<ratatui_image::protocol::StatefulProtocol> = None;
     let mut proto_for: Option<usize> = None;
 
@@ -3186,6 +3287,99 @@ mod tests {
             xmp: BTreeMap::new(),
         };
         App::new(vec![f], BTreeMap::new(), false)
+    }
+
+    /// On open, a name with structure fills the fields the file leaves
+    /// empty -- staged, so it is green until written, and one `u` takes it
+    /// all back. A field the file already holds keeps its value, and a bare
+    /// stem is not read as a title.
+    #[test]
+    fn a_structured_filename_seeds_the_empty_fields_on_open() {
+        use crate::tags::probe::FileTags;
+        let mk = |name: &str, atoms: &[(&str, &str)]| FileTags {
+            path: PathBuf::from(format!("/nonexistent/{name}")),
+            atoms: atoms.iter().map(|(k, v)| (k.to_string(), Value::text(*v))).collect(),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = App::new(
+            vec![
+                mk("Ann (Studio) - A Title #pov ★★★☆☆.mp4", &[("title", "Kept")]),
+                mk("IMG_0412.mov", &[]),
+            ],
+            BTreeMap::new(),
+            false,
+        );
+        app.seed_from_filenames();
+        let seeded = app.staged.get(&0).expect("the structured name seeds");
+        assert_eq!(seeded.get("actors"), Some(&Value::List(vec!["Ann".into()])));
+        assert_eq!(seeded.get("channel"), Some(&Value::text("Studio")));
+        assert_eq!(seeded.get("tags"), Some(&Value::List(vec!["pov".into()])));
+        assert_eq!(seeded.get("rating"), Some(&Value::text("3")));
+        assert!(!seeded.contains_key("title"), "the file's own title stands");
+        assert!(!app.staged.contains_key(&1), "a bare stem is not a title");
+        assert!(app.status.contains("from the filenames"), "{}", app.status);
+        app.undo();
+        assert!(app.staged.is_empty(), "one step back");
+    }
+
+    /// A name that tells the form nothing it lacks says nothing on open.
+    #[test]
+    fn a_filename_with_nothing_new_seeds_nothing_and_says_nothing() {
+        let mut app = one(&[]);
+        app.seed_from_filenames();
+        assert!(app.staged.is_empty());
+        assert!(app.status.is_empty(), "{}", app.status);
+    }
+
+    /// A file's alerts: a rename that would land on another file, and a
+    /// staged value the write will leave out.
+    #[test]
+    fn a_files_alerts_name_a_taken_rename_and_a_refused_value() {
+        let mut app = one(&[]);
+        assert!(app.file_alerts(0).is_empty());
+        app.conflicts.insert(0, PathBuf::from("/nonexistent/other.mov"));
+        app.set_staged(0, "tags", Value::List(vec!["pov".into(), ".bad".into()]));
+        let alerts = app.file_alerts(0);
+        assert_eq!(alerts.len(), 2, "{alerts:?}");
+        assert!(alerts[0].contains("already named other.mov"), "{alerts:?}");
+        assert!(alerts[1].contains(".bad"), "{alerts:?}");
+    }
+
+    /// A conflict answer is for the path that was asked about. One that
+    /// arrives after the file moved is about a name it no longer has.
+    #[test]
+    fn a_conflict_answer_for_a_name_the_file_has_left_is_dropped() {
+        let mut app = one(&[]);
+        let here = app.files[0].path.clone();
+        let taken = PathBuf::from("/nonexistent/taken.mov");
+        app.tx.send(Msg::Conflict(0, PathBuf::from("/nonexistent/old.mov"), Some(taken.clone()))).unwrap();
+        app.drain();
+        assert!(app.conflicts.is_empty(), "stale");
+        app.tx.send(Msg::Conflict(0, here.clone(), Some(taken.clone()))).unwrap();
+        app.drain();
+        assert_eq!(app.conflicts.get(&0), Some(&taken));
+        app.tx.send(Msg::Conflict(0, here, None)).unwrap();
+        app.drain();
+        assert!(app.conflicts.is_empty(), "cleared once the name is free");
+    }
+
+    /// Which file is in view is the view line's to say; the status line
+    /// does not repeat it.
+    #[test]
+    fn stepping_between_files_leaves_the_status_line_alone() {
+        use crate::tags::probe::FileTags;
+        let mk = |i: usize| FileTags {
+            path: PathBuf::from(format!("/nonexistent/clip-{i}.mov")),
+            atoms: BTreeMap::new(),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = App::new(vec![mk(0), mk(1)], BTreeMap::new(), false);
+        press(&mut app, KeyCode::Char(']'));
+        assert_eq!(app.view, Some(0));
+        assert!(app.status.is_empty(), "{}", app.status);
+        press(&mut app, KeyCode::Char('a'));
+        assert_eq!(app.view, None);
+        assert!(app.status.is_empty(), "{}", app.status);
     }
 
     fn keys(app: &App) -> Vec<&str> {

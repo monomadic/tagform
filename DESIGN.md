@@ -1228,8 +1228,8 @@ keys live in the current mode.
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-The chrome as built — badge, focus and staged markers, the colour schemes and
-the per-tag colour ring — is described in [README.md](README.md). The one part that is a design
+The chrome as built — badge, focus and staged markers, the colour schemes —
+is described in [README.md](README.md). The one part that is a design
 decision rather than a description: a test computes WCAG contrast for every
 text colour in every scheme against that scheme's own background and fails
 below 3:1, and checks that a custom-key label differs in *hue* from an ordinary
@@ -1238,14 +1238,14 @@ were made — 16-colour `DarkGray` labels, and a file path drawn in a divider
 colour at 1.4:1.
 
 ⟨built, differs⟩ The rows around the form are not the mock above. The badge
-bar carries the logo and then the keys the current mode takes, and nothing
-else. The view line sits at the top of the band: which file it shows and where
+bar carries the logo, and at its right `? help` — apart from the other keys so
+a narrow terminal can never truncate it away. The view line sits at the top of the band: which file it shows and where
 the edits stand — `file 1 of 9 · queued, 2 ahead`, or in bulk `9 files ·
 1 writing · 2 queued · 3 staged`, counted in files and said only when non-zero.
 It falls back to the badge bar on a terminal too short for the band. At the
 bottom, the mode bar holds the mode (`NORMAL`, `EDIT`, …) on its lit or dark
-ground, with `faststart on|off` at its right; under it, the status line, with
-the running write at its right.
+ground, then the keys that mode takes, with `faststart on|off` at its right;
+under it, the status line, with the running write at its right.
 
 The focused row is filled across its whole width, label included, rather than
 marked only by the caret and its lit input box: on twenty rows the marker is a
@@ -1254,6 +1254,20 @@ tint and not the edit one, so an open field's box still reads as the box inside
 the row. It is a text surface like any other and the contrast test treats it as
 one, which is what caught three greys that cleared 3:1 on the page and sat at
 2.5–2.9:1 on the band.
+
+⟨built, differs⟩ **A value's colour is its standing, on every row.** On the
+file and sound: the value colour. Staged, and the write will store it: staged
+green. Staged, and the write will refuse it (§5.4): the error colour. The files
+in a selection disagree: the subdued `mixed` colour. List and hashtag chips
+follow the same rule rather than taking a colour each: a ring of hues hashed
+from each tag's text was built first, and beside rows that coloured by state
+it read as state and meant nothing. Only the `·` between names stays subdued,
+so a list still counts at a glance.
+
+A file with something wrong — a rename that would land on a name another file
+holds (§9.4), or a staged value the write will refuse — is listed in the error
+colour in the bulk header's file list, and its own page carries the reason on
+one red line under its facts.
 
 The **inspector** (`I`) replaces the thumbnail band with a per-file value table
 for the focused field — the answer to "what does `‹multiple›` actually contain",
@@ -1496,8 +1510,11 @@ timestamp, `[...]` blocks dropped as meta, and the remainder split on the
 first ` - ` into `Actor, Actor (Channel)` and the title. It fills only the
 fields that are still empty — the name was composed *from* the tags, so where
 the two disagree the container is the newer — and stages the result as one
-undo step, per file in scope. That is §3.6's precedence rule as a key rather
-than as an automatic read: a filled field never changes without being asked.
+undo step, per file in scope. It also runs once on open, over every file
+whose name has structure — people, a channel, tags, stars or a date; a bare
+stem would be all title, and `IMG_0412` is not one. Only empty fields are
+filled, so a filled field still never changes without being asked; the fills
+are staged, not written, and one `u` takes them back.
 Note the grammar it reads puts Channel in `(...)`, which is the footage shape
 below and what the library's media names actually carry; the `[Channel]`
 form described next is not recognised as a channel. Composing is still
@@ -1512,6 +1529,14 @@ replace. That is a rename key, not filename sync: it is not part of the write,
 it is not shown in the plan, and it does not make the filename readable as a
 source. Parsing (§3.6) is still the unbuilt half, and it is the half that needs
 a grammar in this codebase.
+
+⟨built, differs⟩ **A rename never overwrites.** A target another file already
+answers to — the exact entry, or on a case-insensitive volume a different file
+the name resolves to — is refused (`Taken`), and `rename-video` itself moves
+with `mv -n`. The collision is also asked ahead of `r`: on open, after a file
+is written and after any rename, `rename-video --print-target` is run in the
+background for each file, and a file whose name is taken is marked red in the
+file list with the reason on its page (§7).
 
 When **Sync filename** is checked, the file is renamed — but to **one of two
 grammars**, selected by Category, because this library has two and they are

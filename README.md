@@ -79,8 +79,10 @@ rating, `w` writes, `?` shows every key. That is enough to start.
 
 Text, multi-line text, lists drawn as chips, `#hashtags`, validated URLs,
 dates, a 0–5 star row, and fixed sets that draw all their options on the
-field's own line with the current one lit. Every tag in a list gets its own
-colour, hashed from its text, so `#live` is the same colour in every file.
+field's own line with the current one lit. A value's colour says where it
+stands, the same on every row, chips included: the plain value colour for what
+is on the file, green for what the next write will put there, red for what the
+write will refuse, and a subdued tone where the files in a selection disagree.
 
 <p align="center">
   <img src="docs/screenshots/edit.png" alt="editing the Title field" width="860">
@@ -144,7 +146,9 @@ sources with each one's preview under the cursor, `⏎` runs the one selected,
 still yields its tags) and stages Title, Actors, Channel, Description, Tags
 and Date. `f` parses the filename instead: `#tags`, `★` stars, and
 `Actor, Actor (Channel) - Title`, filling only the fields that are still
-empty. `l` opens the same place lookup the Place row runs (below), with an
+empty. It also runs by itself when files are opened, on any name with that
+structure (a bare `IMG_0412` is not taken as a title): the fields it fills
+are staged, green until written, and `u` takes them back in one step. `l` opens the same place lookup the Place row runs (below), with an
 empty line on a file with coordinates running it the other way: naming the
 place the camera recorded. The three letters still work without moving the
 cursor first.
@@ -174,8 +178,7 @@ no city was written.
 
 `synthwave` (default), `c64`, `midnight`, `gruvbox`, `nord`, `rose-pine` and
 `amber`. Cycle with `t` or pick with `--theme=NAME`. Every scheme is held to a
-WCAG 3:1 contrast floor by a test, including the focused-row fill and the tag
-ring.
+WCAG 3:1 contrast floor by a test, including the focused-row fill.
 
 <p align="center">
   <img src="docs/screenshots/themes.png" alt="gruvbox, nord, amber and c64" width="860">
@@ -194,7 +197,7 @@ ring.
 | `enter` | edit the focused field — on an empty date, fill it with now first; a set and a rating never open |
 | `w` | write staged edits (shows a plan first) |
 | `ctrl-s` / `cmd-s` | the same, from either mode — commits the open field first (`cmd` needs a terminal with the kitty keyboard protocol) |
-| `r` | rename the file — or every file in the selection — from its tags, by running `rename-video`. With edits pending, the rename is queued onto the write and runs after it; `r` again unqueues it |
+| `r` | rename the file — or every file in the selection — from its tags, by running `rename-video`. With edits pending, the rename is queued onto the write and runs after it; `r` again unqueues it. A name another file already holds is never taken: the file's page says so in red, and the file is listed in red |
 | `i` | import — `j`/`k` pick a source and `⏎` runs it, or name one outright: `u` fetches the page behind the URL field with `yt-dlp`, `f` reads the filename, `l` looks a place up with MapKit and fills the location block. A fetch or a lookup takes the source's word; a filename fills only the fields that are still empty. `u` takes any of them back in one step |
 | `m` | merge a list field across every file in the selection |
 | `I` | inspector — per-file values for the focused field |

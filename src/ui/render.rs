@@ -36,6 +36,17 @@ const QUEUE_ICON: &str = "\u{10020f}";
 const FILE_ICON: &str = "\u{100f4e}";
 /// `􀆿` sits left of the name in the badge.
 const LOGO_ICON: &str = "\u{1001bf}";
+/// `􀇿` fronts an alert on a file's page: a rename that would land on
+/// another file, or a staged value the write will leave out.
+const ALERT_ICON: &str = "\u{1001ff}";
+
+/// An SF Symbol and the text it fronts. Every symbol here is followed by the
+/// same gap, and the gap is two spaces, not one: the symbol draws wider than
+/// the one cell it is counted as, so a single space is swallowed by the
+/// overhang and the glyph touches the word.
+fn iconed(icon: &str, text: &str) -> String {
+    format!("{icon}  {text}")
+}
 /// Names the bulk header lists before it gives up and states the count.
 const LISTED_FILES: usize = 5;
 /// Files the write-queue panel lists before it gives up and states the
@@ -187,41 +198,42 @@ fn draw_view_line(f: &mut Frame, area: Rect, app: &App) {
 
 /// The name sits in a filled badge and the bar carries its own background the
 /// full width, so the header reads as a title rather than as one more row of
-/// text competing with the form. Beside the name: the keys this mode takes.
-/// They lead the screen because they are what you read before you act; the
-/// mode that governs them stays at the bottom, where it has always been.
+/// text competing with the form. At its right, the one key that finds every
+/// other key: `?`, kept apart from the mode's list so it is never the hint a
+/// narrow terminal drops.
 ///
-/// `view` puts the view line here after all, for a terminal too short to
-/// have the band that normally carries it.
+/// `view` puts the view line here too, for a terminal too short to have the
+/// band that normally carries it.
 fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App, view: bool) {
     let bar = Style::default().bg(t::header_bg());
-    // Nothing on the right in the ordinary case: the counts that used to be
-    // here are on the view line, beside the files they count.
-    let right: Vec<Span> = if view {
+    let mut right: Vec<Span> = if view {
         view_spans(app).into_iter().map(|s| s.patch_style(bar)).collect()
     } else {
         Vec::new()
     };
+    let help = shortcut_pairs(app).contains(&HELP);
+    if help {
+        if !right.is_empty() {
+            right.push(Span::raw("   "));
+        }
+        right.extend(hint_spans(&[HELP], usize::MAX).0);
+    }
     let right_w: usize = right.iter().map(|s| s.content.width()).sum();
-    let tail = "  ";
-
-    let badge = format!(" {LOGO_ICON} tagform ");
-    let room = (area.width as usize).saturating_sub(badge.width() + 1 + right_w + tail.width() + 1);
-    let (hints, hints_w) = hint_spans(shortcut_pairs(app), room);
-    let used = badge.width() + 1 + hints_w + right_w + tail.width();
-    let gap = (area.width as usize).saturating_sub(used);
+    let badge = format!(" {} ", iconed(LOGO_ICON, "tagform"));
+    // The hint carries two trailing spaces of its own, which is the margin
+    // everything else on the right keeps; without it, the plain two.
+    let tail = if help { "" } else { "  " };
+    let gap = (area.width as usize).saturating_sub(badge.width() + right_w + tail.width());
 
     let mut spans = vec![
         Span::styled(
             badge,
             Style::default().bg(t::badge_bg()).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" ", bar),
+        Span::raw(" ".repeat(gap)),
     ];
-    spans.extend(hints);
-    spans.push(Span::styled(" ".repeat(gap), bar));
     spans.extend(right);
-    spans.push(Span::styled(tail, bar));
+    spans.push(Span::raw(tail));
     f.render_widget(Paragraph::new(Line::from(spans)).style(bar), area);
 }
 
@@ -235,16 +247,20 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
     let want = app.thumb_aspect.map(|a| thumb_cols(area.height, a)).unwrap_or(0);
     // The column is reserved as soon as the aspect is known, picture or not:
     // the facts beside it must not slide left and back while ffmpeg seeks.
-    let has_thumb = want > 0 && area.width > want + 20;
+    let has_thumb = want > 0 && area.width > want + 21;
+    // One blank column before the picture: the column the form's caret takes,
+    // so the picture's left edge is the labels' left edge, and the file list's.
     let cols = Layout::horizontal([
+        Constraint::Length(u16::from(has_thumb)),
         Constraint::Length(if has_thumb { want } else { 0 }),
         Constraint::Min(10),
     ])
     .split(area);
+    let (pic, cols) = (cols[1], &cols[1..]);
 
     if has_thumb {
         if let Some(p) = proto {
-            f.render_stateful_widget(StatefulImage::default(), cols[0], p);
+            f.render_stateful_widget(StatefulImage::default(), pic, p);
         }
     }
 
@@ -269,7 +285,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
     };
     let mut lines = vec![
         Line::from(vec![
-            Span::styled(format!("{icon}  "), Style::default().fg(icon_fg)),
+            Span::styled(iconed(icon, ""), Style::default().fg(icon_fg)),
             Span::styled(name, Style::default().fg(t::header_fg()).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(Span::styled(
@@ -278,6 +294,18 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
         )),
         Line::from(Span::styled(dir, Style::default().fg(t::path()))),
     ];
+    // What is wrong with this file, on its own page, in the error colour:
+    // one line, so a second alert cannot push the write's bar out of a band
+    // six rows tall. The status line has the room for the full reason.
+    let alerts = app.file_alerts(idx);
+    if !alerts.is_empty() {
+        let w = (cols[1].width as usize).saturating_sub(pad as usize + 1);
+        let text = iconed(ALERT_ICON, &alerts.join(" · "));
+        lines.push(Line::from(Span::styled(
+            t::fit(&text, text.width().min(w)),
+            Style::default().fg(t::error()).add_modifier(Modifier::BOLD),
+        )));
+    }
     // The file in front of you is the file being written: its own bar goes
     // under its facts, wide, because this panel has the room the status line
     // does not. The bar bottom-right is the batch; this one is this file.
@@ -345,24 +373,36 @@ fn draw_file_list(f: &mut Frame, area: Rect, app: &App) {
                 Some(_) => (QUEUE_ICON, t::staged()),
                 None => (FILE_ICON, t::accent()),
             };
+            // A file with something wrong -- a rename that would land on
+            // another file, a value the write will refuse -- is listed in
+            // the error colour, icon and all, so the ones to open are found
+            // without opening each.
+            let bad = !app.file_alerts(i).is_empty();
             Line::from(vec![
-                // Two spaces after: an SF Symbol draws wider than the one
-                // cell it is counted as, and with one it touches the name.
-                Span::styled(format!(" {icon}  "), Style::default().fg(colour)),
+                Span::styled(format!(" {}", iconed(icon, "")), Style::default().fg(if bad { t::error() } else { colour })),
                 Span::styled(
                     t::fit(&file_label(&file.path), width),
-                    Style::default().fg(t::header_fg()),
+                    Style::default().fg(if bad { t::error() } else { t::header_fg() }),
                 ),
             ])
         })
         .collect();
     if n > LISTED_FILES {
-        lines.push(Line::from(Span::styled(
-            // The total is on the view line just above; what this row owes
-            // is how many the list did not show.
+        // The total is on the view line just above; what this row owes is
+        // how many the list did not show -- and how many of those are in
+        // trouble, since a red name past the fifth is a red name nobody sees.
+        let hidden_bad = (LISTED_FILES..n).filter(|&i| !app.file_alerts(i).is_empty()).count();
+        let mut more = vec![Span::styled(
             format!("    … {} more", n - LISTED_FILES),
             Style::default().fg(t::muted()),
-        )));
+        )];
+        if hidden_bad > 0 {
+            more.push(Span::styled(
+                format!(" · {hidden_bad} with problems"),
+                Style::default().fg(t::error()),
+            ));
+        }
+        lines.push(Line::from(more));
     }
     f.render_widget(Paragraph::new(lines), area);
 }
@@ -396,7 +436,7 @@ fn draw_queue(f: &mut Frame, area: Rect, app: &App, rows: &[QueueRow], total: us
                 // queue, and which one is moving is said by the bar and the
                 // stage beside it, not by a second vocabulary of icons.
                 Span::styled(
-                    format!(" {QUEUE_ICON}  "),
+                    format!(" {}", iconed(QUEUE_ICON, "")),
                     Style::default().fg(if r.busy { t::accent() } else { t::staged() }),
                 ),
                 Span::styled(
@@ -712,16 +752,16 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
     // beside every value.
     let n_files = format!("{} files", app.files.len());
     let bulk = (app.view.is_none() && app.files.len() > 1)
-        .then(|| format!("{BULK_ICON} bulk edit mode - {n_files}"));
+        .then(|| iconed(BULK_ICON, &format!("bulk edit mode - {n_files}")));
     // In single-file view the rule says instead where this file stands in the
     // write queue, if it is in it: how many are written before it, or that it
     // is under the writer now -- which is the one moment an edit here does
     // not fold into its write.
     let queued = app.view.and_then(|i| app.queue_place(i)).map(|place| match place {
-        QueuePlace::Busy => format!("{QUEUE_ICON} writing now"),
-        QueuePlace::Waiting(0) => format!("{QUEUE_ICON} queued for write - next up"),
+        QueuePlace::Busy => iconed(QUEUE_ICON, "writing now"),
+        QueuePlace::Waiting(0) => iconed(QUEUE_ICON, "queued for write - next up"),
         QueuePlace::Waiting(k) => {
-            format!("{QUEUE_ICON} queued for write - {k} file{} left", plural(k))
+            iconed(QUEUE_ICON, &format!("queued for write - {k} file{} left", plural(k)))
         }
     });
     let heading = match (&bulk, &queued) {
@@ -809,12 +849,16 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
             (text, fg)
         } else if bulk.is_some() && row.is_mixed() {
             // The files disagree: there is no one value to draw, and the count
-            // says how many answers the edit is about to replace. Same colour
-            // as the count beside an agreed value, so the two read as one
-            // kind of note.
-            (format!("multiple values ({})", n_files), t::muted())
+            // says how many answers the edit is about to replace. In the
+            // aggregate colour, which is what it is.
+            (format!("multiple values ({})", n_files), t::mixed())
         } else {
+            // One rule for every row, chips included: the colour says where
+            // the value stands, never what it says. On the file and sound in
+            // the value colour, about to be written in staged green, refused
+            // by the write in red, an aggregate of disagreeing files subdued.
             match display_row(app, row).filter(|v| !v.is_empty()) {
+                Some(v) if app.row_error(row).is_some() => (v, t::error()),
                 Some(v) if staged => (v, t::staged()),
                 Some(v) if row.is_mixed() => (v, t::mixed()),
                 Some(v) if readonly => (v, t::muted()),
@@ -833,10 +877,11 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
             (Some(_), false, Agg::Same { .. }) => Some(n_files.clone()),
             _ => None,
         };
-        // Star colour belongs to stars. An empty rating draws the same "—" as
-        // every other empty field and must look like one.
+        // Star colour belongs to stars on the file. An empty rating draws the
+        // same "—" as every other empty field and must look like one, and a
+        // rating about to be written is green like every other staged value.
         let has_value = app.shown_value(row).is_some();
-        let value_fg = if row.control == Control::Stars && !editing && has_value {
+        let value_fg = if row.control == Control::Stars && !editing && has_value && !staged {
             t::star()
         } else {
             fg
@@ -872,10 +917,7 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
                     None => text_w,
                 };
                 let mut spans = match chips {
-                    Some((items, hash)) => {
-                        let sigil = if staged { t::staged() } else { t::muted() };
-                        tag_spans(&items, hash, body_w, bg, sigil)
-                    }
+                    Some((items, hash)) => tag_spans(&items, hash, body_w, bg, fg),
                     None => vec![Span::styled(
                         t::fit(&raw, body_w),
                         Style::default().bg(bg).fg(value_fg),
@@ -1100,25 +1142,22 @@ fn set_spans(
     spans
 }
 
-/// A list value drawn as chips: one colour per entry rather than one colour
-/// for the whole string.
+/// A list value drawn as chips: whole entries, never one cut mid-word, and a
+/// count of the ones that did not fit.
 ///
-/// `Tags` is the field this exists for. `#pov #solo #outdoor #handheld` in a
-/// single foreground is one long word that has to be *read* to be counted;
-/// the same set in six colours is counted at a glance, and the colour follows
-/// the tag rather than its position, so the same tag is the same colour in
-/// every file (`theme::tag_colour`). That is what makes a column of tag sets
-/// comparable -- "these two files disagree" becomes a colour that is missing.
-///
-/// The separator carries the row's state instead of the words: `staged` green
-/// on the sigils says the row is about to be written, without flattening the
-/// tags back into one colour on exactly the row you are working on.
+/// The entries take the row's colour, the one every other row's value takes
+/// (§7): the colour says whether the list is on the file, about to be
+/// written, or refused -- not which tag it is. A colour per tag, hashed from
+/// its text, was tried first; beside rows that coloured by state it read as
+/// state, and meant nothing. The `·` between names stays subdued so a list
+/// still counts at a glance; a hashtag's `#` is part of the tag and takes its
+/// colour.
 fn tag_spans(
     items: &[String],
     hash: bool,
     width: usize,
     bg: ratatui::style::Color,
-    sigil_fg: ratatui::style::Color,
+    fg: ratatui::style::Color,
 ) -> Vec<Span<'static>> {
     let sigil = |first: bool| match (hash, first) {
         (true, _) => "#".to_string(),
@@ -1142,15 +1181,20 @@ fn tag_spans(
             break;
         }
         used += cost;
-        if !sig.is_empty() {
-            spans.push(Span::styled(sig, Style::default().bg(bg).fg(sigil_fg)));
-        }
         // A tag that cannot be repaired into a filename token is drawn in the
         // error colour wherever tags are drawn, so the one the write is about
-        // to leave out is the one that looks wrong -- rather than the field
-        // reading as saved-and-fine in the staged green (§5.4).
-        let fg = if hash && tag::is_hostile(item) { t::error() } else { t::tag_colour(item) };
-        spans.push(Span::styled(item.clone(), Style::default().bg(bg).fg(fg)));
+        // to leave out is the one that looks wrong (§5.4) -- and underlined,
+        // so it is still the one that looks wrong on a row already red.
+        let style = if hash && tag::is_hostile(item) {
+            Style::default().bg(bg).fg(t::error()).add_modifier(Modifier::UNDERLINED)
+        } else {
+            Style::default().bg(bg).fg(fg)
+        };
+        if !sig.is_empty() {
+            let sig_style = if hash { style } else { Style::default().bg(bg).fg(t::muted()) };
+            spans.push(Span::styled(sig, sig_style));
+        }
+        spans.push(Span::styled(item.clone(), style));
     }
     if used < width {
         spans.push(Span::styled(" ".repeat(width - used), Style::default().bg(bg)));
@@ -1193,11 +1237,13 @@ fn display_row(app: &App, row: &Row) -> Option<String> {
     })
 }
 
-/// The mode bar: a vim-style mode indicator on a ground that is always
-/// painted, lit while a field is open or a one-key menu is armed. The keys
-/// themselves are in the badge bar; typing into a field you thought was
-/// closed is the mistake worth pricing a colour against, so the colour stays
-/// here, at the bottom, where the eye goes after a keystroke.
+/// The mode bar: a vim-style mode indicator, then the keys that mode takes,
+/// on a ground that is always painted -- lit while a field is open or a
+/// one-key menu is armed. The keys sit beside the mode that governs them, so
+/// the list changing and the mode changing are one thing to notice, not two;
+/// typing into a field you thought was closed is the mistake worth pricing a
+/// colour against. `?` is not among them: it lives at the right of the badge
+/// bar, where it cannot be truncated away.
 fn draw_mode_bar(f: &mut Frame, area: Rect, app: &App) {
     let (mode_name, mode_fg, bar_bg) = mode_of(app);
     let badge = format!(" {mode_name} ");
@@ -1205,20 +1251,27 @@ fn draw_mode_bar(f: &mut Frame, area: Rect, app: &App) {
     // selection, so it lives with the other standing state -- the mode --
     // rather than in the title.
     let fast = format!("faststart {}  ", if app.faststart { "on" } else { "off" });
-    let gap = (area.width as usize).saturating_sub(badge.width() + fast.width());
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                badge,
-                Style::default().bg(mode_fg).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" ".repeat(gap)),
-            Span::styled(fast, Style::default().fg(t::muted())),
-        ]))
-        .style(Style::default().bg(bar_bg)),
-        area,
-    );
+    let pairs: Vec<(&str, &str)> =
+        shortcut_pairs(app).iter().copied().filter(|p| *p != HELP).collect();
+    let room = (area.width as usize).saturating_sub(badge.width() + 1 + fast.width() + 1);
+    let (hints, hints_w) = hint_spans(&pairs, room);
+    let gap = (area.width as usize).saturating_sub(badge.width() + 1 + hints_w + fast.width());
+    let mut spans = vec![
+        Span::styled(
+            badge,
+            Style::default().bg(mode_fg).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ];
+    spans.extend(hints);
+    spans.push(Span::raw(" ".repeat(gap)));
+    spans.push(Span::styled(fast, Style::default().fg(t::muted())));
+    f.render_widget(Paragraph::new(Line::from(spans)).style(Style::default().bg(bar_bg)), area);
 }
+
+/// The help key, which every Normal-mode list starts with and only the badge
+/// bar draws.
+const HELP: (&str, &str) = ("?", "help");
 
 /// The mode the keys are in: its name, its badge colour, and the ground the
 /// mode bar takes. The ground is always painted -- dark in Normal, lit while
@@ -1283,10 +1336,11 @@ fn shortcut_pairs(app: &App) -> &'static [(&'static str, &'static str)] {
         ]
     } else {
         &[
-            // Help leads the strip and never falls off it: the list below is
-            // truncated to fit the terminal, so the one key that can find
-            // every other key has to be the first one in it.
-            ("?", "help"),
+            // Help is listed with Normal's keys, but drawn apart from them at
+            // the right of the badge bar: the list below is truncated to fit
+            // the terminal, and the one key that can find every other key
+            // must not be what gets cut.
+            HELP,
             // h and l move along a set rather than between rows, but they are
             // the same hand's movement keys and a strip that named only two of
             // the four read as though the other two did nothing.
@@ -1320,7 +1374,8 @@ fn shortcut_pairs(app: &App) -> &'static [(&'static str, &'static str)] {
 /// Key chips and their descriptions, fitted to `width`. Hints that do not fit
 /// are dropped rather than let run off the edge -- a half-rendered key name is
 /// worse than one fewer hint -- and an ellipsis says some were. Returns the
-/// spans and the columns they take.
+/// spans and the columns they take. The descriptions take the ground of the
+/// bar they are drawn on.
 fn hint_spans(pairs: &[(&str, &str)], width: usize) -> (Vec<Span<'static>>, usize) {
     let mut spans = Vec::new();
     let mut used = 0usize;
@@ -1338,10 +1393,10 @@ fn hint_spans(pairs: &[(&str, &str)], width: usize) -> (Vec<Span<'static>>, usiz
             key,
             Style::default().bg(t::rule()).fg(t::accent()).add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::styled(desc, Style::default().bg(t::header_bg()).fg(t::muted())));
+        spans.push(Span::styled(desc, Style::default().fg(t::muted())));
     }
     if dropped {
-        spans.push(Span::styled("…", Style::default().bg(t::header_bg()).fg(t::muted())));
+        spans.push(Span::styled("…", Style::default().fg(t::muted())));
         used += 1;
     }
     (spans, used)
@@ -1968,47 +2023,73 @@ mod tests {
         assert!(line(4).contains("Title"), "{:?}", line(4));
     }
 
-    /// The point of the chips: adjacent tags are different colours, and the
-    /// same tag is the same colour wherever it appears. A single-colour value
-    /// string passes neither.
+    /// Chips take the row's colour, every one of them: the colour is the
+    /// value's standing, not the tag's identity. A `#` goes with its tag; the
+    /// `·` between names stays subdued so the list still counts at a glance.
     #[test]
-    fn tags_are_drawn_one_colour_each_and_the_colour_follows_the_tag() {
-        let items: Vec<String> =
-            ["pov", "solo", "outdoor"].iter().map(|s| s.to_string()).collect();
-        let spans = tag_spans(&items, true, 40, t::input_bg(), t::muted());
-        let colours: Vec<_> = spans
-            .iter()
-            .filter(|s| items.iter().any(|i| i == s.content.as_ref()))
-            .map(|s| s.style.fg.unwrap())
-            .collect();
-        assert_eq!(colours.len(), 3, "every tag draws as its own span");
-        assert!(colours[0] != colours[1] || colours[1] != colours[2], "all three matched");
-        // Same tag, different list, different position: same colour.
-        let other: Vec<String> = vec!["outdoor".into()];
-        let again = tag_spans(&other, true, 40, t::input_bg(), t::muted());
-        let outdoor = again.iter().find(|s| s.content == "outdoor").unwrap().style.fg;
-        assert_eq!(Some(colours[2]), outdoor);
+    fn every_chip_takes_the_rows_colour() {
+        let items: Vec<String> = vec!["pov".into(), "solo".into()];
+        let fg_of = |v: &[Span<'static>], text: &str| -> Vec<_> {
+            v.iter().filter(|s| s.content.trim() == text).map(|s| s.style.fg).collect()
+        };
+        for colour in [t::value(), t::staged(), t::mixed()] {
+            let spans = tag_spans(&items, true, 40, t::input_bg(), colour);
+            assert_eq!(fg_of(&spans, "pov"), vec![Some(colour)]);
+            assert_eq!(fg_of(&spans, "solo"), vec![Some(colour)]);
+            assert_eq!(fg_of(&spans, "#"), vec![Some(colour); 2], "the # is the tag's");
+        }
+        let names = tag_spans(&items, false, 40, t::input_bg(), t::staged());
+        assert_eq!(fg_of(&names, "solo"), vec![Some(t::staged())]);
+        assert_eq!(fg_of(&names, "·"), vec![Some(t::muted())], "the separator is not a name");
     }
 
-    /// The sigils carry the row's state so the tags do not have to. A staged
-    /// row must still read as staged without collapsing back to one colour.
+    /// A tag the write cannot store is red on any row, and underlined, so it
+    /// is still the one that stands out on a row already red.
     #[test]
-    fn a_staged_tag_row_marks_its_sigils_and_keeps_its_colours() {
-        let items: Vec<String> = vec!["pov".into(), "solo".into()];
-        let sigils = |v: &[Span<'static>]| -> Vec<_> {
-            v.iter().filter(|s| s.content.trim() == "#").map(|s| s.style.fg).collect()
+    fn a_hostile_tag_is_red_on_any_row() {
+        let items: Vec<String> = vec!["pov".into(), "a/b".into()];
+        let spans = tag_spans(&items, true, 40, t::input_bg(), t::value());
+        let bad = spans.iter().find(|s| s.content == "a/b").unwrap();
+        assert_eq!(bad.style.fg, Some(t::error()));
+        assert!(bad.style.add_modifier.contains(Modifier::UNDERLINED));
+        let good = spans.iter().find(|s| s.content == "pov").unwrap();
+        assert_eq!(good.style.fg, Some(t::value()));
+    }
+
+    /// The form end to end: a list on the file draws in the value colour, the
+    /// same list staged draws staged, and a staged list the write will refuse
+    /// draws red.
+    #[test]
+    fn a_rows_colour_says_where_its_value_stands() {
+        use crate::tags::probe::FileTags;
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use std::collections::BTreeMap;
+
+        let f = FileTags {
+            path: std::path::PathBuf::from("/tmp/tagform-render-colours.mp4"),
+            atoms: [("actors".to_string(), Value::text("Ann"))].into_iter().collect(),
+            xmp: BTreeMap::new(),
         };
-        let words = |v: &[Span<'static>]| -> Vec<_> {
-            v.iter()
-                .filter(|s| items.iter().any(|i| i == s.content.as_ref()))
-                .map(|s| s.style.fg)
-                .collect()
+        let mut app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
+        let colour_of = |app: &crate::ui::app::App, word: &str| {
+            let mut term = Terminal::new(TestBackend::new(80, 30)).unwrap();
+            term.draw(|fr| draw_fields(fr, fr.area(), app)).unwrap();
+            let buf = term.backend().buffer().clone();
+            for y in 0..30 {
+                let line: String = (0..80).map(|x| buf[(x, y)].symbol().to_string()).collect();
+                if let Some(at) = line.find(word) {
+                    let x = line[..at].chars().count() as u16;
+                    return buf[(x, y)].fg;
+                }
+            }
+            panic!("{word} not drawn");
         };
-        let staged = tag_spans(&items, true, 40, t::input_bg(), t::staged());
-        assert_eq!(sigils(&staged), vec![Some(t::staged()); 2], "sigils say staged");
-        let plain = tag_spans(&items, true, 40, t::input_bg(), t::muted());
-        assert_eq!(words(&staged), words(&plain), "staged must not flatten the hues");
-        assert_eq!(words(&plain).len(), 2);
+        assert_eq!(colour_of(&app, "Ann"), t::value(), "on the file");
+        app.set_staged(0, "actors", Value::List(vec!["Bo".into()]));
+        assert_eq!(colour_of(&app, "Bo"), t::staged(), "about to be written");
+        app.set_staged(0, "tags", Value::List(vec!["pov".into(), ".bad".into()]));
+        assert_eq!(colour_of(&app, "pov"), t::error(), "refused by the write");
     }
 
     /// A chip is never cut mid-word: half a tag is a different tag. The
@@ -2065,7 +2146,7 @@ mod tests {
         );
         let lines = screen(&app, 80, 20);
         let rule = &lines[3];
-        assert!(rule.contains(&format!("{BULK_ICON} bulk edit mode - 2 files")), "{rule:?}");
+        assert!(rule.contains(&iconed(BULK_ICON, "bulk edit mode - 2 files")), "{rule:?}");
         assert!(rule.starts_with('\u{2500}') && rule.trim_end().ends_with('\u{2500}'), "{rule:?}");
         let title = lines.iter().find(|l| l.contains("Title")).unwrap();
         assert!(title.contains("Same") && title.contains("2 files"), "{title:?}");
@@ -2113,6 +2194,45 @@ mod tests {
         (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect()
     }
 
+    /// A file with a rename that would land on another file is red in the
+    /// selection list, and its own page says what is wrong, in red.
+    #[test]
+    fn a_file_in_trouble_is_red_in_the_list_and_says_why_on_its_page() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let mut app = n_files(3);
+        app.conflicts.insert(1, std::path::PathBuf::from("/nonexistent/taken.mp4"));
+        let mut term = Terminal::new(TestBackend::new(80, 6)).unwrap();
+        term.draw(|fr| draw_header(fr, fr.area(), &app, None)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let name_fg = |y: u16| {
+            let line: String = (0..80).map(|x| buf[(x, y)].symbol().to_string()).collect();
+            let at = line.find("clip-").unwrap();
+            buf[(line[..at].chars().count() as u16, y)].fg
+        };
+        assert_eq!(name_fg(0), t::header_fg());
+        assert_eq!(name_fg(1), t::error(), "the file in trouble");
+        assert_eq!(name_fg(2), t::header_fg());
+
+        next(&mut app);
+        let lines = header(&app, 80, 6);
+        assert!(!lines.iter().any(|l| l.contains("rename blocked")), "file 0 is fine: {lines:?}");
+        next(&mut app);
+        let lines = header(&app, 80, 6);
+        let alert = lines.iter().find(|l| l.contains("rename blocked")).expect("its page says so");
+        assert!(alert.contains(&iconed(ALERT_ICON, "rename blocked: another file is already named taken.mp4")), "{alert:?}");
+    }
+
+    /// Past the fifth name the list stops, and a file in trouble among the
+    /// ones it did not show is counted rather than lost.
+    #[test]
+    fn a_file_in_trouble_past_the_list_is_counted() {
+        let mut app = n_files(8);
+        app.conflicts.insert(6, std::path::PathBuf::from("/nonexistent/taken.mp4"));
+        let lines = header(&app, 80, 6);
+        assert!(lines[5].contains("3 more · 1 with problems"), "{lines:?}");
+    }
+
     /// Bulk view's header lists the selection instead of one file's picture,
     /// five names and then the count. Five files fit whole; a sixth is where
     /// the list stops and says how many.
@@ -2121,7 +2241,7 @@ mod tests {
         let app = n_files(7);
         let lines = header(&app, 60, 6);
         for i in 0..5 {
-            assert!(lines[i].contains(&format!("{FILE_ICON}  clip-{i}.mp4")), "{lines:?}");
+            assert!(lines[i].contains(&iconed(FILE_ICON, &format!("clip-{i}.mp4"))), "{lines:?}");
         }
         assert!(lines[5].contains("… 2 more"), "{lines:?}");
         assert!(!lines.iter().any(|l| l.contains("clip-5")), "{lines:?}");
@@ -2151,7 +2271,7 @@ mod tests {
         }
         let lines = screen(&app, 80, 20);
         let rule = &lines[3];
-        assert!(rule.contains(&format!("{QUEUE_ICON} queued for write - 2 files left")), "{rule:?}");
+        assert!(rule.contains(&iconed(QUEUE_ICON, "queued for write - 2 files left")), "{rule:?}");
 
         let mut app = n_files(2);
         next(&mut app);
@@ -2350,7 +2470,7 @@ mod tests {
         let app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
         // Wide enough for the whole vocabulary including the help key, which
         // leads the strip and so is never the hint that gets dropped.
-        // The name shares the row now, so the vocabulary needs its width too.
+        // Faststart shares the mode bar, so the vocabulary needs its width too.
         let w = 280;
         let mut term = Terminal::new(TestBackend::new(w, 2)).unwrap();
         term.draw(|fr| {
@@ -2365,16 +2485,18 @@ mod tests {
 
         // Two spaces of padding plus the one the key carries, so the gap
         // still reads as one column once the terminal draws the glyph wide.
-        assert!(strip.contains(" ⌫   clear"), "{strip:?}");
-        assert!(!strip.contains("…"), "the whole strip should fit at {w} cols: {strip:?}");
-        // The keys follow the name, with help first.
-        assert!(strip.contains(&format!("{LOGO_ICON} tagform   ?  help ")), "help must lead: {strip:?}");
+        assert!(mode.contains(" ⌫   clear"), "{mode:?}");
+        assert!(!mode.contains("…"), "the whole list should fit at {w} cols: {mode:?}");
+        // The keys follow the mode, and help is not among them.
+        assert!(mode.starts_with(" NORMAL   hjkl  move "), "{mode:?}");
+        assert!(!mode.contains("help"), "{mode:?}");
         for key in ["o", "b", "f ~", "F", "t"] {
-            assert!(strip.contains(&format!(" {key}  ")), "{key} crowded: {strip:?}");
+            assert!(mode.contains(&format!(" {key}  ")), "{key} crowded: {mode:?}");
         }
-        // The mode stayed at the bottom, and faststart went with it.
-        assert!(mode.starts_with(" NORMAL "), "{mode:?}");
         assert!(mode.trim_end().ends_with("faststart on"), "{mode:?}");
+        // Help sits alone at the right of the badge bar.
+        assert!(strip.trim_end().ends_with("?  help"), "{strip:?}");
+        assert!(!strip.contains("hjkl"), "{strip:?}");
         assert!(!strip.contains("faststart"), "{strip:?}");
     }
 
