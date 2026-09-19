@@ -3051,10 +3051,10 @@ mod tests {
         assert_eq!(
             shown(&app, "tags"),
             Some(Value::List(vec![
+                "another".into(),
                 "tag".into(),
-                "tag-two".into(),
                 "tag-three".into(),
-                "another".into()
+                "tag-two".into()
             ]))
         );
         let row = app.rows.iter().find(|r| r.key == "tags").unwrap();

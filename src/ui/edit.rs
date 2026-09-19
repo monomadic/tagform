@@ -490,7 +490,7 @@ mod tests {
         for c in " #hd".chars() {
             e.handle(key(c));
         }
-        assert_eq!(e.value(), Value::List(vec!["pov".into(), "hd".into()]));
+        assert_eq!(e.value(), Value::List(vec!["hd".into(), "pov".into()]));
     }
 
     /// Kind stores the stik integer but shows a word.
@@ -645,7 +645,7 @@ mod tests {
         assert_eq!(e.validate(), Validation::Ok);
         assert_eq!(
             e.value(),
-            Value::List(vec!["tag".into(), "tag-two".into(), "tag-three".into(), "another".into()])
+            Value::List(vec!["another".into(), "tag".into(), "tag-three".into(), "tag-two".into()])
         );
     }
 }

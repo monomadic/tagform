@@ -25,10 +25,17 @@
 /// which is the one outcome the user cannot see happening. With a comma in the
 /// line the spaces inside a tag are the user's, and repairing them is what
 /// they meant.
+///
+/// The tags come back sorted alphabetically, ignoring case: a tag set has no
+/// order worth keeping, and a sorted one reads the same on every file. Both
+/// sides of the form's "did this change" comparison come through here, so a
+/// set stored out of order on disk is not an edit until something else is.
 pub fn split(line: &str) -> Vec<String> {
     let parts: Vec<&str> =
         if line.contains(',') { line.split(',').collect() } else { line.split_whitespace().collect() };
-    parts.iter().map(|p| repair(p)).filter(|p| !p.is_empty()).collect()
+    let mut tags: Vec<String> = parts.iter().map(|p| repair(p)).filter(|p| !p.is_empty()).collect();
+    tags.sort_by_cached_key(|t| t.to_lowercase());
+    tags
 }
 
 /// One tag, made into a single filename token: the leading `#` is presentation
@@ -81,7 +88,7 @@ mod tests {
     /// The reported case: a comma-separated line whose tags contain spaces.
     #[test]
     fn spaces_inside_a_comma_separated_tag_are_repaired() {
-        assert_eq!(v("tag, tag two, tag three, another"), ["tag", "tag-two", "tag-three", "another"]);
+        assert_eq!(v("tag, tag two, tag three, another"), ["another", "tag", "tag-three", "tag-two"]);
     }
 
     /// A line without commas is still a stream of hashtags, which is how a
@@ -89,13 +96,20 @@ mod tests {
     #[test]
     fn a_line_without_commas_splits_on_whitespace() {
         for line in ["pov hd", "#pov #hd", "  pov   hd "] {
-            assert_eq!(v(line), ["pov", "hd"], "line: {line}");
+            assert_eq!(v(line), ["hd", "pov"], "line: {line}");
         }
     }
 
     #[test]
     fn underscores_and_runs_collapse_to_one_dash() {
-        assert_eq!(v("tag__two, a - b, -c-"), ["tag-two", "a-b", "c"]);
+        assert_eq!(v("tag__two, a - b, -c-"), ["a-b", "c", "tag-two"]);
+    }
+
+    /// Alphabetical, not ASCII: a capitalised tag sorts among its neighbours
+    /// rather than ahead of every lowercase one.
+    #[test]
+    fn tags_come_back_sorted_ignoring_case() {
+        assert_eq!(v("zebra, Apple, mango, banana"), ["Apple", "banana", "mango", "zebra"]);
     }
 
     /// Repair has to be a fixed point, or seeding a control from its own value
