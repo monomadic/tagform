@@ -51,6 +51,18 @@ impl FileTags {
         None
     }
 
+    /// The value on disk behind one form row: a field id, `custom:KEY` for an
+    /// atom no field claims, or `xmp:TAG` for an unclaimed XMP tag. The same
+    /// row keys `plan::build` takes, so a staged edit can be compared with
+    /// what it would replace.
+    pub fn row(&self, key: &str) -> Option<Value> {
+        match key.split_once(':') {
+            Some(("xmp", tag)) => self.xmp.get(tag).cloned(),
+            Some((_, k)) => self.atoms.get(k).cloned(),
+            None => crate::model::schema::field_by_id(key).and_then(|def| self.lookup(def)),
+        }
+    }
+
     /// Where the two readers disagree. Surfaced rather than silently resolved,
     /// because a disagreement usually means one writer clobbered the other.
     ///

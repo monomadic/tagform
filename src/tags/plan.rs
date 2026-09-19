@@ -191,10 +191,15 @@ pub fn build(
                 "rewrites the container; keeps XMP and every track"
             },
         )
-    } else if has_xmp {
+    } else if has_xmp || !xmp.is_empty() {
+        // A bare remux writes atoms and nothing else, so a plan with XMP in it
+        // -- a Place typed on a file that has none yet -- would report success
+        // having dropped it. The second pass is what writes and verifies it.
         (
             Writer::TwoPass,
-            if adds_new_key {
+            if !has_xmp {
+                "remux for the keys, then exiftool for the XMP a remux cannot write"
+            } else if adds_new_key {
                 "adds a key, and a bare remux would destroy this file's XMP"
             } else {
                 "faststart needs a remux, and that would destroy this file's XMP"
@@ -348,6 +353,21 @@ mod tests {
         let f = file(&[("title", "old")], &[]);
         let p = build(&f, &staged(&[("title", Value::text("new"))]), true);
         assert_eq!(p.writer, Writer::Ffmpeg);
+    }
+
+    /// A bare remux writes atoms only. A plan that also writes XMP -- a place
+    /// typed on a file with none -- has to take the pass that writes it, or
+    /// the write succeeds and the place is gone.
+    #[test]
+    fn xmp_on_a_file_without_any_takes_the_second_pass() {
+        let f = file(&[("title", "old")], &[]);
+        let p = build(
+            &f,
+            &staged(&[("genre", Value::text("Pop")), ("location_place", Value::text("Coro Hotel"))]),
+            false,
+        );
+        assert!(!p.xmp.is_empty());
+        assert_eq!(p.writer, Writer::TwoPass);
     }
 
     /// XMP is only written where it already lives; a plain download must not

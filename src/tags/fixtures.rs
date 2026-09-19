@@ -166,6 +166,29 @@ fn a_file_carrying_xmp_never_routes_to_a_bare_remux() {
     }
 }
 
+/// The other side of the same rule: a file with *no* XMP, handed a plan that
+/// writes some. A bare remux writes atoms only, so a place typed on a plain
+/// download used to be reported written and then read back as nothing. Found
+/// by `tagform clone`, whose targets are all fresh ffmpeg output.
+#[test]
+fn xmp_written_to_a_file_without_any_is_not_dropped() {
+    let dir = workspace("xmp-onto-plain");
+    // ffmpeg's default mp4 path: iTunes `ilst`, no mdta box, no XMP.
+    let f = generate(&dir, "plain.mp4", &["-metadata", "title=Plain"]);
+    let edits = staged(&[("origin", "Camera"), ("location_place", "Coro Hotel")]);
+
+    let (_, r) = write_it(&f, &edits, false);
+    r.expect("the write must succeed");
+
+    let got = probe::probe(&f).unwrap();
+    assert_eq!(text(&got, "origin"), Some("Camera".into()));
+    assert_eq!(
+        got.lookup(field_by_id("location_place").unwrap()),
+        Some(Value::text("Coro Hotel")),
+        "the XMP half of the plan was dropped"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // round-trips
 // ---------------------------------------------------------------------------

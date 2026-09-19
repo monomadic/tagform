@@ -16,6 +16,7 @@ use crate::tags::atoms;
 use crate::tags::native;
 use crate::tags::plan::{exiftool_name, junk_clears, FilePlan, Writer};
 use crate::tags::probe;
+use crate::tags::rename::NAME_MAX;
 
 /// What a remux has to reproduce exactly: one entry per stream the file
 /// carries, so the result can be checked against the source rather than hoped
@@ -454,11 +455,31 @@ pub(crate) fn muxer_for(path: &Path) -> &'static str {
 /// Same directory, so the swap is a rename rather than a copy; same extension,
 /// so the file the user gets back is named as it was. The muxer is chosen by
 /// `muxer_for`, not by this name.
+///
+/// The decoration costs ~20 bytes, so a file already named near the limit
+/// had a temp the filesystem refused ("File name too long") and could not be
+/// written at all. The stem is cropped to make room instead: only the temp is
+/// cropped, and the swap renames it back to the original's full name.
 fn temp_beside(path: &Path) -> PathBuf {
     let dir = path.parent().unwrap_or(Path::new("."));
     let ext = path.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|| "mp4".into());
     let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    dir.join(format!(".{stem}.tagform.{}.{ext}", std::process::id()))
+    let tail = format!(".tagform.{}.{ext}", std::process::id());
+    let room = NAME_MAX.saturating_sub(1 + tail.len());
+    dir.join(format!(".{}{tail}", crop(&stem, room)))
+}
+
+/// The longest prefix of `s` that fits in `max` bytes without splitting a
+/// character.
+fn crop(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 /// The last step of every write path: the original is replaced only by a file
@@ -688,4 +709,33 @@ fn run(program: &str, args: &[String]) -> Result<()> {
         bail!("{program}: {}", sout.trim().lines().next().unwrap_or("refused"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temp_for_a_name_at_the_limit_still_fits() {
+        // 249 characters, 259 bytes: the stars are three bytes each.
+        let name = format!("{} ★★★★★.mp4", "x".repeat(238));
+        let tmp = temp_beside(&Path::new("/v").join(&name));
+        let n = tmp.file_name().unwrap().to_str().unwrap();
+        assert!(n.len() <= NAME_MAX, "{} bytes", n.len());
+        assert!(n.starts_with(".xxxx") && n.ends_with(".mp4"));
+    }
+
+    #[test]
+    fn short_names_are_not_cropped() {
+        let tmp = temp_beside(Path::new("/v/clip ★.mov"));
+        let n = tmp.file_name().unwrap().to_str().unwrap();
+        assert_eq!(n, format!(".clip ★.tagform.{}.mov", std::process::id()));
+    }
+
+    #[test]
+    fn crop_never_splits_a_character() {
+        assert_eq!(crop("ab★", 4), "ab");
+        assert_eq!(crop("ab★", 5), "ab★");
+        assert_eq!(crop("ab", 9), "ab");
+    }
 }

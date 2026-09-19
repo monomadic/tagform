@@ -68,7 +68,16 @@ tagform clip.mp4                 # open one file
 tagform show/*.mp4               # open a batch — bulk edit mode
 tagform --print-json clip.mp4    # what tagform sees, as JSON
 tagform --print-schema           # every field and the keys it reads/writes
+tagform clone orig.mp4 copy.mp4  # copy one file's tags onto others, headless
+tagform clone --only="title, tags" orig.mp4 *.interp.mp4
 ```
+
+`clone` is for scripts that make a new file from an old one: an interpolated
+or re-encoded copy comes out of ffmpeg without the original's tags. It goes
+through the same planned, verified write as the form, copies every field the
+source has (or only the ones `--only` names, by id or label), and leaves alone
+anything the source lacks. `--dry-run` prints the plan; `clone --help` has the
+rest.
 
 Inside the form: `j`/`k` move, `enter` edits, `h`/`l` step a set or nudge a
 rating, `w` writes, `?` shows every key. That is enough to start.

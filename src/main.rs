@@ -5,6 +5,7 @@
 //! See DESIGN.md for the design and docs/CONTAINER.md for the measured container
 //! behaviour the design rests on.
 
+mod clone;
 mod config;
 mod fetch;
 mod geocode;
@@ -72,13 +73,22 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    // A subcommand only in first position, so a file that happens to be named
+    // `clone` is still openable as `./clone`.
+    let mut args = std::env::args().skip(1).peekable();
+    if args.peek().map(String::as_str) == Some("clone") {
+        args.next();
+        let code = clone::run(args)?;
+        std::process::exit(code);
+    }
+
     let mut paths: Vec<PathBuf> = Vec::new();
     let mut print_json = false;
     let mut print_schema = false;
     let mut no_thumbnail = false;
     let mut theme: Option<String> = None;
 
-    for arg in std::env::args().skip(1) {
+    for arg in args {
         match arg.as_str() {
             "--print-json" => print_json = true,
             "--print-schema" => print_schema = true,
@@ -205,6 +215,7 @@ fn custom_keys(files: &[FileTags]) -> BTreeMap<String, Agg> {
 
 const USAGE_HEAD: &str = "\
 Usage: tagform [OPTIONS] FILE...
+       tagform clone [--only=FIELDS] SOURCE TARGET...   (clone --help for more)
 
   --print-json     dump the aggregated tag model and exit
   --print-schema   dump the field schema as JSON and exit (takes no files)

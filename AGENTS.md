@@ -58,6 +58,8 @@ Use the map below instead of searching the tree.
 
 ```
 src/main.rs         CLI, --print-json / --print-schema, exit codes
+src/clone.rs        `tagform clone SRC DST...`: headless, stages the source's
+                    values on each target and runs the ordinary plan/write
 src/config.rs       the yt-dlp --alias parse (Category/Variant sets)
 src/fetch.rs        `i u`: yt-dlp -J on the URL field → field values (no download)
 src/geocode.rs      MapKit place lookup via assets/geocode.swift: committing
@@ -122,7 +124,8 @@ debugging. Changing code that violates one is a regression, not a refactor.
    writer therefore picks its backend from *file contents*, not user
    preference — never from a flag. (DESIGN's `--writer ffmpeg` / `--force`
    escape hatch is designed but not implemented; `main.rs` accepts only
-   `--print-json`, `--print-schema`, `--theme`, `--no-thumbnail`, `--help`.)
+   `--print-json`, `--print-schema`, `--theme`, `--no-thumbnail`, `--help`,
+   and the `clone` subcommand, which has no backend flag either.)
 3. **The original is never modified until a verified replacement exists.**
    `write.rs` remuxes to a sibling temp, proves duration, tags and layout, and
    only then renames over the original. Any failure leaves the original

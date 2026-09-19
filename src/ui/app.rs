@@ -2731,11 +2731,7 @@ pub fn field_error(key: &str, value: &Value) -> Option<String> {
 }
 
 pub fn disk_value(t: &FileTags, key: &str) -> Option<Value> {
-    match key.split_once(':') {
-        Some(("xmp", tag)) => t.xmp.get(tag).cloned(),
-        Some((_, k)) => t.atoms.get(k).cloned(),
-        None => crate::model::schema::field_by_id(key).and_then(|def| t.lookup(def)),
-    }
+    t.row(key)
 }
 
 /// A staged edit seen as a value. An empty edit is a *clear*, which reads as

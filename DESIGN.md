@@ -1670,7 +1670,18 @@ tagform [OPTIONS] FILE...
   --no-thumbnail   do not render a thumbnail
   --theme=NAME     colour scheme; `t` cycles them at runtime
   -h, --help       show this message
+
+tagform clone [--only=FIELDS] [--dry-run] [--no-faststart] SOURCE TARGET...
 ```
+
+`clone` is the first headless write, for scripts that derive one file from
+another — an interpolated or re-encoded copy leaves ffmpeg without the
+original's tags. The source's values are staged on each target as though
+typed into the form and go through the same plan and verified write, so it
+adds no write path of its own. A field the source lacks is left alone, never
+cleared; reverse-DNS atoms are not copied, being facts about the recording
+device. It takes the exit codes `--apply` is designed to have, below: `1` a
+target failed, `3` the only failures were lack of space.
 
 Exit codes: `0` success, `2` anything that went wrong. Argument parsing is a
 hand-rolled loop over `std::env::args()` — no `clap`, because four options do

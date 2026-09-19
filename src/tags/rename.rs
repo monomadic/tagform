@@ -26,7 +26,7 @@ const TOOL: &str = "rename-video";
 /// composes a name out of every tag on the file, and a long tag list walks
 /// straight past this; `mv` then fails with a message that puts the reason
 /// after two 300-byte paths, where a one-line status cannot reach it.
-const NAME_MAX: usize = 255;
+pub(crate) const NAME_MAX: usize = 255;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
