@@ -2360,12 +2360,25 @@ impl App {
         if new == shown {
             return;
         }
-        let key = row.key.clone();
+        let (key, label) = (row.key.clone(), row.label.clone());
         let typed = match &new {
             Value::Text(s) => s.trim().to_string(),
             _ => String::new(),
         };
+        let cleared = new.is_empty();
         self.stage(key.clone(), new);
+        // An edit that lands back on what the file holds un-stages the row
+        // rather than staging a no-op. Deleting a value the filename seeded
+        // is the case that confuses: the row showed a channel, the file never
+        // had one, and `w` then says "nothing to write" with no reason given.
+        // So the reason is given here, when it happens.
+        if self.scope().iter().all(|i| !self.staged.get(i).is_some_and(|e| e.contains_key(&key))) {
+            self.status = if cleared {
+                format!("{label} is not in the file's tags · nothing to remove")
+            } else {
+                format!("{label} is what the file already holds · nothing staged")
+            };
+        }
         // Place is the row a place is typed into: committing text there is
         // the lookup, and the hit rewrites the row and fills the block. A
         // cleared row is just cleared.
@@ -3940,6 +3953,29 @@ mod tests {
         app.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SUPER));
         assert!(app.pending.is_none());
         assert_eq!(app.status, "nothing to write");
+    }
+
+    /// A channel the filename seeded is staged, not on disk. Deleting it
+    /// un-stages it, and the form says why `w` then has nothing to do.
+    #[test]
+    fn deleting_a_seeded_value_says_the_file_never_had_it() {
+        use crate::tags::probe::FileTags;
+        let f = FileTags {
+            path: PathBuf::from("/nonexistent/(Studio) - A Title.mp4"),
+            atoms: [("title".to_string(), Value::text("A Title"))].into_iter().collect(),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = App::new(vec![f], BTreeMap::new(), false);
+        app.seed_from_filenames();
+        assert_eq!(shown(&app, "channel"), Some(Value::text("Studio")));
+        app.focus = app.rows.iter().position(|r| r.key == "channel").unwrap();
+        press(&mut app, KeyCode::Enter);
+        for _ in 0.."Studio".len() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.staged_count(), 0);
+        assert_eq!(app.status, "Channel is not in the file's tags · nothing to remove");
     }
 
     /// Hiding a row must never hide a pending write. Same escape the

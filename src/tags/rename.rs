@@ -13,7 +13,7 @@
 //! staged edits are not in it, which is why the caller refuses to run while any
 //! are outstanding.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -40,19 +40,50 @@ pub enum Outcome {
     Taken(PathBuf),
 }
 
+/// The tool as `Command` should be given it: the bare name when PATH has it,
+/// otherwise the copy installed beside this binary, if there is one.
+///
+/// `tagform` gets started from places whose PATH is not the login shell's -- a
+/// file manager's opener, a launcher, a terminal that was open before the tool
+/// was installed -- and by an absolute path, so it runs while its sibling in
+/// the same `bin` does not. The two are installed together; look there before
+/// giving up.
+fn tool() -> PathBuf {
+    let on_path = std::env::var_os("PATH")
+        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(TOOL).is_file()));
+    if !on_path {
+        let beside = std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join(TOOL)));
+        if let Some(beside) = beside.filter(|b| b.is_file()) {
+            return beside;
+        }
+    }
+    PathBuf::from(TOOL)
+}
+
+/// Why the tool did not start. A missing binary is the one failure here with
+/// a fix the user can act on, and "No such file or directory" beside a video's
+/// name reads as though the *video* were missing.
+fn spawn_error(e: std::io::Error) -> anyhow::Error {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        anyhow::anyhow!("{TOOL} is not on PATH")
+    } else {
+        anyhow::Error::new(e).context(format!("running {TOOL}"))
+    }
+}
+
 /// Where the file wants to live, asked without letting anything move.
 ///
 /// `--print-target` is the tool's own dry-run answer, which is what makes the
 /// collision check below a filesystem question rather than an exercise in
 /// parsing decorated output.
 pub fn target(path: &Path) -> Result<PathBuf> {
-    let out = Command::new(TOOL)
+    let out = Command::new(tool())
         .arg("--print-target")
         .arg("--")
         .arg(path)
         .stdin(Stdio::null())
         .output()
-        .with_context(|| format!("running {TOOL}"))?;
+        .map_err(spawn_error)?;
     if !out.status.success() {
         bail!("{}", say(&out.stderr, &out.stdout));
     }
@@ -91,12 +122,12 @@ pub fn run(path: &Path) -> Result<Outcome> {
         return Ok(Outcome::Taken(target));
     }
     let before = ident(path);
-    let out = Command::new(TOOL)
+    let out = Command::new(tool())
         .arg("--")
         .arg(path)
         .stdin(Stdio::null())
         .output()
-        .with_context(|| format!("running {TOOL}"))?;
+        .map_err(spawn_error)?;
     if !out.status.success() {
         bail!("{}", say(&out.stderr, &out.stdout));
     }
