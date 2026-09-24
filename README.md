@@ -214,6 +214,7 @@ WCAG 3:1 contrast floor by a test, including the focused-row fill.
 | `o` | open the file in whatever the desktop plays it with |
 | `O` / `b` | overwrite the focused field on every file / backfill it into only the files where it is empty |
 | `u` / `ctrl-r` | undo / redo — `cmd-z` and `cmd-shift-z` do the same |
+| `cmd-u` | load every video next to the open file as a fresh batch — refused while edits are staged (`cmd` needs a terminal with the kitty keyboard protocol) |
 | `backspace` | clear the focused field |
 | `y` (or `c`) / `p` | yank the focused field / paste into it |
 | `f` | format menu — then `c` capitalize, `t` title (the little words stay lowered), `l` lower, `u` upper |

@@ -26,7 +26,7 @@ use crate::ui::edit::{Editor, Opt, Reaction, Validation};
 use crate::ui::theme;
 use crate::model::value::{Agg, Value};
 use crate::tags::plan::{self, FilePlan};
-use crate::tags::probe::FileTags;
+use crate::tags::probe::{self, FileTags};
 use crate::tags::rename::{self, Outcome};
 use crate::tags::write;
 use crate::thumb::{self, MediaInfo};
@@ -222,6 +222,14 @@ fn file_name(p: &std::path::Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
+/// The three extensions the format supports (README, DESIGN §1): `.mp4`,
+/// `.m4v` and `.mov`, matched case-insensitively.
+fn is_video(p: &std::path::Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("mp4") || e.eq_ignore_ascii_case("m4v") || e.eq_ignore_ascii_case("mov"))
+}
+
 /// Where the running write has got to. One file at a time, so this is a
 /// position in the batch plus a position within the file.
 pub struct WriteProgress {
@@ -390,6 +398,9 @@ pub struct App {
     /// for whichever files are in scope -- otherwise a custom key would still
     /// read ‹multiple› while looking at a single file.
     custom_keys: Vec<String>,
+    /// Whether thumbnails are on, remembered so ⌘U can rebuild the app with
+    /// the same setting rather than silently turning them on or off.
+    thumbnails: bool,
     pub focus: usize,
     /// None = aggregate view over every file; Some(i) = that one file.
     pub view: Option<usize>,
@@ -510,6 +521,7 @@ impl App {
             files,
             rows,
             custom_keys,
+            thumbnails,
             focus: 0,
             view: None,
             inspector: false,
@@ -581,6 +593,55 @@ impl App {
         keys.sort_unstable();
         keys.dedup();
         keys.len()
+    }
+
+    /// `⌘U`: drop the open selection and load every video in its folder
+    /// instead -- the batch-open `tagform show/*.mp4` gives you from the
+    /// shell, reached from inside the form. Refuses while edits are staged:
+    /// rebuilding the file list out from under them would drop them with no
+    /// undo, since it replaces `self` wholesale.
+    fn load_siblings(&mut self) {
+        if self.staged_count() > 0 {
+            self.status = "staged edits — write or discard them before loading siblings".into();
+            self.status_error = true;
+            return;
+        }
+        let Some(dir) = self.files.first().and_then(|f| f.path.parent()) else {
+            return;
+        };
+        let dir = dir.to_path_buf();
+        let mut paths: Vec<PathBuf> = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| is_video(p))
+                .collect(),
+            Err(e) => {
+                self.status = format!("could not read {}: {e}", dir.display());
+                self.status_error = true;
+                return;
+            }
+        };
+        paths.sort();
+        let files: Vec<FileTags> = match paths.iter().map(|p| probe::probe(p)).collect::<Result<Vec<FileTags>>>() {
+            Ok(files) => files,
+            Err(e) => {
+                self.status = format!("{e:#}");
+                self.status_error = true;
+                return;
+            }
+        };
+        if files.is_empty() {
+            self.status = "no video files in this folder".into();
+            self.status_error = true;
+            return;
+        }
+        let count = files.len();
+        let custom = crate::custom_keys(&files);
+        *self = App::new(files, custom, self.thumbnails);
+        self.seed_from_filenames();
+        self.check_renames((0..self.files.len()).collect());
+        self.status = format!("loaded {count} files from {}", dir.display());
     }
 
     fn spawn_media(&self, idx: usize) {
@@ -1881,8 +1942,10 @@ impl App {
         // ⌘Z is undo as well as `u`, and ⌘⇧Z redo as well as ⌃R. The vi keys
         // are the ones worth learning, but the form is a form: the undo
         // gesture every other app on the machine trains should not be the one
-        // thing here that does nothing. Like ⌘S it needs a terminal that
-        // reports SUPER (the kitty keyboard protocol).
+        // thing here that does nothing. ⌘U loads every video sibling of the
+        // open file as a fresh batch -- refused while edits are staged, since
+        // it replaces the selection outright. Like ⌘S these need a terminal
+        // that reports SUPER (the kitty keyboard protocol).
         if key.modifiers.contains(KeyModifiers::SUPER) {
             match key.code {
                 KeyCode::Char('z') => {
@@ -1891,6 +1954,10 @@ impl App {
                 }
                 KeyCode::Char('Z') => {
                     self.redo();
+                    return;
+                }
+                KeyCode::Char('u') => {
+                    self.load_siblings();
                     return;
                 }
                 _ => {}
@@ -3296,6 +3363,60 @@ mod tests {
             xmp: BTreeMap::new(),
         };
         App::new(vec![f], BTreeMap::new(), false)
+    }
+
+    /// ⌘U refuses while an edit is staged rather than silently discarding it
+    /// -- replacing `self.files` wholesale would drop it with no undo.
+    #[test]
+    fn cmd_u_refuses_to_load_siblings_over_a_staged_edit() {
+        let mut app = one(&[]);
+        app.set_staged(0, "title", Value::text("edited"));
+        app.on_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::SUPER));
+        assert!(app.status.contains("staged"), "{}", app.status);
+        assert!(app.status_error);
+        assert_eq!(app.files.len(), 1);
+        assert_eq!(app.files[0].path, PathBuf::from("/nonexistent/tagform-test.mov"));
+    }
+
+    /// ⌘U loads every video next to the open file, and only videos -- a
+    /// non-media sibling in the same folder is left out.
+    #[test]
+    fn cmd_u_loads_every_video_sibling_and_nothing_else() {
+        let dir = std::env::temp_dir()
+            .join(format!("tagform-app-tests-{}-siblings", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let one_path = dir.join("a.mp4");
+        let two_path = dir.join("b.mov");
+        let junk_path = dir.join("notes.txt");
+        for (path, args) in [
+            (&one_path, ["-metadata", "title=One"]),
+            (&two_path, ["-metadata", "title=Two"]),
+        ] {
+            let out = std::process::Command::new("ffmpeg")
+                .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y"])
+                .args(["-f", "lavfi", "-i", "testsrc=d=1:s=160x120"])
+                .args(["-f", "lavfi", "-i", "sine=d=1"])
+                .args(["-c:v", "libx264", "-c:a", "aac"])
+                .args(args)
+                .arg("--")
+                .arg(path)
+                .output()
+                .expect("ffmpeg must be on PATH to run this test");
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        }
+        std::fs::write(&junk_path, b"not a video").unwrap();
+
+        let f = crate::tags::probe::probe(&one_path).unwrap();
+        let mut app = App::new(vec![f], BTreeMap::new(), false);
+        app.on_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::SUPER));
+
+        assert_eq!(app.files.len(), 2, "{}", app.status);
+        let mut names: Vec<String> = app.files.iter().map(|f| file_name(&f.path)).collect();
+        names.sort();
+        assert_eq!(names, vec!["a.mp4".to_string(), "b.mov".to_string()]);
+        assert!(app.status.contains("loaded 2 files"), "{}", app.status);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// On open, a name with structure fills the fields the file leaves

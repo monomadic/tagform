@@ -174,7 +174,7 @@ fn build_report(files: &[FileTags]) -> Report {
 /// Keys on disk that no field claims. Aggregated and carried through rather
 /// than dropped -- losing an unrecognised tag by failing to recognise it is
 /// exactly the bug this guards against.
-fn custom_keys(files: &[FileTags]) -> BTreeMap<String, Agg> {
+pub(crate) fn custom_keys(files: &[FileTags]) -> BTreeMap<String, Agg> {
     let atoms = claimed_atom_keys();
     let xmp = claimed_xmp_tags();
     let mut keys: Vec<String> = Vec::new();
