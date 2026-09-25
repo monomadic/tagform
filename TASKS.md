@@ -12,7 +12,7 @@ genuine fail-open. Tick a box, cite the commit.
 
 ## Do
 
-- [ ] **1. Fail closed in `probe_xmp`.** `src/tags/probe.rs` returns an empty
+- [x] **1. Fail closed in `probe_xmp`.** `src/tags/probe.rs` returns an empty
   map whenever exiftool prints nothing, without checking the exit status. A
   failing exiftool (missing config, unreadable file, wrong binary) reads as
   "no XMP" and the planner may pick the remux that destroys XMP — invariant 2
@@ -20,7 +20,7 @@ genuine fail-open. Tick a box, cite the commit.
   Fixture: point at a broken exiftool path and assert an error, not an empty
   map. Ten lines. Do this first.
 
-- [ ] **2. Fix `restore_mtime`, verify XMP on the in-place path.**
+- [x] **2. Fix `restore_mtime`, verify XMP on the in-place path.**
   `restore_mtime` in `write.rs` runs `touch -r path path` and discards the
   captured time, so every write bumps mtime. Use the `filetime` crate.
   `in_place` calls only `verify_atoms`; add `verify_xmp` when `plan.xmp` is
@@ -57,7 +57,7 @@ genuine fail-open. Tick a box, cite the commit.
   verified temp, then fsync the directory, before `rename`. Closes the last
   gap in invariant 3 for the native and ffmpeg paths.
 
-- [ ] **7. Clippy, fmt, CI.** `cargo clippy --all-targets -- -D warnings`
+- [ ] **7. Clippy, fmt, CI.** *(clippy and fmt green as of 2026-09-25; CI still to add.)* `cargo clippy --all-targets -- -D warnings`
   reported 5 errors at audit time and 14 today; `cargo fmt --check` fails.
   Fix, then add a workflow running `fmt --check`, clippy and `cargo test`
   with ffmpeg and exiftool installed (the fixture suite needs both). This
