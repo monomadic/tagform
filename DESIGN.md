@@ -1354,17 +1354,26 @@ the whole of it.
 ⟨built, differs⟩ The confirmed plan is not run as one blocking batch behind a
 progress dialog. It goes onto a queue drained by a writer thread while the form
 stays live. The batch's own bar reads bottom-right, under the mode bar —
-`4/9` and the bar, with the batch's percentage drawn inside it — and the header band
-carries the detail: in single-file view a wide bar under the file's three facts
-when that file is the one being written (an empty one, `2 ahead`, when it is
-still in the queue), and in bulk view the queue itself, six files in the order
-they will be taken, the running one with a live bar and the rest with empty
-ones. The rule under Category says where the file in view stands (`􀈏 queued for
-write - 2 files left`), and an edit to a
-file still waiting is rebuilt into its queued plan on `⏎`, so the file is
-written once with everything. The file under the writer is the one exception;
-its edit stays staged for the next `w`. A second `w` mid-run appends to the
-queue. The results dialog is raised only when a file failed.
+`4/9` and the bar, with the batch's percentage drawn inside it — weighted by
+file size rather than by file count, since a remux is proportional to the
+bytes it copies and a batch of one 4 GB clip and three 16 MB ones is not four
+equal parts; the denominator is re-read per tick, bytes and file count both,
+since the queue can grow mid-run. The header band carries the detail: in
+single-file view a wide bar under the file's three facts when that file is
+the one being written (an empty one, `2 ahead`, when it is still in the
+queue), and in bulk view the queue itself, six files in the order they will
+be taken, the running one with a live bar and the rest with empty ones. The
+rule under Category says where the file in view stands (`􀈏 queued for write -
+2 files left`). An edit to a file still waiting takes it back off the queue on
+`⏎` rather than folding into its plan — a queued job is a plan the user has
+already confirmed with `w`, and rebuilding it silently would write something
+they never looked at a second time. The file under the writer cannot be taken
+off either, for the same reason a remux in progress cannot; its edit, like the
+evicted one, stays staged for the next `w`. A second `w` mid-run appends to
+the queue; queued twice for the same file that is currently running, the
+second job is rebuilt from a fresh probe once the first lands, since its plan
+was built against tags the write is about to replace. The results dialog is
+raised only when a file failed.
 
 ### 9.2 Choosing a backend — from the file, not from a flag
 

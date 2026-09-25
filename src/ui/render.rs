@@ -2619,8 +2619,18 @@ mod progress_panel_tests {
         App::new(files, BTreeMap::new(), false)
     }
 
+    /// Every file the same size, so the byte-weighted bar reads exactly like
+    /// the old per-file count would have.
     fn progress(file: usize, total: usize, label: &'static str, frac: f64) -> WriteProgress {
-        WriteProgress { file, total, label, frac }
+        WriteProgress {
+            file,
+            total,
+            label,
+            frac,
+            file_bytes: 1,
+            done_bytes: file as u64,
+            total_bytes: total as u64,
+        }
     }
 
     /// The whole screen, as rows of text.

@@ -239,16 +239,26 @@ pub struct WriteProgress {
     pub label: &'static str,
     /// Fraction of this file's work, 0..1.
     pub frac: f64,
+    /// The file being written's size: its share of the batch bar.
+    pub file_bytes: u64,
+    /// Bytes of every other file in this batch run that has already landed
+    /// (or failed) -- the floor `file_bytes * frac` climbs from.
+    pub done_bytes: u64,
+    /// Bytes of every job in this batch, finished or not. Re-read per tick
+    /// rather than fixed at the start, since the queue can grow mid-run.
+    pub total_bytes: u64,
 }
 
 impl WriteProgress {
-    /// Across the whole batch, so the bar moves steadily through forty files
-    /// rather than resetting on each.
+    /// Across the whole batch, weighted by file size rather than by file
+    /// count -- a bar that gave a 4 GB file and a 16 MB one equal shares
+    /// would sit at 50% for most of a batch's actual work.
     pub fn overall(&self) -> f64 {
-        if self.total == 0 {
+        if self.total_bytes == 0 {
             return 0.0;
         }
-        ((self.file as f64 + self.frac.clamp(0.0, 1.0)) / self.total as f64).clamp(0.0, 1.0)
+        let live = self.file_bytes as f64 * self.frac.clamp(0.0, 1.0);
+        ((self.done_bytes as f64 + live) / self.total_bytes as f64).clamp(0.0, 1.0)
     }
 }
 
@@ -262,6 +272,16 @@ struct Job {
     /// with edits pending flags this rather than renaming from the values
     /// the write is about to replace.
     rename: bool,
+    /// The file's size on disk when it was queued: this job's share of the
+    /// batch bar. Read once at queue time rather than at write time, since a
+    /// remux needs its old size to weigh against, not its new one.
+    bytes: u64,
+}
+
+/// The file's size, or 0 if it cannot be read -- a job a size probe fails on
+/// still writes, it just does not move the batch bar while it does.
+fn file_bytes(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
 /// The write queue, shared with the writer thread (DESIGN §9).
@@ -278,10 +298,21 @@ pub struct WriteQueue {
     busy: Option<usize>,
     /// Files finished this run -- the progress bar's numerator.
     done: usize,
+    /// Bytes of every file finished this run -- the byte-weighted bar's
+    /// floor. Reset alongside `done` at the start of a batch.
+    done_bytes: u64,
     /// A writer thread is alive and will take whatever is pushed. Read and
     /// set under the same lock the thread exits under, so a job pushed as it
     /// is deciding to stop is never orphaned.
     running: bool,
+}
+
+impl WriteQueue {
+    /// The bytes of every job still waiting -- part of the batch bar's live
+    /// denominator, recomputed per tick since the queue can grow mid-run.
+    fn waiting_bytes(&self) -> u64 {
+        self.waiting.iter().map(|j| j.bytes).sum()
+    }
 }
 
 /// One line of the write-queue panel (DESIGN §7): a file waiting its turn,
@@ -898,7 +929,8 @@ impl App {
             .filter_map(|plan| {
                 let file = self.files.iter().position(|f| f.path == plan.path)?;
                 let rename = self.rename_after.contains(&file);
-                Some(Job { file, xmp: self.files[file].xmp.clone(), plan, rename })
+                let bytes = file_bytes(&plan.path);
+                Some(Job { file, xmp: self.files[file].xmp.clone(), plan, rename, bytes })
             })
             .collect();
         if jobs.is_empty() {
@@ -918,6 +950,7 @@ impl App {
             } else {
                 q.running = true;
                 q.done = 0;
+                q.done_bytes = 0;
                 true
             }
         };
@@ -956,17 +989,24 @@ impl App {
                     }
                 };
                 let mut on = |s: write::Step| {
-                    // The denominator is re-read per tick: the queue may have
-                    // grown since this file started.
-                    let total = {
+                    // The denominators are re-read per tick: the queue may
+                    // have grown since this file started.
+                    let (total, done_bytes, total_bytes) = {
                         let q = lock(&queue);
-                        q.done + 1 + q.waiting.len()
+                        (
+                            q.done + 1 + q.waiting.len(),
+                            q.done_bytes,
+                            q.done_bytes + job.bytes + q.waiting_bytes(),
+                        )
                     };
                     let _ = tx.send(Msg::Progress(Box::new(WriteProgress {
                         file: file_no,
                         total,
                         label: s.label,
                         frac: s.frac,
+                        file_bytes: job.bytes,
+                        done_bytes,
+                        total_bytes,
                     })));
                 };
                 let res = write::execute(&job.plan, &job.xmp, &mut on).map_err(|e| e.to_string());
@@ -1001,6 +1041,7 @@ impl App {
                 {
                     let mut q = lock(&queue);
                     q.done += 1;
+                    q.done_bytes += job.bytes;
                     q.busy = None;
                 }
                 let _ = tx.send(Msg::WroteFile(job.file, fresh, res, renamed));
@@ -1041,7 +1082,7 @@ impl App {
             }
         }
         self.drop_landed();
-        self.sync_queue(&[i]);
+        self.replan_after_write(i);
         self.rebuild_rows();
         // New tags are a new name to want, and possibly a taken one.
         self.check_renames(vec![i]);
@@ -1081,7 +1122,7 @@ impl App {
         };
         let jobs: Vec<Job> = waiting
             .iter()
-            .map(|&file| Job { file, plan: plan(file), xmp: BTreeMap::new(), rename: false })
+            .map(|&file| Job { file, plan: plan(file), xmp: BTreeMap::new(), rename: false, bytes: 0 })
             .collect();
         let mut q = lock(&self.queue);
         q.busy = busy;
@@ -1143,15 +1184,17 @@ impl App {
         Some(QueuePlace::Waiting(at + usize::from(q.busy.is_some())))
     }
 
-    /// Bring the queued jobs for `files` up to date with the staging map.
+    /// A file whose write is only queued, not running, just had an edit land
+    /// on it: take it back off the queue rather than folding the edit into
+    /// what will be written.
     ///
-    /// This is what lets an edit to a queued file be saved with ⏎ alone: the
-    /// file's job is rebuilt from every sound edit it now carries, or removed
-    /// if nothing is left to write. A file under the writer is left alone --
-    /// there is no taking a plan back from a remux in progress -- and the
-    /// caller is told, so the status line can say the edit needs `w` again.
-    /// Unsound edits are skipped the same way `prepare_write` skips them.
-    fn sync_queue(&mut self, files: &[usize]) -> QueueSync {
+    /// A queued job is a plan the user already saw and confirmed with `w`;
+    /// quietly changing what it writes would write something they never
+    /// looked at. A file under the writer is left alone the same way -- there
+    /// is no taking a plan back from a remux in progress -- and the caller is
+    /// told, so the status line can say the edit needs `w` again either way.
+    /// The edit itself is untouched: it stays staged, ready for the next `w`.
+    fn evict_edited(&mut self, files: &[usize]) -> QueueSync {
         let mut out = QueueSync::default();
         let mut q = lock(&self.queue);
         if q.busy.is_none() && q.waiting.is_empty() {
@@ -1163,41 +1206,71 @@ impl App {
                 continue;
             }
             let Some(at) = q.waiting.iter().position(|j| j.file == i) else { continue };
-            let Some(file) = self.files.get(i) else { continue };
-            let sound: BTreeMap<String, Value> = self
-                .staged
-                .get(&i)
-                .map(|edits| {
-                    edits
-                        .iter()
-                        .filter(|(k, v)| field_error(k, v).is_none())
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let plan = plan::build(file, &sound, self.faststart);
-            if plan.is_empty() {
-                q.waiting.remove(at);
-            } else {
-                let rename = self.rename_after.contains(&i);
-                q.waiting[at] = Job { file: i, xmp: file.xmp.clone(), plan, rename };
-            }
-            out.refreshed += 1;
+            q.waiting.remove(at);
+            out.evicted += 1;
         }
         out
     }
 
-    /// Say what `sync_queue` did, where it did anything.
+    /// Bring a queued job's rename flag in line with `rename_after`, without
+    /// touching the plan it already carries: `r` decides whether the write
+    /// ends in a rename, not what fields it writes, so it must not evict a
+    /// job the way an ordinary edit does.
+    fn sync_queue_rename(&mut self, files: &[usize]) {
+        let mut q = lock(&self.queue);
+        for &i in files {
+            if let Some(job) = q.waiting.iter_mut().find(|j| j.file == i) {
+                job.rename = self.rename_after.contains(&i);
+            }
+        }
+    }
+
+    /// A file's own write has just landed, and a second `w` queued another
+    /// turn for it while the first ran: that job's plan was built against the
+    /// file as it stood *before* the write, against tags the write just
+    /// replaced. Rebuilt here from the fresh probe and whatever is still
+    /// staged, or dropped if nothing is left to write.
+    ///
+    /// The one place a queued job is rebuilt rather than evicted: this is not
+    /// an edit landing on a queued file, it is the ground moving under an
+    /// already-confirmed queued write, and the rebuild is what makes that
+    /// write correct rather than a second reason to ask for `w` again.
+    fn replan_after_write(&mut self, i: usize) {
+        let mut q = lock(&self.queue);
+        let Some(at) = q.waiting.iter().position(|j| j.file == i) else { return };
+        let Some(file) = self.files.get(i) else { return };
+        let sound: BTreeMap<String, Value> = self
+            .staged
+            .get(&i)
+            .map(|edits| {
+                edits
+                    .iter()
+                    .filter(|(k, v)| field_error(k, v).is_none())
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let plan = plan::build(file, &sound, self.faststart);
+        if plan.is_empty() {
+            q.waiting.remove(at);
+        } else {
+            let rename = self.rename_after.contains(&i);
+            let bytes = file_bytes(&file.path);
+            q.waiting[at] = Job { file: i, xmp: file.xmp.clone(), plan, rename, bytes };
+        }
+    }
+
+    /// Say what `evict_edited` did, where it did anything.
     fn note_queue(&mut self, sync: &QueueSync) {
         if let Some(&i) = sync.busy.first() {
             let name = self.files.get(i).map(|f| file_name(&f.path)).unwrap_or_default();
             self.status = format!("{name} is being written now · press w to queue this edit");
             return;
         }
-        if sync.refreshed > 0 {
-            self.status = match sync.refreshed {
-                1 => "saved to the queued write".into(),
-                n => format!("saved to the queued writes for {n} files"),
+        if sync.evicted > 0 {
+            self.status = match sync.evicted {
+                1 => "taken off the write queue · press w to write it".into(),
+                n => format!("taken off the write queue for {n} files · press w to write them"),
             };
         }
     }
@@ -1275,7 +1348,7 @@ impl App {
                     self.rename_after.remove(i);
                 }
             }
-            self.sync_queue(&pending);
+            self.sync_queue_rename(&pending);
             let n = pending.len();
             note = match (arm, n) {
                 (true, 1) => "rename queued · runs after the write".into(),
@@ -1557,7 +1630,7 @@ impl App {
             self.undo.push(before);
             self.redo.clear();
             let touched: Vec<usize> = self.staged.keys().copied().collect();
-            self.sync_queue(&touched);
+            self.evict_edited(&touched);
         }
         self.rebuild_rows();
         let n_fields = |n: usize| format!("{n} field{}", if n == 1 { "" } else { "s" });
@@ -2295,7 +2368,7 @@ impl App {
         if before != self.staged {
             self.undo.push(before);
             self.redo.clear();
-            let sync = self.sync_queue(targets);
+            let sync = self.evict_edited(targets);
             self.note_queue(&sync);
         }
         n
@@ -2561,7 +2634,8 @@ impl App {
             q.running = true;
         } else {
             let rename = self.rename_after.contains(&file);
-            q.waiting.push_back(Job { file, xmp: self.files[file].xmp.clone(), plan, rename });
+            let bytes = file_bytes(&self.files[file].path);
+            q.waiting.push_back(Job { file, xmp: self.files[file].xmp.clone(), plan, rename, bytes });
         }
     }
 
@@ -2585,11 +2659,12 @@ impl App {
         self.staged.get(&file).is_some_and(|m| m.contains_key(key))
     }
 
-    /// After undo or redo the whole map may have moved; every queued file is
-    /// brought back in line with it.
+    /// After undo or redo the whole map may have moved; any file still
+    /// waiting in the queue is taken off it rather than written to a plan
+    /// that no longer matches what is staged.
     fn sync_all_queued(&mut self) {
         let all: Vec<usize> = (0..self.files.len()).collect();
-        self.sync_queue(&all);
+        self.evict_edited(&all);
     }
 
     fn undo(&mut self) {
@@ -2762,7 +2837,7 @@ impl App {
         }
         self.undo.push(before);
         self.redo.clear();
-        let sync = self.sync_queue(&scope);
+        let sync = self.evict_edited(&scope);
         self.note_queue(&sync);
         self.rebuild_rows();
         let mixed = self.rows.get(self.focus).is_some_and(|r| r.is_mixed());
@@ -3009,11 +3084,12 @@ fn build_rows(
 }
 
 /// One staged edit as the confirmation dialog needs it.
-/// What `App::sync_queue` found: how many jobs it rebuilt, and which of the
-/// files it was asked about were under the writer and could not be changed.
+/// What `App::evict_edited` found: how many jobs it took off the queue, and
+/// which of the files it was asked about were under the writer and could not
+/// be changed.
 #[derive(Default)]
 struct QueueSync {
-    refreshed: usize,
+    evicted: usize,
     busy: Vec<usize>,
 }
 
@@ -3175,23 +3251,38 @@ pub fn merge_values(per_file: &[Option<Value>]) -> Vec<String> {
 mod progress_tests {
     use super::*;
 
-    fn p(file: usize, total: usize, frac: f64) -> WriteProgress {
-        WriteProgress { file, total, label: "", frac }
+    fn p(file_bytes: u64, done_bytes: u64, total_bytes: u64, frac: f64) -> WriteProgress {
+        WriteProgress { file: 0, total: 0, label: "", frac, file_bytes, done_bytes, total_bytes }
     }
 
+    /// Four equal-sized files walk the bar exactly like the old count-based
+    /// version did -- byte-weighting is a generalisation, not a different
+    /// answer when every file weighs the same.
     #[test]
-    fn overall_walks_the_batch_rather_than_resetting_per_file() {
-        assert!((p(0, 4, 0.0).overall() - 0.0).abs() < 1e-9);
-        assert!((p(0, 4, 1.0).overall() - 0.25).abs() < 1e-9);
-        assert!((p(2, 4, 0.5).overall() - 0.625).abs() < 1e-9);
-        assert!((p(3, 4, 1.0).overall() - 1.0).abs() < 1e-9);
+    fn overall_walks_the_batch_by_bytes_rather_than_resetting_per_file() {
+        assert!((p(100, 0, 400, 0.0).overall() - 0.0).abs() < 1e-9);
+        assert!((p(100, 0, 400, 1.0).overall() - 0.25).abs() < 1e-9);
+        assert!((p(100, 200, 400, 0.5).overall() - 0.625).abs() < 1e-9);
+        assert!((p(100, 300, 400, 1.0).overall() - 1.0).abs() < 1e-9);
+    }
+
+    /// A 4 GB file and three 16 MB ones are not four equal quarters: halfway
+    /// through the giant file the bar has to read far past "one file of
+    /// four", since that one file is nearly the whole batch by weight.
+    #[test]
+    fn a_large_file_does_not_share_the_bar_equally_with_small_ones() {
+        let gb = 4_000_000_000u64;
+        let mb = 16_000_000u64;
+        let total = gb + 3 * mb;
+        let overall = p(gb, 0, total, 0.5).overall();
+        assert!(overall > 0.45, "{overall}");
     }
 
     #[test]
     fn a_bad_fraction_cannot_push_the_bar_past_its_ends() {
-        assert_eq!(p(0, 1, 9.0).overall(), 1.0);
-        assert_eq!(p(0, 1, -1.0).overall(), 0.0);
-        assert_eq!(p(0, 0, 0.5).overall(), 0.0);
+        assert_eq!(p(1, 0, 1, 9.0).overall(), 1.0);
+        assert_eq!(p(1, 0, 1, -1.0).overall(), 0.0);
+        assert_eq!(p(1, 0, 0, 0.5).overall(), 0.0);
     }
 }
 
@@ -4348,11 +4439,13 @@ mod tests {
         assert!(row(&app, "title").staged);
     }
 
-    /// ⏎ on a field of a file still waiting in the queue is the save: the
-    /// file's job is rebuilt around the new value, so it is written once, with
-    /// everything, and the user is told so.
+    /// ⏎ on a field of a file still waiting in the queue takes it off the
+    /// queue rather than folding the edit into what was already confirmed:
+    /// a queued job is a plan the user has seen, and changing what it writes
+    /// without a fresh look at it would write something they never
+    /// confirmed. The edit stays staged, ready for the next `w`.
     #[test]
-    fn an_edit_to_a_queued_file_is_folded_into_its_write() {
+    fn an_edit_to_a_queued_file_takes_it_off_the_queue() {
         let mut app = pair();
         app.cycle_file(1); // a.mov
         app.set_staged(0, "channel", Value::text("first"));
@@ -4366,11 +4459,10 @@ mod tests {
         }
         press(&mut app, KeyCode::Enter);
 
-        let atoms = app.queued_atoms_for_test(0).expect("still queued");
-        assert!(atoms.iter().any(|(k, v)| k == "title" && v == "Anew"), "{atoms:?}");
-        assert!(atoms.iter().any(|(k, v)| k == "channel" && v == "first"), "{atoms:?}");
-        assert_eq!(app.status, "saved to the queued write");
-        assert!(app.staged[&0].contains_key("title"), "the edit stays staged until it lands");
+        assert_eq!(app.queue_place(0), None);
+        assert_eq!(app.status, "taken off the write queue · press w to write it");
+        assert_eq!(app.staged[&0].get("title"), Some(&Value::text("Anew")));
+        assert_eq!(app.staged[&0].get("channel"), Some(&Value::text("first")));
     }
 
     /// Undoing the only edit a queued file had takes the file off the queue:
@@ -4450,8 +4542,14 @@ mod tests {
         assert!(app.status.contains("rename queued"), "{}", app.status);
         assert_eq!(app.queued_rename_for_test(0), Some(true));
 
-        // A later edit to the same file keeps the flag on the rebuilt job.
+        // A later edit to the same file takes it off the queue, like any
+        // other edit to a queued file -- `rename_after` stays armed, ready
+        // for the next `w` to pick the flag back up.
         app.stage("channel".into(), Value::text("c"));
+        assert_eq!(app.queued_rename_for_test(0), None);
+        assert!(app.rename_after.contains(&0));
+
+        app.enqueue_for_test(0, false);
         assert_eq!(app.queued_rename_for_test(0), Some(true));
 
         app.rename_files();

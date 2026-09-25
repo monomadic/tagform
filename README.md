@@ -137,14 +137,19 @@ only then renames it over the original. Any failure leaves the original
 untouched. Keys no field claims are carried through unchanged.
 
 The write runs in the background, as a queue. The form stays live while it
-drains. The batch's bar sits bottom right, under the mode bar; the panel
-at the top carries the detail — a wide bar under the file's facts when that
-file is the one being written, or, in bulk view, the queue itself with the
-running file on top. In single-file view the rule under Category also says
-where that file stands — `􀈏 queued for write - 2 files left`.
-An edit to a file still waiting is saved into its queued write by `⏎` alone;
-only the file under the writer needs a second `w`. A clean run reports in the
-status line; a run with a failure raises the results dialog.
+drains. The batch's bar sits bottom right, under the mode bar, weighted by
+file size rather than by file count — a 4 GB file and three 16 MB ones are
+not four equal quarters. The panel at the top carries the detail — a wide bar
+under the file's facts when that file is the one being written, or, in bulk
+view, the queue itself with the running file on top. In single-file view the
+rule under Category also says where that file stands —
+`􀈏 queued for write - 2 files left`.
+An edit to a file still waiting takes it back off the queue rather than
+folding into what was already confirmed: a queued job is a plan you have
+seen, and `w` is what asks you to look at it again. The edit itself stays
+staged either way — on a file still waiting or on the one under the writer —
+so nothing is lost, only unqueued. A clean run reports in the status line; a
+run with a failure raises the results dialog.
 
 ### Import from the web or the filename
 
