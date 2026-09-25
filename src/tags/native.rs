@@ -525,7 +525,7 @@ mod tests {
             // A `data` box of well-known type 21 (signed int), not text.
             payload: vec![0, 0, 0, 18, b'd', b'a', b't', b'a', 0, 0, 0, 21, 0, 0, 0, 0, 0, 26],
         };
-        let out = apply(&[typed.clone()], &[("title".into(), "new".into())]);
+        let out = apply(std::slice::from_ref(&typed), &[("title".into(), "new".into())]);
         assert_eq!(out[0], typed);
         assert_eq!(out[0].as_text(), None, "a typed payload must not read as text");
     }

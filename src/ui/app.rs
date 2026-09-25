@@ -360,7 +360,7 @@ pub enum Msg {
     Conflict(usize, PathBuf, Option<PathBuf>),
     /// One result per file a `yt-dlp` fetch was given, by file index: the
     /// field values its URL yielded, or why it yielded none.
-    Fetched(Vec<(usize, Result<Vec<(&'static str, Value)>, String>)>),
+    Fetched(fetch::Fetched),
     /// The place lookup's answer (§5.5): its hits, or why there are none, and
     /// whether the lookup was a typed place -- whose venue name is worth
     /// staging -- or a camera coordinate, whose nearest venue is not.
@@ -707,10 +707,8 @@ impl App {
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             if let Ok(jpg) = thumb::extract(&path, 720, 720) {
-                if let Ok(img) = image::ImageReader::open(&jpg).and_then(|r| Ok(r.decode())) {
-                    if let Ok(img) = img {
-                        let _ = tx.send(Msg::Thumb(idx, Box::new(img)));
-                    }
+                if let Ok(Ok(img)) = image::ImageReader::open(&jpg).map(|r| r.decode()) {
+                    let _ = tx.send(Msg::Thumb(idx, Box::new(img)));
                 }
             }
         });
@@ -1488,7 +1486,7 @@ impl App {
     /// stars, a date -- is read. A bare stem is all title to the parser, and
     /// `IMG_0412` or `clip-3` is not a title anyone chose.
     pub fn seed_from_filenames(&mut self) {
-        let out: Vec<(usize, Result<Vec<(&'static str, Value)>, String>)> = (0..self.files.len())
+        let out: fetch::Fetched = (0..self.files.len())
             .map(|i| (i, filename::parse_path(&self.files[i].path)))
             .filter(|(_, fields)| fields.iter().any(|(id, _)| *id != "title"))
             .map(|(i, fields)| (i, Ok(fields)))
@@ -1563,7 +1561,7 @@ impl App {
     /// staged or on disk, stays. A field it did answer is replaced: the point
     /// of pressing `i u` is to take the page's word for it, and `u` takes it
     /// back in one key if the page was wrong.
-    fn finish_fetch(&mut self, out: Vec<(usize, Result<Vec<(&'static str, Value)>, String>)>) {
+    fn finish_fetch(&mut self, out: fetch::Fetched) {
         self.fetching = false;
         self.stage_import("fetched", "the page agrees with the file", out, false);
     }
@@ -1607,7 +1605,7 @@ impl App {
         &mut self,
         verb: &str,
         agrees: &str,
-        out: Vec<(usize, Result<Vec<(&'static str, Value)>, String>)>,
+        out: fetch::Fetched,
         only_empty: bool,
     ) {
         let total = out.len();
@@ -2484,7 +2482,7 @@ impl App {
         let files = format!("{n} file{}", if n == 1 { "" } else { "s" });
         self.status = match (n, only_empty) {
             (0, true) => format!("{label} is already set on every file"),
-            (0, false) => format!("nothing to copy into"),
+            (0, false) => "nothing to copy into".to_string(),
             (_, true) => format!("{label} backfilled into {files}"),
             (_, false) => format!("{label} overwritten on {files}"),
         };
@@ -2644,13 +2642,6 @@ impl App {
     pub fn queued_rename_for_test(&self, file: usize) -> Option<bool> {
         let q = lock(&self.queue);
         q.waiting.iter().find(|j| j.file == file).map(|j| j.rename)
-    }
-
-    #[cfg(test)]
-    /// The atoms the queued plan for `file` would write, if it is waiting.
-    pub fn queued_atoms_for_test(&self, file: usize) -> Option<Vec<(String, String)>> {
-        let q = lock(&self.queue);
-        q.waiting.iter().find(|j| j.file == file).map(|j| j.plan.atoms.clone())
     }
 
     /// Whether a given file carries an edit for a key — the inspector's

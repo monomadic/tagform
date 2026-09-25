@@ -26,6 +26,11 @@ use std::sync::{Arc, Mutex};
 
 use crate::model::value::Value;
 
+/// The field values one fetch yields, keyed by field id.
+pub type Fields = Vec<(&'static str, Value)>;
+/// One fetch per file: its index and the values or the reason there are none.
+pub type Fetched = Vec<(usize, Result<Fields, String>)>;
+
 /// Looked up on PATH, like every other external tool here. Optional: a missing
 /// `yt-dlp` costs you `d` and nothing else.
 const TOOL: &str = "yt-dlp";
@@ -50,7 +55,7 @@ const TOOL: &str = "yt-dlp";
 /// Shared with the thread the fetch runs on, so the cloneable handle is the
 /// type itself rather than an `Arc` the caller has to remember to wrap it in.
 #[derive(Clone, Default)]
-pub struct Cache(Arc<Mutex<HashMap<String, Vec<(&'static str, Value)>>>>);
+pub struct Cache(Arc<Mutex<HashMap<String, Fields>>>);
 
 impl Cache {
     /// `fetch`, but asking the page only the first time.

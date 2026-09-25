@@ -46,10 +46,7 @@ fn citations(text: &str, marker: &str, skip_near: &[&str]) -> Vec<(usize, String
             continue;
         }
         let rest = &text[at + marker.len()..];
-        let n: String = rest
-            .chars()
-            .take_while(|c| c.is_ascii_digit() || *c == '.')
-            .collect();
+        let n: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
         let n = n.trim_end_matches('.');
         if !n.is_empty() {
             out.push((at, n.to_string()));

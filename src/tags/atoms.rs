@@ -328,7 +328,7 @@ mod tests {
             v.extend_from_slice(kind);
             v.push(version);
             v.extend_from_slice(&[0, 0, 0]);
-            v.extend(std::iter::repeat(0xAA).take(body_len));
+            v.extend(std::iter::repeat_n(0xAA, body_len));
             v
         }
         fn boxed(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
@@ -379,7 +379,7 @@ mod tests {
         for (kind, size) in atoms {
             v.extend_from_slice(&size.to_be_bytes());
             v.extend_from_slice(*kind);
-            v.extend(std::iter::repeat(0).take(*size as usize - 8));
+            v.extend(std::iter::repeat_n(0, *size as usize - 8));
         }
         v
     }
