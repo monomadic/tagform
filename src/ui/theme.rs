@@ -58,7 +58,6 @@ pub struct Palette {
     pub rule: Color,
     pub star: Color,
     pub path: Color,
-
 }
 
 const fn c(r: u8, g: u8, b: u8) -> Color {
@@ -296,7 +295,10 @@ pub fn active() -> &'static Palette {
 /// Select by name, for `--theme`. Unknown names leave the scheme alone and say
 /// so, rather than falling back silently to something the user did not ask for.
 pub fn set_by_name(name: &str) -> bool {
-    match PALETTES.iter().position(|p| p.name.eq_ignore_ascii_case(name)) {
+    match PALETTES
+        .iter()
+        .position(|p| p.name.eq_ignore_ascii_case(name))
+    {
         Some(i) => {
             ACTIVE.store(i, Ordering::Relaxed);
             true
@@ -322,11 +324,29 @@ macro_rules! colour {
     };
 }
 colour!(
-    header_bg, badge_bg, badge_fg, header_fg,
-    bar_bg, input_bg, input_bg_focus, input_bg_edit, input_bg_readonly,
-    label, label_focus, label_custom,
-    value, value_empty, mixed,
-    accent, staged, warn, error, muted, rule, star, path,
+    header_bg,
+    badge_bg,
+    badge_fg,
+    header_fg,
+    bar_bg,
+    input_bg,
+    input_bg_focus,
+    input_bg_edit,
+    input_bg_readonly,
+    label,
+    label_focus,
+    label_custom,
+    value,
+    value_empty,
+    mixed,
+    accent,
+    staged,
+    warn,
+    error,
+    muted,
+    rule,
+    star,
+    path,
 );
 
 /// Fit a string to an exact display width, padding or truncating with an
@@ -370,8 +390,8 @@ pub fn fit(s: &str, width: usize) -> String {
 /// useless -- five different rows reading identically. Dropping the namespace
 /// keeps them distinguishable and fits the column.
 pub fn short_key(key: &str) -> String {
-    let looks_reverse_dns = key.matches('.').count() >= 2
-        && key.split('.').all(|seg| !seg.is_empty());
+    let looks_reverse_dns =
+        key.matches('.').count() >= 2 && key.split('.').all(|seg| !seg.is_empty());
     if looks_reverse_dns {
         if let Some(last) = key.rsplit('.').next() {
             return last.to_string();
@@ -389,7 +409,11 @@ fn luminance(c: Color) -> f64 {
     };
     let lin = |v: u8| {
         let v = v as f64 / 255.0;
-        if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        if v <= 0.03928 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
     };
     0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
 }
@@ -413,13 +437,23 @@ fn delta_e(a: Color, b: Color) -> f64 {
         };
         let lin = |v: u8| {
             let v = v as f64 / 255.0;
-            if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
         };
         let (r, g, b) = (lin(r), lin(g), lin(b));
         let x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047;
         let y = r * 0.2126 + g * 0.7152 + b * 0.0722;
         let z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
-        let f = |t: f64| if t > 0.008856 { t.cbrt() } else { 7.787 * t + 16.0 / 116.0 };
+        let f = |t: f64| {
+            if t > 0.008856 {
+                t.cbrt()
+            } else {
+                7.787 * t + 16.0 / 116.0
+            }
+        };
         let (fx, fy, fz) = (f(x), f(y), f(z));
         (116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz))
     }
@@ -442,22 +476,29 @@ mod tests {
     fn every_text_colour_in_every_scheme_is_readable() {
         for p in PALETTES {
             let text = [
-                ("header_fg", p.header_fg), ("value", p.value), ("value_empty", p.value_empty),
-                ("label", p.label), ("label_focus", p.label_focus),
-                ("label_custom", p.label_custom), ("mixed", p.mixed), ("muted", p.muted),
-                ("path", p.path), ("accent", p.accent), ("staged", p.staged),
-                ("warn", p.warn), ("error", p.error), ("star", p.star),
+                ("header_fg", p.header_fg),
+                ("value", p.value),
+                ("value_empty", p.value_empty),
+                ("label", p.label),
+                ("label_focus", p.label_focus),
+                ("label_custom", p.label_custom),
+                ("mixed", p.mixed),
+                ("muted", p.muted),
+                ("path", p.path),
+                ("accent", p.accent),
+                ("staged", p.staged),
+                ("warn", p.warn),
+                ("error", p.error),
+                ("star", p.star),
             ];
             for (name, colour) in text {
-                for (surface_name, surface) in
-                    [
-                        ("page", p.page),
-                        ("field", p.input_bg_readonly),
-                        ("input", p.input_bg),
-                        ("focused row", p.input_bg_focus),
-                        ("bar", p.bar_bg),
-                    ]
-                {
+                for (surface_name, surface) in [
+                    ("page", p.page),
+                    ("field", p.input_bg_readonly),
+                    ("input", p.input_bg),
+                    ("focused row", p.input_bg_focus),
+                    ("bar", p.bar_bg),
+                ] {
                     let ratio = contrast(colour, surface);
                     assert!(
                         ratio >= 3.0,
@@ -474,7 +515,11 @@ mod tests {
     fn every_badge_and_header_is_legible() {
         for p in PALETTES {
             assert!(contrast(p.badge_fg, p.badge_bg) >= 4.5, "{}: badge", p.name);
-            assert!(contrast(p.header_fg, p.header_bg) >= 4.5, "{}: header", p.name);
+            assert!(
+                contrast(p.header_fg, p.header_bg) >= 4.5,
+                "{}: header",
+                p.name
+            );
         }
     }
 
@@ -486,7 +531,11 @@ mod tests {
         for p in PALETTES {
             for (name, fill) in [("normal", p.accent), ("edit", p.staged), ("select", p.star)] {
                 let ratio = contrast(p.badge_fg, fill);
-                assert!(ratio >= 4.5, "{}: {name} mode badge is {ratio:.2}:1", p.name);
+                assert!(
+                    ratio >= 4.5,
+                    "{}: {name} mode badge is {ratio:.2}:1",
+                    p.name
+                );
             }
         }
     }
@@ -498,7 +547,11 @@ mod tests {
     fn custom_labels_are_distinguishable_in_every_scheme() {
         for p in PALETTES {
             let d = delta_e(p.label, p.label_custom);
-            assert!(d >= 15.0, "{}: custom label is only ΔE {d:.1} from the normal one", p.name);
+            assert!(
+                d >= 15.0,
+                "{}: custom label is only ΔE {d:.1} from the normal one",
+                p.name
+            );
         }
     }
 
@@ -509,8 +562,11 @@ mod tests {
     fn the_hints_read_on_the_badge_bar() {
         for p in PALETTES {
             for (name, fg) in [
-                ("muted", p.muted), ("staged", p.staged), ("label", p.label),
-                ("star", p.star), ("accent", p.accent),
+                ("muted", p.muted),
+                ("staged", p.staged),
+                ("label", p.label),
+                ("star", p.star),
+                ("accent", p.accent),
             ] {
                 let r = contrast(fg, p.header_bg);
                 assert!(r >= 3.0, "{}: {name} is {r:.2}:1 on the badge bar", p.name);
@@ -538,7 +594,11 @@ mod tests {
     fn the_path_is_distinguishable_from_the_file_info() {
         for p in PALETTES {
             let d = delta_e(p.path, p.muted);
-            assert!(d >= 15.0, "{}: path is only ΔE {d:.1} from the info line", p.name);
+            assert!(
+                d >= 15.0,
+                "{}: path is only ΔE {d:.1} from the info line",
+                p.name
+            );
         }
     }
 
@@ -555,7 +615,11 @@ mod tests {
         for _ in 0..n {
             cycle();
         }
-        assert_eq!(active().name, first, "a full cycle must return to where it started");
+        assert_eq!(
+            active().name,
+            first,
+            "a full cycle must return to where it started"
+        );
     }
 
     #[test]

@@ -227,10 +227,16 @@ mod tests {
         });
         let v = from_info(&info);
         assert_eq!(get(&v, "title"), Some(&Value::text("A Title")));
-        assert_eq!(get(&v, "actors"), Some(&Value::List(vec!["Alice".into(), "Bob".into()])));
+        assert_eq!(
+            get(&v, "actors"),
+            Some(&Value::List(vec!["Alice".into(), "Bob".into()]))
+        );
         assert_eq!(get(&v, "channel"), Some(&Value::text("The Channel")));
         assert_eq!(get(&v, "description"), Some(&Value::text("prose")));
-        assert_eq!(get(&v, "tags"), Some(&Value::List(vec!["one".into(), "two".into()])));
+        assert_eq!(
+            get(&v, "tags"),
+            Some(&Value::List(vec!["one".into(), "two".into()]))
+        );
         assert_eq!(get(&v, "date"), Some(&Value::text("2009-10-25")));
     }
 
@@ -240,7 +246,10 @@ mod tests {
     fn falls_back_to_the_uploader() {
         let info = json!({ "uploader": "someone", "cast": [], "channel": null });
         let v = from_info(&info);
-        assert_eq!(get(&v, "actors"), Some(&Value::List(vec!["someone".into()])));
+        assert_eq!(
+            get(&v, "actors"),
+            Some(&Value::List(vec!["someone".into()]))
+        );
         assert_eq!(get(&v, "channel"), Some(&Value::text("someone")));
     }
 
@@ -267,7 +276,9 @@ mod tests {
     fn a_cached_url_is_not_asked_again() {
         let cache = Cache::default();
         let fields = vec![("title", Value::text("A Title"))];
-        cache.map().insert("not://a.url".to_string(), fields.clone());
+        cache
+            .map()
+            .insert("not://a.url".to_string(), fields.clone());
         assert_eq!(cache.fetch("not://a.url").unwrap(), fields);
         // And only that URL: a spelling the cache has not seen is a miss.
         assert!(cache.map().get("not://a.url/other").is_none());
@@ -275,7 +286,10 @@ mod tests {
 
     #[test]
     fn say_trims_the_error_prefix() {
-        assert_eq!(say(b"\nERROR: [youtube] x: Video unavailable\n"), "[youtube] x: Video unavailable");
+        assert_eq!(
+            say(b"\nERROR: [youtube] x: Video unavailable\n"),
+            "[youtube] x: Video unavailable"
+        );
         assert!(say(b"").contains(TOOL));
     }
 }

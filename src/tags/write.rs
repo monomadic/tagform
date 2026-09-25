@@ -66,8 +66,16 @@ pub fn probe_streams(path: &Path) -> Vec<StreamShape> {
                 .enumerate()
                 .map(|(i, s)| StreamShape {
                     index: s.get("index").and_then(|x| x.as_u64()).unwrap_or(i as u64) as usize,
-                    kind: s.get("codec_type").and_then(|x| x.as_str()).unwrap_or("").into(),
-                    tag: s.get("codec_tag_string").and_then(|x| x.as_str()).unwrap_or("").into(),
+                    kind: s
+                        .get("codec_type")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .into(),
+                    tag: s
+                        .get("codec_tag_string")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .into(),
                     codec: s
                         .get("codec_name")
                         .and_then(|x| x.as_str())
@@ -82,14 +90,23 @@ pub fn probe_streams(path: &Path) -> Vec<StreamShape> {
 /// The source's timecode, so a skipped tmcd track can be rebuilt.
 fn timecode(path: &Path) -> Option<String> {
     let out = Command::new("ffprobe")
-        .args(["-v", "error", "-show_entries", "format_tags=timecode:stream_tags=timecode",
-               "-of", "json", "--"])
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format_tags=timecode:stream_tags=timecode",
+            "-of",
+            "json",
+            "--",
+        ])
         .arg(path)
         .output()
         .ok()?;
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
     let from = |o: Option<&serde_json::Value>| {
-        o.and_then(|t| t.get("timecode")).and_then(|t| t.as_str()).map(String::from)
+        o.and_then(|t| t.get("timecode"))
+            .and_then(|t| t.as_str())
+            .map(String::from)
     };
     from(v.get("format").and_then(|f| f.get("tags"))).or_else(|| {
         v.get("streams")?
@@ -110,7 +127,10 @@ pub enum WriteError {
     /// volume with 4 GB free fails with nothing wrong with the container at
     /// all, and calling that "could not write tags" sends you hunting for
     /// corruption that is not there.
-    NoSpace { need: u64, avail: u64 },
+    NoSpace {
+        need: u64,
+        avail: u64,
+    },
     Failed(anyhow::Error),
 }
 
@@ -209,7 +229,9 @@ fn in_place(plan: &FilePlan, on: OnStep<'_>) -> Result<(), WriteError> {
     ];
     for (key, value) in &plan.atoms {
         let name = exiftool_name(key).ok_or_else(|| {
-            WriteError::Failed(anyhow!("{key} cannot be written in place; this is a planning bug"))
+            WriteError::Failed(anyhow!(
+                "{key} cannot be written in place; this is a planning bug"
+            ))
         })?;
         args.push(format!("-Keys:{name}={value}"));
     }
@@ -269,7 +291,11 @@ fn native_write(plan: &FilePlan, on: OnStep<'_>) -> Result<(), WriteError> {
 
     let survey = native::survey(path)
         .map_err(WriteError::Failed)?
-        .ok_or_else(|| WriteError::Failed(anyhow!("this file's layout is not one the native writer handles; this is a planning bug")))?;
+        .ok_or_else(|| {
+            WriteError::Failed(anyhow!(
+                "this file's layout is not one the native writer handles; this is a planning bug"
+            ))
+        })?;
 
     let shapes = probe_streams(path);
     let tmp = temp_beside(path);
@@ -344,7 +370,13 @@ fn remux(
     let tmp = temp_beside(path);
     let _guard = TempGuard(tmp.clone());
 
-    let mut args: Vec<String> = vec!["-hide_banner".into(), "-loglevel".into(), "error".into(), "-nostdin".into(), "-y".into()];
+    let mut args: Vec<String> = vec![
+        "-hide_banner".into(),
+        "-loglevel".into(),
+        "error".into(),
+        "-nostdin".into(),
+        "-y".into(),
+    ];
     args.push("-i".into());
     args.push(path.to_string_lossy().into_owned());
     // Map every stream by index except the ones ffmpeg rebuilds itself. A bare
@@ -462,8 +494,14 @@ pub(crate) fn muxer_for(path: &Path) -> &'static str {
 /// cropped, and the swap renames it back to the original's full name.
 fn temp_beside(path: &Path) -> PathBuf {
     let dir = path.parent().unwrap_or(Path::new("."));
-    let ext = path.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|| "mp4".into());
-    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "mp4".into());
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let tail = format!(".tagform.{}.{ext}", std::process::id());
     let room = NAME_MAX.saturating_sub(1 + tail.len());
     dir.join(format!(".{}{tail}", crop(&stem, room)))
@@ -543,7 +581,10 @@ fn verify_atoms(path: &Path, wanted: &[(String, String)]) -> Result<()> {
         });
         if value.is_empty() {
             if actual.as_deref().is_some_and(|a| !a.is_empty()) {
-                bail!("{key} should have been removed but still reads {:?}", actual.unwrap());
+                bail!(
+                    "{key} should have been removed but still reads {:?}",
+                    actual.unwrap()
+                );
             }
         } else if actual.as_deref() != Some(value.as_str()) {
             bail!("{key} did not round-trip: wrote {value:?}, read back {actual:?}");
@@ -575,7 +616,10 @@ fn verify_streams(before: &[StreamShape], after: &Path) -> Result<()> {
     let got = probe_streams(after);
     let (a, b) = (tally(before), tally(&got));
     if a != b {
-        bail!("the remux did not reproduce this file's tracks\n{}", diff_lines(&a, &b).join("\n"));
+        bail!(
+            "the remux did not reproduce this file's tracks\n{}",
+            diff_lines(&a, &b).join("\n")
+        );
     }
     Ok(())
 }
@@ -596,7 +640,13 @@ fn tally(v: &[StreamShape]) -> BTreeMap<String, usize> {
 /// one problem should print one line about the problem, not two arrays of
 /// five to be compared by eye.
 fn diff_lines(before: &BTreeMap<String, usize>, after: &BTreeMap<String, usize>) -> Vec<String> {
-    let count = |n: usize| if n == 1 { String::new() } else { format!(" x{n}") };
+    let count = |n: usize| {
+        if n == 1 {
+            String::new()
+        } else {
+            format!(" x{n}")
+        }
+    };
     let mut out = Vec::new();
     for (k, n) in before {
         let had = after.get(k).copied().unwrap_or(0);
@@ -624,7 +674,15 @@ fn verify_duration(before: &Path, after: &Path) -> Result<()> {
 
 fn duration(path: &Path) -> Option<f64> {
     let out = Command::new("ffprobe")
-        .args(["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", "--"])
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            "--",
+        ])
         .arg(path)
         .output()
         .ok()?;
@@ -687,7 +745,10 @@ fn run_ffmpeg(args: &[String], mut tick: impl FnMut(f64)) -> Result<()> {
     let status = child.wait().context("waiting for ffmpeg")?;
     let err = drain.join().unwrap_or_default();
     if !status.success() {
-        bail!("ffmpeg failed: {}", err.trim().lines().next().unwrap_or("(no output)"));
+        bail!(
+            "ffmpeg failed: {}",
+            err.trim().lines().next().unwrap_or("(no output)")
+        );
     }
     Ok(())
 }
@@ -700,13 +761,19 @@ fn run(program: &str, args: &[String]) -> Result<()> {
         .with_context(|| format!("running {program}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        bail!("{program} failed: {}", err.trim().lines().next().unwrap_or("(no output)"));
+        bail!(
+            "{program} failed: {}",
+            err.trim().lines().next().unwrap_or("(no output)")
+        );
     }
     // exiftool reports refusals on stdout with a zero exit status, so a
     // successful exit is not by itself proof that anything was written.
     let sout = String::from_utf8_lossy(&out.stdout);
     if sout.contains("Sorry,") || sout.contains("Nothing to do") {
-        bail!("{program}: {}", sout.trim().lines().next().unwrap_or("refused"));
+        bail!(
+            "{program}: {}",
+            sout.trim().lines().next().unwrap_or("refused")
+        );
     }
     Ok(())
 }

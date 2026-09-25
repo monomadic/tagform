@@ -52,7 +52,9 @@ fn tool() -> PathBuf {
     let on_path = std::env::var_os("PATH")
         .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(TOOL).is_file()));
     if !on_path {
-        let beside = std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join(TOOL)));
+        let beside = std::env::current_exe()
+            .ok()
+            .and_then(|e| Some(e.parent()?.join(TOOL)));
         if let Some(beside) = beside.filter(|b| b.is_file()) {
             return beside;
         }
@@ -187,11 +189,16 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 /// is identified as itself: it is the entry that moves, and the file it points
 /// at is not this tool's business.
 fn ident(p: &Path) -> Option<(u64, u64)> {
-    std::fs::symlink_metadata(p).ok().map(|m| (m.dev(), m.ino()))
+    std::fs::symlink_metadata(p)
+        .ok()
+        .map(|m| (m.dev(), m.ino()))
 }
 
 fn name_of(p: &Path) -> String {
-    p.file_name().unwrap_or(p.as_os_str()).to_string_lossy().into_owned()
+    p.file_name()
+        .unwrap_or(p.as_os_str())
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Does the directory hold an entry with exactly this name?
@@ -246,7 +253,10 @@ mod tests {
     fn say_prefers_stderr_and_drops_the_glyph() {
         let e = b"\xe2\x9a\xa0 No category tag: clip.mov\n  Tag it first.\n";
         assert_eq!(say(e, b"ignored\n"), "No category tag: clip.mov");
-        assert_eq!(say(b"", b"\xe2\x9c\x93 Exists: clip.mov\n"), "Exists: clip.mov");
+        assert_eq!(
+            say(b"", b"\xe2\x9c\x93 Exists: clip.mov\n"),
+            "Exists: clip.mov"
+        );
         assert!(say(b"", b"").contains(TOOL));
     }
 
@@ -311,4 +321,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
-

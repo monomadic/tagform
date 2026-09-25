@@ -19,7 +19,9 @@ use crate::model::tag;
 use crate::model::value::{Agg, Value};
 use crate::tags::atoms::Layout as Container;
 use crate::tags::plan::FilePlan;
-use crate::ui::app::{App, FileEdit, ImportSource, Locate, Mode, QueuePlace, QueueRow, Row, WriteResults};
+use crate::ui::app::{
+    App, FileEdit, ImportSource, Locate, Mode, QueuePlace, QueueRow, Row, WriteResults,
+};
 use crate::ui::edit::{stars_glyphs, Opt, Validation};
 use crate::ui::keymap::{key_width, KEYMAP};
 use crate::ui::theme as t;
@@ -111,7 +113,10 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
             x: area.x,
             y: top,
             width: area.width,
-            height: area.height.saturating_sub(top.saturating_sub(area.y)).saturating_sub(1),
+            height: area
+                .height
+                .saturating_sub(top.saturating_sub(area.y))
+                .saturating_sub(1),
         };
         if app.help {
             draw_help(f, body, app);
@@ -152,7 +157,14 @@ fn view_spans(app: &App) -> Vec<Span<'static>> {
     let n = app.files.len();
     let mut spans = Vec::new();
     let mut part = |text: String, fg: ratatui::style::Color| {
-        spans.push(Span::styled(if spans.is_empty() { text } else { format!(" · {text}") }, Style::default().fg(fg)));
+        spans.push(Span::styled(
+            if spans.is_empty() {
+                text
+            } else {
+                format!(" · {text}")
+            },
+            Style::default().fg(fg),
+        ));
     };
     match app.view {
         Some(i) => {
@@ -207,7 +219,10 @@ fn draw_view_line(f: &mut Frame, area: Rect, app: &App) {
 fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App, view: bool) {
     let bar = Style::default().bg(t::header_bg());
     let mut right: Vec<Span> = if view {
-        view_spans(app).into_iter().map(|s| s.patch_style(bar)).collect()
+        view_spans(app)
+            .into_iter()
+            .map(|s| s.patch_style(bar))
+            .collect()
     } else {
         Vec::new()
     };
@@ -228,7 +243,10 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App, view: bool) {
     let mut spans = vec![
         Span::styled(
             badge,
-            Style::default().bg(t::badge_bg()).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
+            Style::default()
+                .bg(t::badge_bg())
+                .fg(t::badge_fg())
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" ".repeat(gap)),
     ];
@@ -242,9 +260,14 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
         return draw_file_list(f, area, app);
     }
     let idx = app.current_file();
-    let Some(file) = app.files.get(idx) else { return };
+    let Some(file) = app.files.get(idx) else {
+        return;
+    };
 
-    let want = app.thumb_aspect.map(|a| thumb_cols(area.height, a)).unwrap_or(0);
+    let want = app
+        .thumb_aspect
+        .map(|a| thumb_cols(area.height, a))
+        .unwrap_or(0);
     // The column is reserved as soon as the aspect is known, picture or not:
     // the facts beside it must not slide left and back while ffmpeg seeks.
     let has_thumb = want > 0 && area.width > want + 21;
@@ -286,10 +309,19 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
     let mut lines = vec![
         Line::from(vec![
             Span::styled(iconed(icon, ""), Style::default().fg(icon_fg)),
-            Span::styled(name, Style::default().fg(t::header_fg()).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                name,
+                Style::default()
+                    .fg(t::header_fg())
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(Span::styled(
-            if summary.is_empty() { "probing…".into() } else { summary },
+            if summary.is_empty() {
+                "probing…".into()
+            } else {
+                summary
+            },
             Style::default().fg(t::muted()),
         )),
         Line::from(Span::styled(dir, Style::default().fg(t::path()))),
@@ -331,7 +363,11 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
         }
         row.push(Span::styled(
             format!("  {stage}"),
-            Style::default().fg(if frac.is_some() { t::accent() } else { t::muted() }),
+            Style::default().fg(if frac.is_some() {
+                t::accent()
+            } else {
+                t::muted()
+            }),
         ));
         lines.push(Line::from(row));
     }
@@ -379,7 +415,10 @@ fn draw_file_list(f: &mut Frame, area: Rect, app: &App) {
             // without opening each.
             let bad = !app.file_alerts(i).is_empty();
             Line::from(vec![
-                Span::styled(format!(" {}", iconed(icon, "")), Style::default().fg(if bad { t::error() } else { colour })),
+                Span::styled(
+                    format!(" {}", iconed(icon, "")),
+                    Style::default().fg(if bad { t::error() } else { colour }),
+                ),
                 Span::styled(
                     t::fit(&file_label(&file.path), width),
                     Style::default().fg(if bad { t::error() } else { t::header_fg() }),
@@ -391,7 +430,9 @@ fn draw_file_list(f: &mut Frame, area: Rect, app: &App) {
         // The total is on the view line just above; what this row owes is
         // how many the list did not show -- and how many of those are in
         // trouble, since a red name past the fifth is a red name nobody sees.
-        let hidden_bad = (LISTED_FILES..n).filter(|&i| !app.file_alerts(i).is_empty()).count();
+        let hidden_bad = (LISTED_FILES..n)
+            .filter(|&i| !app.file_alerts(i).is_empty())
+            .count();
         let mut more = vec![Span::styled(
             format!("    … {} more", n - LISTED_FILES),
             Style::default().fg(t::muted()),
@@ -462,11 +503,19 @@ fn draw_queue(f: &mut Frame, area: Rect, app: &App, rows: &[QueueRow], total: us
 /// geometry is shared so a column of them reads as one queue rather than as
 /// six unrelated rows. The stage is right-aligned in its `stage_w` columns so
 /// it sits against its bar however long it is.
-fn progress_row(stage: &str, stage_w: usize, frac: Option<f64>, bar_w: usize) -> Vec<Span<'static>> {
+fn progress_row(
+    stage: &str,
+    stage_w: usize,
+    frac: Option<f64>,
+    bar_w: usize,
+) -> Vec<Span<'static>> {
     let running = frac.is_some();
     let stage = t::fit(stage, stage.width().min(stage_w));
     let mut spans = vec![Span::styled(
-        format!("{}{stage} ", " ".repeat(stage_w.saturating_sub(stage.width()))),
+        format!(
+            "{}{stage} ",
+            " ".repeat(stage_w.saturating_sub(stage.width()))
+        ),
         Style::default().fg(if running { t::accent() } else { t::muted() }),
     )];
     spans.extend(bar(bar_w, frac.unwrap_or(0.0)).spans);
@@ -491,14 +540,30 @@ fn progress_row(stage: &str, stage_w: usize, frac: Option<f64>, bar_w: usize) ->
 /// when the choice was made before the menu opened.
 fn draw_import(f: &mut Frame, area: Rect, app: &App) {
     let p = app.import_preview();
-    let key = |k: &str| Span::styled(format!(" {k} "), Style::default().bg(t::rule()).fg(t::accent()).add_modifier(Modifier::BOLD));
+    let key = |k: &str| {
+        Span::styled(
+            format!(" {k} "),
+            Style::default()
+                .bg(t::rule())
+                .fg(t::accent())
+                .add_modifier(Modifier::BOLD),
+        )
+    };
     let name = |s: &str, on: bool| {
         let style = Style::default().fg(t::label_focus());
-        Span::styled(format!(" {s:<9}"), if on { style.add_modifier(Modifier::BOLD) } else { style })
+        Span::styled(
+            format!(" {s:<9}"),
+            if on {
+                style.add_modifier(Modifier::BOLD)
+            } else {
+                style
+            },
+        )
     };
     // One column, always painted, so the two lines do not shift sideways as
     // the cursor moves between them.
-    let caret = |on: bool| Span::styled(if on { "▸" } else { " " }, Style::default().fg(t::accent()));
+    let caret =
+        |on: bool| Span::styled(if on { "▸" } else { " " }, Style::default().fg(t::accent()));
     let on_url = app.import_pick == ImportSource::Url;
     let on_name = app.import_pick == ImportSource::Filename;
     let on_place = app.import_pick == ImportSource::Location;
@@ -509,10 +574,20 @@ fn draw_import(f: &mut Frame, area: Rect, app: &App) {
     let clip = |s: &str, max: usize| t::fit(s, s.width().min(max));
     let fit = |s: &str, used: usize| clip(s, width.saturating_sub(used).max(8));
 
-    let scope_note = if p.files > 1 { format!("  {} files, each from its own", p.files) } else { String::new() };
+    let scope_note = if p.files > 1 {
+        format!("  {} files, each from its own", p.files)
+    } else {
+        String::new()
+    };
     let mut lines = vec![Line::from(vec![
-        Span::styled(" import ", Style::default().bg(t::rule()).fg(t::label_focus())),
-        Span::styled(format!("  from where?  fills the empty fields, keeps the rest{scope_note}"), muted),
+        Span::styled(
+            " import ",
+            Style::default().bg(t::rule()).fg(t::label_focus()),
+        ),
+        Span::styled(
+            format!("  from where?  fills the empty fields, keeps the rest{scope_note}"),
+            muted,
+        ),
     ])];
 
     // The URL line: what yt-dlp would be asked.
@@ -524,7 +599,14 @@ fn draw_import(f: &mut Frame, area: Rect, app: &App) {
         caret(on_url),
         key("u"),
         name("url", on_url),
-        Span::styled(url_text, Style::default().fg(if p.url.is_some() { t::value() } else { t::value_empty() })),
+        Span::styled(
+            url_text,
+            Style::default().fg(if p.url.is_some() {
+                t::value()
+            } else {
+                t::value_empty()
+            }),
+        ),
     ]));
 
     // The filename line, and under it what the parse found.
@@ -536,19 +618,28 @@ fn draw_import(f: &mut Frame, area: Rect, app: &App) {
     ]));
     let mut found: Vec<Span> = vec![Span::raw("               ")];
     if p.fills.is_empty() && p.keeps.is_empty() {
-        found.push(Span::styled("nothing recognised in the name", Style::default().fg(t::value_empty())));
+        found.push(Span::styled(
+            "nothing recognised in the name",
+            Style::default().fg(t::value_empty()),
+        ));
     } else {
         for (n, (label, value)) in p.fills.iter().enumerate() {
             if n > 0 {
                 found.push(Span::styled(" · ", muted));
             }
-            found.push(Span::styled(format!("{label} "), Style::default().fg(t::staged())));
+            found.push(Span::styled(
+                format!("{label} "),
+                Style::default().fg(t::staged()),
+            ));
             let shown = match value {
                 Value::Text(s) if label == "Rating" => stars_glyphs(s.parse().unwrap_or(0)),
                 Value::Text(s) => s.clone(),
                 Value::List(l) => l.join(", "),
             };
-            found.push(Span::styled(clip(&shown, 30), Style::default().fg(t::value())));
+            found.push(Span::styled(
+                clip(&shown, 30),
+                Style::default().fg(t::value()),
+            ));
         }
         if !p.keeps.is_empty() {
             if !p.fills.is_empty() {
@@ -563,7 +654,10 @@ fn draw_import(f: &mut Frame, area: Rect, app: &App) {
     // name the camera's coordinates, or that there is nothing yet to go on.
     let (place_text, place_fg) = match (&p.place, p.coords) {
         (Some(place), _) => (fit(place, 16), t::value()),
-        (None, Some((lat, lon))) => (format!("name the place at {}", crate::geocode::iso6709(lat, lon)), t::value()),
+        (None, Some((lat, lon))) => (
+            format!("name the place at {}", crate::geocode::iso6709(lat, lon)),
+            t::value(),
+        ),
         (None, None) => ("type a place to look up".to_string(), t::value_empty()),
     };
     lines.push(Line::from(vec![
@@ -589,8 +683,19 @@ fn draw_import(f: &mut Frame, area: Rect, app: &App) {
 /// it is staged on arrival -- so a list on screen always means a choice.
 fn draw_locate(f: &mut Frame, area: Rect, app: &App, locate: &Locate) {
     let muted = Style::default().fg(t::muted());
-    let key = |k: &str| Span::styled(format!(" {k} "), Style::default().bg(t::rule()).fg(t::accent()).add_modifier(Modifier::BOLD));
-    let chip = Span::styled(" locate ", Style::default().bg(t::rule()).fg(t::label_focus()));
+    let key = |k: &str| {
+        Span::styled(
+            format!(" {k} "),
+            Style::default()
+                .bg(t::rule())
+                .fg(t::accent())
+                .add_modifier(Modifier::BOLD),
+        )
+    };
+    let chip = Span::styled(
+        " locate ",
+        Style::default().bg(t::rule()).fg(t::label_focus()),
+    );
     let width = area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
     match locate {
@@ -605,7 +710,10 @@ fn draw_locate(f: &mut Frame, area: Rect, app: &App, locate: &Locate) {
             const LEAD: u16 = 3;
             lines.push(Line::from(vec![
                 Span::raw("   "),
-                Span::styled(t::fit(&text, width.saturating_sub(LEAD as usize + 1)), Style::default().fg(t::value())),
+                Span::styled(
+                    t::fit(&text, width.saturating_sub(LEAD as usize + 1)),
+                    Style::default().fg(t::value()),
+                ),
             ]));
             if let Some(c) = cur {
                 let x = area.x + LEAD + (c as u16).min(area.width.saturating_sub(LEAD + 1));
@@ -620,26 +728,43 @@ fn draw_locate(f: &mut Frame, area: Rect, app: &App, locate: &Locate) {
             ]));
         }
         Locate::Looking => {
-            lines.push(Line::from(vec![chip, Span::styled("  asking MapKit…", muted)]));
-            lines.push(Line::from(vec![Span::raw(" "), key("esc"), Span::styled(" cancel", muted)]));
+            lines.push(Line::from(vec![
+                chip,
+                Span::styled("  asking MapKit…", muted),
+            ]));
+            lines.push(Line::from(vec![
+                Span::raw(" "),
+                key("esc"),
+                Span::styled(" cancel", muted),
+            ]));
         }
         Locate::Pick { hits, at, .. } => {
             lines.push(Line::from(vec![
                 chip,
-                Span::styled(format!("  {} places match -- which one?", hits.len()), muted),
+                Span::styled(
+                    format!("  {} places match -- which one?", hits.len()),
+                    muted,
+                ),
             ]));
             // The band is short; keep the cursor's row on screen.
             let room = (area.height as usize).saturating_sub(2).max(1);
             let first = at.saturating_sub(room - 1);
             for (i, h) in hits.iter().enumerate().skip(first).take(room) {
                 let on = i == *at;
-                let caret = Span::styled(if on { "▸ " } else { "  " }, Style::default().fg(t::accent()));
+                let caret = Span::styled(
+                    if on { "▸ " } else { "  " },
+                    Style::default().fg(t::accent()),
+                );
                 let style = Style::default().fg(t::value());
                 lines.push(Line::from(vec![
                     caret,
                     Span::styled(
                         t::fit(&h.summary(), width.saturating_sub(3)),
-                        if on { style.add_modifier(Modifier::BOLD) } else { style },
+                        if on {
+                            style.add_modifier(Modifier::BOLD)
+                        } else {
+                            style
+                        },
                     ),
                 ]));
             }
@@ -660,9 +785,14 @@ fn draw_locate(f: &mut Frame, area: Rect, app: &App, locate: &Locate) {
 /// The answer to "what does ‹multiple› actually contain" -- the thing the old
 /// fzf-based tagger could only show in a preview pane.
 fn draw_inspector(f: &mut Frame, area: Rect, app: &App) {
-    let Some(row) = app.rows.get(app.focus) else { return };
+    let Some(row) = app.rows.get(app.focus) else {
+        return;
+    };
     let mut lines = vec![Line::from(vec![
-        Span::styled(format!(" {} ", row.label), Style::default().bg(t::rule()).fg(t::label_focus())),
+        Span::styled(
+            format!(" {} ", row.label),
+            Style::default().bg(t::rule()).fg(t::label_focus()),
+        ),
         Span::styled("  per file", Style::default().fg(t::muted())),
     ])];
 
@@ -710,7 +840,10 @@ fn draw_inspector(f: &mut Frame, area: Rect, app: &App) {
                     }
                 }
                 spans.push(Span::styled(
-                    app.files.get(file).map(|f| file_label(&f.path)).unwrap_or_default(),
+                    app.files
+                        .get(file)
+                        .map(|f| file_label(&f.path))
+                        .unwrap_or_default(),
                     Style::default().fg(t::muted()),
                 ));
                 lines.push(Line::from(spans));
@@ -729,7 +862,9 @@ fn draw_inspector(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default().borders(Borders::TOP).border_style(Style::default().fg(t::rule()));
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(t::rule()));
     let inner = block.inner(area);
     f.render_widget(block, area);
     if inner.width <= LABEL_COLS + GUTTER + 2 * PAD + 4 {
@@ -757,13 +892,17 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
     // write queue, if it is in it: how many are written before it, or that it
     // is under the writer now -- which is the one moment an edit here does
     // not fold into its write.
-    let queued = app.view.and_then(|i| app.queue_place(i)).map(|place| match place {
-        QueuePlace::Busy => iconed(QUEUE_ICON, "writing now"),
-        QueuePlace::Waiting(0) => iconed(QUEUE_ICON, "queued for write - next up"),
-        QueuePlace::Waiting(k) => {
-            iconed(QUEUE_ICON, &format!("queued for write - {k} file{} left", plural(k)))
-        }
-    });
+    let queued = app
+        .view
+        .and_then(|i| app.queue_place(i))
+        .map(|place| match place {
+            QueuePlace::Busy => iconed(QUEUE_ICON, "writing now"),
+            QueuePlace::Waiting(0) => iconed(QUEUE_ICON, "queued for write - next up"),
+            QueuePlace::Waiting(k) => iconed(
+                QUEUE_ICON,
+                &format!("queued for write - {k} file{} left", plural(k)),
+            ),
+        });
     let heading = match (&bulk, &queued) {
         (Some(h), _) => Some((h.as_str(), t::muted())),
         (None, Some(h)) => Some((h.as_str(), t::staged())),
@@ -905,9 +1044,15 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
             .then(|| tag_list(row))
             .flatten();
         let value_spans = match set {
-            Some((labels, sel, counts)) => {
-                set_spans(&labels, sel, &counts, text_w + PAD as usize - lead, bg, focused, staged)
-            }
+            Some((labels, sel, counts)) => set_spans(
+                &labels,
+                sel,
+                &counts,
+                text_w + PAD as usize - lead,
+                bg,
+                focused,
+                staged,
+            ),
             None => {
                 // The count is dropped, not the value, when the box is too
                 // narrow for both.
@@ -937,7 +1082,11 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(marker, banded(Style::default().fg(marker_fg))),
             Span::styled(
                 t::fit(
-                    &if custom { t::short_key(&row.label) } else { row.label.clone() },
+                    &if custom {
+                        t::short_key(&row.label)
+                    } else {
+                        row.label.clone()
+                    },
                     LABEL_COLS as usize,
                 ),
                 label_style,
@@ -946,12 +1095,18 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(" ".repeat(lead), Style::default().bg(bg)),
         ];
         spans.extend(value_spans);
-        spans.push(Span::styled(" ".repeat(PAD as usize), Style::default().bg(bg)));
+        spans.push(Span::styled(
+            " ".repeat(PAD as usize),
+            Style::default().bg(bg),
+        ));
         // The column the value box does not reach. Painted only on the focused
         // row, so the band closes rather than stopping one column short.
         let drawn = 1 + LABEL_COLS + GUTTER + value_w as u16;
         if let Some(tail) = inner.width.checked_sub(drawn).filter(|_| focused) {
-            spans.push(Span::styled(" ".repeat(tail as usize), banded(Style::default())));
+            spans.push(Span::styled(
+                " ".repeat(tail as usize),
+                banded(Style::default()),
+            ));
         }
         lines.push(Line::from(spans));
         if group_break_after(row) {
@@ -959,7 +1114,11 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    let start = if focus_line >= height { focus_line + 1 - height } else { 0 };
+    let start = if focus_line >= height {
+        focus_line + 1 - height
+    } else {
+        0
+    };
     let visible: Vec<Line> = lines.into_iter().skip(start).take(height).collect();
     f.render_widget(Paragraph::new(visible), inner);
     if let Some((x, line)) = cursor_line {
@@ -995,7 +1154,9 @@ fn group_rule(width: usize, heading: Option<(&str, ratatui::style::Color)>) -> L
                 rule(left),
                 Span::styled(
                     text,
-                    Style::default().fg(colour).add_modifier(Modifier::REVERSED | Modifier::BOLD),
+                    Style::default()
+                        .fg(colour)
+                        .add_modifier(Modifier::REVERSED | Modifier::BOLD),
                 ),
                 rule(right),
             ])
@@ -1036,7 +1197,10 @@ fn closed_set(app: &App, row: &Row) -> Option<(Vec<String>, Option<usize>, Vec<u
             let i = match opts.iter().position(|o| &o.code == code) {
                 Some(i) => i,
                 None => {
-                    opts.push(Opt { code: code.clone(), label: code.clone() });
+                    opts.push(Opt {
+                        code: code.clone(),
+                        label: code.clone(),
+                    });
                     opts.len() - 1
                 }
             };
@@ -1048,13 +1212,14 @@ fn closed_set(app: &App, row: &Row) -> Option<(Vec<String>, Option<usize>, Vec<u
         }
     }
     let sel = match app.shown_value(row) {
-        Some(Value::Text(s))
-            if !s.trim().is_empty() && (!row.is_mixed() || row.staged) =>
-        {
+        Some(Value::Text(s)) if !s.trim().is_empty() && (!row.is_mixed() || row.staged) => {
             match opts.iter().position(|o| o.code == s) {
                 Some(i) => Some(i),
                 None => {
-                    opts.push(Opt { code: s.clone(), label: s });
+                    opts.push(Opt {
+                        code: s.clone(),
+                        label: s,
+                    });
                     Some(opts.len() - 1)
                 }
             }
@@ -1097,7 +1262,9 @@ fn set_spans(
     let cell_w = |i: usize| 1 + labels[i].width() + tail(i).width();
     // Scroll to keep the selection in view -- or, on a mixed row, the first
     // option anyone holds, since that is what the row is there to say.
-    let anchor = sel.or_else(|| (0..labels.len()).find(|&i| held(i) > 0)).unwrap_or(0);
+    let anchor = sel
+        .or_else(|| (0..labels.len()).find(|&i| held(i) > 0))
+        .unwrap_or(0);
     let mut first = 0usize;
     loop {
         let used: usize = (first..labels.len()).map(cell_w).sum();
@@ -1117,27 +1284,41 @@ fn set_spans(
         if held(i) > 0 {
             spans.push(Span::styled(
                 format!(" {label}"),
-                Style::default().bg(bg).fg(t::value()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .bg(bg)
+                    .fg(t::value())
+                    .add_modifier(Modifier::BOLD),
             ));
-            spans.push(Span::styled(tail(i), Style::default().bg(bg).fg(t::mixed())));
+            spans.push(Span::styled(
+                tail(i),
+                Style::default().bg(bg).fg(t::mixed()),
+            ));
             continue;
         }
         spans.push(Span::styled(
             format!(" {label} "),
             match (Some(i) == sel, staged, lit) {
-                (true, true, _) => Style::default().bg(bg).fg(t::staged()).add_modifier(Modifier::BOLD),
-                (true, false, true) => {
-                    Style::default().bg(t::accent()).fg(t::badge_fg()).add_modifier(Modifier::BOLD)
-                }
-                (true, false, false) => {
-                    Style::default().bg(t::rule()).fg(t::value()).add_modifier(Modifier::BOLD)
-                }
+                (true, true, _) => Style::default()
+                    .bg(bg)
+                    .fg(t::staged())
+                    .add_modifier(Modifier::BOLD),
+                (true, false, true) => Style::default()
+                    .bg(t::accent())
+                    .fg(t::badge_fg())
+                    .add_modifier(Modifier::BOLD),
+                (true, false, false) => Style::default()
+                    .bg(t::rule())
+                    .fg(t::value())
+                    .add_modifier(Modifier::BOLD),
                 (false, _, _) => Style::default().bg(bg).fg(t::muted()),
             },
         ));
     }
     if used < width {
-        spans.push(Span::styled(" ".repeat(width - used), Style::default().bg(bg)));
+        spans.push(Span::styled(
+            " ".repeat(width - used),
+            Style::default().bg(bg),
+        ));
     }
     spans
 }
@@ -1175,7 +1356,10 @@ fn tag_spans(
         if used + cost > width {
             let rest = format!(" +{}", items.len() - i);
             if used + rest.width() <= width {
-                spans.push(Span::styled(rest.clone(), Style::default().bg(bg).fg(t::muted())));
+                spans.push(Span::styled(
+                    rest.clone(),
+                    Style::default().bg(bg).fg(t::muted()),
+                ));
                 used += rest.width();
             }
             break;
@@ -1186,18 +1370,28 @@ fn tag_spans(
         // to leave out is the one that looks wrong (§5.4) -- and underlined,
         // so it is still the one that looks wrong on a row already red.
         let style = if hash && tag::is_hostile(item) {
-            Style::default().bg(bg).fg(t::error()).add_modifier(Modifier::UNDERLINED)
+            Style::default()
+                .bg(bg)
+                .fg(t::error())
+                .add_modifier(Modifier::UNDERLINED)
         } else {
             Style::default().bg(bg).fg(fg)
         };
         if !sig.is_empty() {
-            let sig_style = if hash { style } else { Style::default().bg(bg).fg(t::muted()) };
+            let sig_style = if hash {
+                style
+            } else {
+                Style::default().bg(bg).fg(t::muted())
+            };
             spans.push(Span::styled(sig, sig_style));
         }
         spans.push(Span::styled(item.clone(), style));
     }
     if used < width {
-        spans.push(Span::styled(" ".repeat(width - used), Style::default().bg(bg)));
+        spans.push(Span::styled(
+            " ".repeat(width - used),
+            Style::default().bg(bg),
+        ));
     }
     spans
 }
@@ -1228,9 +1422,11 @@ fn display_row(app: &App, row: &Row) -> Option<String> {
             }
             .min(5),
         ),
-        (Value::List(l), Control::HashTags) => {
-            l.iter().map(|x| format!("#{x}")).collect::<Vec<_>>().join(" ")
-        }
+        (Value::List(l), Control::HashTags) => l
+            .iter()
+            .map(|x| format!("#{x}"))
+            .collect::<Vec<_>>()
+            .join(" "),
         (Value::List(l), _) => l.join(" · "),
         (Value::Text(s), Control::Enum) => app.enum_label(row, s).unwrap_or_else(|| s.clone()),
         (Value::Text(s), _) => s.replace('\n', " "),
@@ -1251,22 +1447,31 @@ fn draw_mode_bar(f: &mut Frame, area: Rect, app: &App) {
     // selection, so it lives with the other standing state -- the mode --
     // rather than in the title.
     let fast = format!("faststart {}  ", if app.faststart { "on" } else { "off" });
-    let pairs: Vec<(&str, &str)> =
-        shortcut_pairs(app).iter().copied().filter(|p| *p != HELP).collect();
+    let pairs: Vec<(&str, &str)> = shortcut_pairs(app)
+        .iter()
+        .copied()
+        .filter(|p| *p != HELP)
+        .collect();
     let room = (area.width as usize).saturating_sub(badge.width() + 1 + fast.width() + 1);
     let (hints, hints_w) = hint_spans(&pairs, room);
     let gap = (area.width as usize).saturating_sub(badge.width() + 1 + hints_w + fast.width());
     let mut spans = vec![
         Span::styled(
             badge,
-            Style::default().bg(mode_fg).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
+            Style::default()
+                .bg(mode_fg)
+                .fg(t::badge_fg())
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
     ];
     spans.extend(hints);
     spans.push(Span::raw(" ".repeat(gap)));
     spans.push(Span::styled(fast, Style::default().fg(t::muted())));
-    f.render_widget(Paragraph::new(Line::from(spans)).style(Style::default().bg(bar_bg)), area);
+    f.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(bar_bg)),
+        area,
+    );
 }
 
 /// The help key, which every Normal-mode list starts with and only the badge
@@ -1391,7 +1596,10 @@ fn hint_spans(pairs: &[(&str, &str)], width: usize) -> (Vec<Span<'static>>, usiz
         used += w;
         spans.push(Span::styled(
             key,
-            Style::default().bg(t::rule()).fg(t::accent()).add_modifier(Modifier::BOLD),
+            Style::default()
+                .bg(t::rule())
+                .fg(t::accent())
+                .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(desc, Style::default().fg(t::muted())));
     }
@@ -1414,7 +1622,10 @@ fn help_section(
     let mut out: Vec<(Vec<Span<'static>>, usize)> = vec![(
         vec![Span::styled(
             format!(" {} ", s.title),
-            Style::default().bg(t::accent()).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
+            Style::default()
+                .bg(t::accent())
+                .fg(t::badge_fg())
+                .add_modifier(Modifier::BOLD),
         )],
         s.title.width() + 2,
     )];
@@ -1435,9 +1646,15 @@ fn help_section(
             vec![
                 Span::styled(
                     format!(" {}{pad} ", k.keys),
-                    Style::default().bg(t::rule()).fg(t::accent()).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .bg(t::rule())
+                        .fg(t::accent())
+                        .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(format!(" {}", t::fit(k.what, descw)), Style::default().fg(t::value())),
+                Span::styled(
+                    format!(" {}", t::fit(k.what, descw)),
+                    Style::default().fg(t::value()),
+                ),
             ],
             keyw + 3 + descw,
         ));
@@ -1459,7 +1676,12 @@ fn draw_help(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let keyw = KEYMAP.iter().flat_map(|s| s.binds.iter()).map(|k| key_width(k.keys)).max().unwrap_or(0);
+    let keyw = KEYMAP
+        .iter()
+        .flat_map(|s| s.binds.iter())
+        .map(|k| key_width(k.keys))
+        .max()
+        .unwrap_or(0);
     let total = inner.width as usize;
     // Two columns need the key legend twice, a readable description twice, and
     // a gutter between them; below that the one-column form reads better than
@@ -1469,8 +1691,10 @@ fn draw_help(f: &mut Frame, area: Rect, app: &App) {
     let colw = if two { (total - gutter) / 2 } else { total };
     let descw = colw.saturating_sub(keyw + 3).max(8);
 
-    let sections: Vec<Vec<(Vec<Span<'static>>, usize)>> =
-        KEYMAP.iter().map(|s| help_section(s, keyw, descw, colw)).collect();
+    let sections: Vec<Vec<(Vec<Span<'static>>, usize)>> = KEYMAP
+        .iter()
+        .map(|s| help_section(s, keyw, descw, colw))
+        .collect();
 
     let mut lines: Vec<Line> = Vec::new();
     if two {
@@ -1496,7 +1720,9 @@ fn draw_help(f: &mut Frame, area: Rect, app: &App) {
                 None => 0,
             };
             if let Some((s, _)) = right.get(i) {
-                spans.push(Span::raw(" ".repeat(colw + gutter - used.min(colw + gutter))));
+                spans.push(Span::raw(
+                    " ".repeat(colw + gutter - used.min(colw + gutter)),
+                ));
                 spans.extend(s.clone());
             }
             lines.push(Line::from(spans));
@@ -1521,14 +1747,21 @@ fn draw_help(f: &mut Frame, area: Rect, app: &App) {
         "  any key  back to the form"
     };
 
-    let body = Rect { height: body_h, ..inner };
+    let body = Rect {
+        height: body_h,
+        ..inner
+    };
     f.render_widget(Paragraph::new(lines).scroll((scroll, 0)), body);
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
             foot,
             Style::default().fg(t::value()).add_modifier(Modifier::BOLD),
         ))),
-        Rect { y: inner.y + body_h, height: 1, ..inner },
+        Rect {
+            y: inner.y + body_h,
+            height: 1,
+            ..inner
+        },
     );
 }
 
@@ -1564,8 +1797,14 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
     let room = (area.width as usize).saturating_sub(right_w + 1);
     let text = t::fit(&text, text.width().min(room));
     f.render_widget(
-        Paragraph::new(Line::from(Span::styled(format!(" {text}"), Style::default().fg(fg)))),
-        Rect { width: (room + 1) as u16, ..area },
+        Paragraph::new(Line::from(Span::styled(
+            format!(" {text}"),
+            Style::default().fg(fg),
+        ))),
+        Rect {
+            width: (room + 1) as u16,
+            ..area
+        },
     );
 }
 
@@ -1580,7 +1819,11 @@ fn write_line(f: &mut Frame, area: Rect, app: &App) -> usize {
     let x = area.width.saturating_sub(w as u16);
     f.render_widget(
         Paragraph::new(Line::from(spans)),
-        Rect { x: area.x + x, width: area.width - x, ..area },
+        Rect {
+            x: area.x + x,
+            width: area.width - x,
+            ..area
+        },
     );
     w
 }
@@ -1592,10 +1835,19 @@ fn write_line(f: &mut Frame, area: Rect, app: &App) -> usize {
 /// name and stage are in the panel at the top, which has the room for them;
 /// said here as well, the line read "writing" three times over.
 fn write_status(app: &App) -> Vec<Span<'static>> {
-    let Some(p) = &app.progress else { return Vec::new() };
+    let Some(p) = &app.progress else {
+        return Vec::new();
+    };
     let overall = p.overall();
-    let mut v = vec![Span::styled(format!("{}/{} ", p.file + 1, p.total), Style::default().fg(t::accent()))];
-    v.extend(labelled_bar(16, overall, &format!("{}%", (overall * 100.0).round() as u32)));
+    let mut v = vec![Span::styled(
+        format!("{}/{} ", p.file + 1, p.total),
+        Style::default().fg(t::accent()),
+    )];
+    v.extend(labelled_bar(
+        16,
+        overall,
+        &format!("{}%", (overall * 100.0).round() as u32),
+    ));
     // The same two columns in from the edge the mode bar's faststart stops at.
     v.push(Span::raw("  "));
     v
@@ -1611,9 +1863,16 @@ fn labelled_bar(width: usize, frac: f64, label: &str) -> Vec<Span<'static>> {
     let start = width.saturating_sub(chars.len()) / 2;
     (0..width)
         .map(|i| {
-            let ch = i.checked_sub(start).and_then(|j| chars.get(j)).copied().unwrap_or(' ');
+            let ch = i
+                .checked_sub(start)
+                .and_then(|j| chars.get(j))
+                .copied()
+                .unwrap_or(' ');
             let style = if i < filled {
-                Style::default().bg(t::accent()).fg(t::badge_fg()).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .bg(t::accent())
+                    .fg(t::badge_fg())
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().bg(t::rule()).fg(t::value())
             };
@@ -1629,7 +1888,10 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
     let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(
             format!(" Write {} file{} ", plans.len(), plural(plans.len())),
-            Style::default().bg(t::accent()).fg(t::badge_fg()).add_modifier(Modifier::BOLD),
+            Style::default()
+                .bg(t::accent())
+                .fg(t::badge_fg())
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
     ];
@@ -1638,9 +1900,16 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
         // A refused field is still listed -- it is staged, and hiding it would
         // make the dialog agree with the write for the wrong reason -- but it
         // is listed as what it is: red, and named as not going.
-        let value_fg = if edit.refused.is_some() { t::error() } else { t::staged() };
+        let value_fg = if edit.refused.is_some() {
+            t::error()
+        } else {
+            t::staged()
+        };
         let mut spans = vec![
-            Span::styled(format!("  {}", t::fit(&edit.label, 14)), Style::default().fg(t::label())),
+            Span::styled(
+                format!("  {}", t::fit(&edit.label, 14)),
+                Style::default().fg(t::label()),
+            ),
             Span::styled("→ ", Style::default().fg(t::muted())),
             Span::styled(edit.shown, Style::default().fg(value_fg)),
         ];
@@ -1676,18 +1945,36 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
     // name carries its own only when the batch is split between routes.
     let mut routes: Vec<(&str, &str, usize)> = Vec::new();
     for p in plans {
-        match routes.iter_mut().find(|(w, why, _)| *w == p.writer.label() && *why == p.why) {
+        match routes
+            .iter_mut()
+            .find(|(w, why, _)| *w == p.writer.label() && *why == p.why)
+        {
             Some((_, _, n)) => *n += 1,
             None => routes.push((p.writer.label(), p.why, 1)),
         }
     }
     let split = routes.len() > 1;
     let width = (area.width as usize).saturating_sub(2);
-    let route_w = if split { plans.iter().map(|p| p.writer.label().width()).max().unwrap_or(0) + 3 } else { 0 };
+    let route_w = if split {
+        plans
+            .iter()
+            .map(|p| p.writer.label().width())
+            .max()
+            .unwrap_or(0)
+            + 3
+    } else {
+        0
+    };
     let names: Vec<String> = plans.iter().map(|p| file_label(&p.path)).collect();
     // The name identifies; the fields are the news. The name gets two fifths
     // at most, so a long one does not squeeze the changes down to "+8".
-    let name_w = names.iter().map(|n| n.width()).max().unwrap_or(0).min(width * 2 / 5).max(8);
+    let name_w = names
+        .iter()
+        .map(|n| n.width())
+        .max()
+        .unwrap_or(0)
+        .min(width * 2 / 5)
+        .max(8);
     let fields_w = width.saturating_sub(2 + name_w + 3 + route_w);
 
     // The dialog cannot scroll, so a batch longer than the room left is
@@ -1703,7 +1990,11 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
         .count();
     let fixed = lines.len() + 1 + routes.len() + if renames_n > 0 { 2 } else { 0 } + 4;
     let room = (area.height as usize).saturating_sub(2 + fixed).max(1);
-    let shown = if plans.len() > room { room.saturating_sub(1).max(1) } else { plans.len() };
+    let shown = if plans.len() > room {
+        room.saturating_sub(1).max(1)
+    } else {
+        plans.len()
+    };
 
     for (p, name) in plans.iter().zip(&names).take(shown) {
         let mut spans = vec![Span::styled(
@@ -1719,16 +2010,29 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
             Container::Fragmented => "fragmented",
             Container::Inconclusive => "layout unknown",
         };
-        let note = if layout.is_empty() { 0 } else { layout.width() + 3 };
-        spans.extend(field_chips(&app.file_edits(&p.path), fields_w.saturating_sub(note)));
+        let note = if layout.is_empty() {
+            0
+        } else {
+            layout.width() + 3
+        };
+        spans.extend(field_chips(
+            &app.file_edits(&p.path),
+            fields_w.saturating_sub(note),
+        ));
         if !layout.is_empty() {
-            spans.push(Span::styled(format!(" · {layout}"), Style::default().fg(t::muted())));
+            spans.push(Span::styled(
+                format!(" · {layout}"),
+                Style::default().fg(t::muted()),
+            ));
         }
         if split {
             let used: usize = spans.iter().map(|s| s.content.width()).sum();
             let pad = width.saturating_sub(used + route_w - 3 + 1);
             spans.push(Span::raw(" ".repeat(pad)));
-            spans.push(Span::styled(p.writer.label(), Style::default().fg(t::accent())));
+            spans.push(Span::styled(
+                p.writer.label(),
+                Style::default().fg(t::accent()),
+            ));
         }
         lines.push(Line::from(spans));
     }
@@ -1740,7 +2044,11 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
     }
     lines.push(Line::from(""));
     for (writer, why, n) in &routes {
-        let count = if split || plans.len() > 1 { format!(" · {n} file{}", plural(*n)) } else { String::new() };
+        let count = if split || plans.len() > 1 {
+            format!(" · {n} file{}", plural(*n))
+        } else {
+            String::new()
+        };
         lines.push(Line::from(vec![
             Span::styled(format!("  {writer}"), Style::default().fg(t::accent())),
             Span::styled(format!("{count}  "), Style::default().fg(t::muted())),
@@ -1763,9 +2071,15 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
     if !renames.is_empty() {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("  then renamed from their tags: ", Style::default().fg(t::staged())),
             Span::styled(
-                t::fit(&renames.join(", "), (area.width as usize).saturating_sub(36).max(10)),
+                "  then renamed from their tags: ",
+                Style::default().fg(t::staged()),
+            ),
+            Span::styled(
+                t::fit(
+                    &renames.join(", "),
+                    (area.width as usize).saturating_sub(36).max(10),
+                ),
                 Style::default().fg(t::header_fg()),
             ),
         ]));
@@ -1781,15 +2095,29 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
     )));
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("  ⏎ ", Style::default().bg(t::rule()).fg(t::accent()).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "  ⏎ ",
+            Style::default()
+                .bg(t::rule())
+                .fg(t::accent())
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" write   ", Style::default().fg(t::value())),
-        Span::styled(" esc ", Style::default().bg(t::rule()).fg(t::accent()).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " esc ",
+            Style::default()
+                .bg(t::rule())
+                .fg(t::accent())
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" cancel", Style::default().fg(t::value())),
     ]));
 
     f.render_widget(
         Paragraph::new(lines).block(
-            Block::default().borders(Borders::ALL).border_style(Style::default().fg(t::accent())),
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(t::accent())),
         ),
         area,
     );
@@ -1806,7 +2134,11 @@ fn field_chips(edits: &[FileEdit], width: usize) -> Vec<Span<'static>> {
         let sep = if i == 0 { "" } else { ", " };
         let rest = edits.len() - i - 1;
         // Leave room for the "+N" that would have to follow this one.
-        let tail = if rest > 0 { format!(" +{rest}").width() } else { 0 };
+        let tail = if rest > 0 {
+            format!(" +{rest}").width()
+        } else {
+            0
+        };
         let w = sep.width() + e.label.width();
         if used + w + tail > width {
             spans.push(Span::styled(
@@ -1835,7 +2167,10 @@ fn bar(width: usize, frac: f64) -> Line<'static> {
     let filled = ((width as f64) * frac.clamp(0.0, 1.0)).round() as usize;
     Line::from(vec![
         Span::styled("█".repeat(filled), Style::default().fg(t::accent())),
-        Span::styled("░".repeat(width.saturating_sub(filled)), Style::default().fg(t::rule())),
+        Span::styled(
+            "░".repeat(width.saturating_sub(filled)),
+            Style::default().fg(t::rule()),
+        ),
     ])
 }
 
@@ -1888,7 +2223,10 @@ fn draw_results(f: &mut Frame, area: Rect, r: &WriteResults) {
     for (p, why) in &r.not_renamed {
         lines.push(Line::from(vec![
             Span::styled("  ↷ ", Style::default().fg(t::warn())),
-            Span::styled(file_label(p), Style::default().fg(t::warn()).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                file_label(p),
+                Style::default().fg(t::warn()).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("  written, not renamed", Style::default().fg(t::muted())),
         ]));
         for l in wrap(why, text_width) {
@@ -1923,7 +2261,11 @@ fn draw_results(f: &mut Frame, area: Rect, r: &WriteResults) {
 }
 
 fn plural(n: usize) -> &'static str {
-    if n == 1 { "" } else { "s" }
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
 }
 
 /// Break `text` to `width` columns, keeping the newlines it already has: an
@@ -1942,8 +2284,11 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
         let indent: String = para.chars().take_while(|c| *c == ' ').collect();
         let mut line = String::new();
         for word in para.split_whitespace() {
-            let candidate = if line.is_empty() { indent.chars().count() + word.chars().count() }
-            else { line.chars().count() + 1 + word.chars().count() };
+            let candidate = if line.is_empty() {
+                indent.chars().count() + word.chars().count()
+            } else {
+                line.chars().count() + 1 + word.chars().count()
+            };
             if line.is_empty() {
                 line = format!("{indent}{word}");
             } else if candidate <= width {
@@ -1962,7 +2307,9 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
 }
 
 fn file_label(p: &std::path::Path) -> String {
-    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -2013,13 +2360,16 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
         term.draw(|fr| draw_fields(fr, fr.area(), &app)).unwrap();
         let buf = term.backend().buffer().clone();
-        let line = |y: u16| -> String {
-            (0..60).map(|x| buf[(x, y)].symbol().to_string()).collect()
-        };
+        let line =
+            |y: u16| -> String { (0..60).map(|x| buf[(x, y)].symbol().to_string()).collect() };
         // y=0 is the block's top border; the form starts at y=1.
         assert!(line(1).contains("Category"), "{:?}", line(1));
         assert!(line(2).contains("Variant"), "{:?}", line(2));
-        assert!(line(3).trim_end().chars().all(|c| c == '\u{2500}'), "{:?}", line(3));
+        assert!(
+            line(3).trim_end().chars().all(|c| c == '\u{2500}'),
+            "{:?}",
+            line(3)
+        );
         assert!(line(4).contains("Title"), "{:?}", line(4));
     }
 
@@ -2030,17 +2380,28 @@ mod tests {
     fn every_chip_takes_the_rows_colour() {
         let items: Vec<String> = vec!["pov".into(), "solo".into()];
         let fg_of = |v: &[Span<'static>], text: &str| -> Vec<_> {
-            v.iter().filter(|s| s.content.trim() == text).map(|s| s.style.fg).collect()
+            v.iter()
+                .filter(|s| s.content.trim() == text)
+                .map(|s| s.style.fg)
+                .collect()
         };
         for colour in [t::value(), t::staged(), t::mixed()] {
             let spans = tag_spans(&items, true, 40, t::input_bg(), colour);
             assert_eq!(fg_of(&spans, "pov"), vec![Some(colour)]);
             assert_eq!(fg_of(&spans, "solo"), vec![Some(colour)]);
-            assert_eq!(fg_of(&spans, "#"), vec![Some(colour); 2], "the # is the tag's");
+            assert_eq!(
+                fg_of(&spans, "#"),
+                vec![Some(colour); 2],
+                "the # is the tag's"
+            );
         }
         let names = tag_spans(&items, false, 40, t::input_bg(), t::staged());
         assert_eq!(fg_of(&names, "solo"), vec![Some(t::staged())]);
-        assert_eq!(fg_of(&names, "·"), vec![Some(t::muted())], "the separator is not a name");
+        assert_eq!(
+            fg_of(&names, "·"),
+            vec![Some(t::muted())],
+            "the separator is not a name"
+        );
     }
 
     /// A tag the write cannot store is red on any row, and underlined, so it
@@ -2068,7 +2429,9 @@ mod tests {
 
         let f = FileTags {
             path: std::path::PathBuf::from("/tmp/tagform-render-colours.mp4"),
-            atoms: [("actors".to_string(), Value::text("Ann"))].into_iter().collect(),
+            atoms: [("actors".to_string(), Value::text("Ann"))]
+                .into_iter()
+                .collect(),
             xmp: BTreeMap::new(),
         };
         let mut app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
@@ -2096,13 +2459,18 @@ mod tests {
     /// overflow is a count instead, and the box still fills its exact width.
     #[test]
     fn an_overlong_tag_set_counts_the_rest_instead_of_truncating_one() {
-        let items: Vec<String> =
-            ["pov", "solo", "outdoor", "handheld"].iter().map(|s| s.to_string()).collect();
+        let items: Vec<String> = ["pov", "solo", "outdoor", "handheld"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let spans = tag_spans(&items, true, 16, t::input_bg(), t::muted());
         let drawn: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(drawn.width(), 16, "{drawn:?}");
         assert!(drawn.contains("+2"), "{drawn:?}");
-        assert!(!drawn.contains("outdo "), "a tag was cut mid-word: {drawn:?}");
+        assert!(
+            !drawn.contains("outdo "),
+            "a tag was cut mid-word: {drawn:?}"
+        );
     }
 
     #[test]
@@ -2119,7 +2487,10 @@ mod tests {
         use std::collections::BTreeMap;
         let mk = |name: &str, kv: &[(&str, &str)]| FileTags {
             path: std::path::PathBuf::from(format!("/tmp/tagform-render-{name}.mp4")),
-            atoms: kv.iter().map(|(k, v)| (k.to_string(), Value::text(*v))).collect(),
+            atoms: kv
+                .iter()
+                .map(|(k, v)| (k.to_string(), Value::text(*v)))
+                .collect(),
             xmp: BTreeMap::new(),
         };
         crate::ui::app::App::new(vec![mk("a", a), mk("b", b)], BTreeMap::new(), false)
@@ -2131,7 +2502,9 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|fr| draw_fields(fr, fr.area(), app)).unwrap();
         let buf = term.backend().buffer().clone();
-        (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect()
+        (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect())
+            .collect()
     }
 
     /// Bulk view says what it is and how far an edit reaches: the heading on
@@ -2146,10 +2519,19 @@ mod tests {
         );
         let lines = screen(&app, 80, 20);
         let rule = &lines[3];
-        assert!(rule.contains(&iconed(BULK_ICON, "bulk edit mode - 2 files")), "{rule:?}");
-        assert!(rule.starts_with('\u{2500}') && rule.trim_end().ends_with('\u{2500}'), "{rule:?}");
+        assert!(
+            rule.contains(&iconed(BULK_ICON, "bulk edit mode - 2 files")),
+            "{rule:?}"
+        );
+        assert!(
+            rule.starts_with('\u{2500}') && rule.trim_end().ends_with('\u{2500}'),
+            "{rule:?}"
+        );
         let title = lines.iter().find(|l| l.contains("Title")).unwrap();
-        assert!(title.contains("Same") && title.contains("2 files"), "{title:?}");
+        assert!(
+            title.contains("Same") && title.contains("2 files"),
+            "{title:?}"
+        );
         let channel = lines.iter().find(|l| l.contains("Channel")).unwrap();
         assert!(channel.contains("multiple values (2 files)"), "{channel:?}");
 
@@ -2158,7 +2540,10 @@ mod tests {
         app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         let lines = screen(&app, 80, 20);
         let title = lines.iter().find(|l| l.contains("Title")).unwrap();
-        assert!(title.contains("Same") && !title.contains("2 files"), "{title:?}");
+        assert!(
+            title.contains("Same") && !title.contains("2 files"),
+            "{title:?}"
+        );
 
         // A single file, or one file of the selection, is not bulk.
         app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
@@ -2189,9 +2574,12 @@ mod tests {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|fr| draw_header(fr, fr.area(), app, None)).unwrap();
+        term.draw(|fr| draw_header(fr, fr.area(), app, None))
+            .unwrap();
         let buf = term.backend().buffer().clone();
-        (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect()
+        (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect())
+            .collect()
     }
 
     /// A file with a rename that would land on another file is red in the
@@ -2201,9 +2589,11 @@ mod tests {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
         let mut app = n_files(3);
-        app.conflicts.insert(1, std::path::PathBuf::from("/nonexistent/taken.mp4"));
+        app.conflicts
+            .insert(1, std::path::PathBuf::from("/nonexistent/taken.mp4"));
         let mut term = Terminal::new(TestBackend::new(80, 6)).unwrap();
-        term.draw(|fr| draw_header(fr, fr.area(), &app, None)).unwrap();
+        term.draw(|fr| draw_header(fr, fr.area(), &app, None))
+            .unwrap();
         let buf = term.backend().buffer().clone();
         let name_fg = |y: u16| {
             let line: String = (0..80).map(|x| buf[(x, y)].symbol().to_string()).collect();
@@ -2216,11 +2606,23 @@ mod tests {
 
         next(&mut app);
         let lines = header(&app, 80, 6);
-        assert!(!lines.iter().any(|l| l.contains("rename blocked")), "file 0 is fine: {lines:?}");
+        assert!(
+            !lines.iter().any(|l| l.contains("rename blocked")),
+            "file 0 is fine: {lines:?}"
+        );
         next(&mut app);
         let lines = header(&app, 80, 6);
-        let alert = lines.iter().find(|l| l.contains("rename blocked")).expect("its page says so");
-        assert!(alert.contains(&iconed(ALERT_ICON, "rename blocked: another file is already named taken.mp4")), "{alert:?}");
+        let alert = lines
+            .iter()
+            .find(|l| l.contains("rename blocked"))
+            .expect("its page says so");
+        assert!(
+            alert.contains(&iconed(
+                ALERT_ICON,
+                "rename blocked: another file is already named taken.mp4"
+            )),
+            "{alert:?}"
+        );
     }
 
     /// Past the fifth name the list stops, and a file in trouble among the
@@ -2228,7 +2630,8 @@ mod tests {
     #[test]
     fn a_file_in_trouble_past_the_list_is_counted() {
         let mut app = n_files(8);
-        app.conflicts.insert(6, std::path::PathBuf::from("/nonexistent/taken.mp4"));
+        app.conflicts
+            .insert(6, std::path::PathBuf::from("/nonexistent/taken.mp4"));
         let lines = header(&app, 80, 6);
         assert!(lines[5].contains("3 more · 1 with problems"), "{lines:?}");
     }
@@ -2241,20 +2644,29 @@ mod tests {
         let app = n_files(7);
         let lines = header(&app, 60, 6);
         for i in 0..5 {
-            assert!(lines[i].contains(&iconed(FILE_ICON, &format!("clip-{i}.mp4"))), "{lines:?}");
+            assert!(
+                lines[i].contains(&iconed(FILE_ICON, &format!("clip-{i}.mp4"))),
+                "{lines:?}"
+            );
         }
         assert!(lines[5].contains("… 2 more"), "{lines:?}");
         assert!(!lines.iter().any(|l| l.contains("clip-5")), "{lines:?}");
 
         let app = n_files(5);
         let lines = header(&app, 60, 6);
-        assert!(lines[4].contains("clip-4.mp4") && !lines[5].contains("more"), "{lines:?}");
+        assert!(
+            lines[4].contains("clip-4.mp4") && !lines[5].contains("more"),
+            "{lines:?}"
+        );
 
         // One file in view is that file's header, not a list.
         let mut app = n_files(7);
         next(&mut app);
         let lines = header(&app, 60, 6);
-        assert!(lines[0].contains("clip-0.mp4") && !lines[1].contains("clip-1"), "{lines:?}");
+        assert!(
+            lines[0].contains("clip-0.mp4") && !lines[1].contains("clip-1"),
+            "{lines:?}"
+        );
     }
 
     /// In single-file view the rule says where the file stands in the write
@@ -2271,7 +2683,10 @@ mod tests {
         }
         let lines = screen(&app, 80, 20);
         let rule = &lines[3];
-        assert!(rule.contains(&iconed(QUEUE_ICON, "queued for write - 2 files left")), "{rule:?}");
+        assert!(
+            rule.contains(&iconed(QUEUE_ICON, "queued for write - 2 files left")),
+            "{rule:?}"
+        );
 
         let mut app = n_files(2);
         next(&mut app);
@@ -2302,7 +2717,10 @@ mod tests {
         let (labels, sel, counts) = closed_set(&app, row).unwrap();
         assert_eq!(sel, None);
         let held = |l: &str| counts[labels.iter().position(|x| x == l).unwrap()];
-        assert_eq!((held("Original"), held("Enhanced"), held("Clip")), (1, 0, 1));
+        assert_eq!(
+            (held("Original"), held("Enhanced"), held("Clip")),
+            (1, 0, 1)
+        );
 
         let lines = screen(&app, 100, 20);
         let at = lines.iter().position(|l| l.contains("Variant")).unwrap();
@@ -2318,7 +2736,11 @@ mod tests {
         let buf = term.backend().buffer().clone();
         let col = line.find("Original 1").unwrap() + "Original ".len();
         let col = line[..col].chars().count() as u16;
-        assert_eq!(buf[(col, at as u16)].style().fg, Some(t::mixed()), "{line:?}");
+        assert_eq!(
+            buf[(col, at as u16)].style().fg,
+            Some(t::mixed()),
+            "{line:?}"
+        );
     }
 
     /// An unknown value in a mixed set is counted too, not dropped.
@@ -2362,8 +2784,14 @@ mod tests {
         assert!(row.contains(&chosen), "{row:?}");
         // The chosen cell is bold; the ones either side of it are not.
         let at = row.find(&chosen).unwrap() as u16;
-        assert!(buf[(at, 1)].style().add_modifier.contains(Modifier::BOLD), "{row:?}");
-        assert!(!buf[(2 + LABEL_COLS, 1)].style().add_modifier.contains(Modifier::BOLD));
+        assert!(
+            buf[(at, 1)].style().add_modifier.contains(Modifier::BOLD),
+            "{row:?}"
+        );
+        assert!(!buf[(2 + LABEL_COLS, 1)]
+            .style()
+            .add_modifier
+            .contains(Modifier::BOLD));
         // It is a staged edit, so the chosen cell is drawn in the staged
         // colour the way a staged text value is -- on the label *and* on the
         // value, not the label alone.
@@ -2400,12 +2828,20 @@ mod tests {
         // of.
         let band = t::input_bg_focus();
         for x in 0..w {
-            assert_eq!(buf[(x, 2)].style().bg, Some(band), "column {x} of the focused row");
+            assert_eq!(
+                buf[(x, 2)].style().bg,
+                Some(band),
+                "column {x} of the focused row"
+            );
         }
         // The row above it is untinted where the label is: the terminal's own
         // background, which is what keeps a translucent terminal translucent.
         for x in 0..LABEL_COLS {
-            assert_ne!(buf[(x, 1)].style().bg, Some(band), "column {x} bled onto row 1");
+            assert_ne!(
+                buf[(x, 1)].style().bg,
+                Some(band),
+                "column {x} bled onto row 1"
+            );
         }
     }
 
@@ -2476,22 +2912,40 @@ mod tests {
         term.draw(|fr| {
             let a = fr.area();
             draw_badge_bar(fr, Rect { height: 1, ..a }, &app, false);
-            draw_mode_bar(fr, Rect { y: 1, height: 1, ..a }, &app);
+            draw_mode_bar(
+                fr,
+                Rect {
+                    y: 1,
+                    height: 1,
+                    ..a
+                },
+                &app,
+            );
         })
         .unwrap();
         let buf = term.backend().buffer().clone();
-        let row = |y: u16| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>();
+        let row = |y: u16| {
+            (0..w)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+        };
         let (strip, mode) = (row(0), row(1));
 
         // Two spaces of padding plus the one the key carries, so the gap
         // still reads as one column once the terminal draws the glyph wide.
         assert!(mode.contains(" ⌫   clear"), "{mode:?}");
-        assert!(!mode.contains("…"), "the whole list should fit at {w} cols: {mode:?}");
+        assert!(
+            !mode.contains("…"),
+            "the whole list should fit at {w} cols: {mode:?}"
+        );
         // The keys follow the mode, and help is not among them.
         assert!(mode.starts_with(" NORMAL   hjkl  move "), "{mode:?}");
         assert!(!mode.contains("help"), "{mode:?}");
         for key in ["o", "b", "f ~", "F", "t"] {
-            assert!(mode.contains(&format!(" {key}  ")), "{key} crowded: {mode:?}");
+            assert!(
+                mode.contains(&format!(" {key}  ")),
+                "{key} crowded: {mode:?}"
+            );
         }
         assert!(mode.trim_end().ends_with("faststart on"), "{mode:?}");
         // Help sits alone at the right of the badge bar.
@@ -2512,7 +2966,9 @@ mod tests {
 
         let f = FileTags {
             path: std::path::PathBuf::from("/x/Ann (Ch) - A Title #pov ★★★☆☆.mp4"),
-            atoms: [("title".to_string(), Value::text("Kept"))].into_iter().collect(),
+            atoms: [("title".to_string(), Value::text("Kept"))]
+                .into_iter()
+                .collect(),
             xmp: BTreeMap::new(),
         };
         let mut app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
@@ -2523,8 +2979,9 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|fr| draw_import(fr, fr.area(), &app)).unwrap();
         let buf = term.backend().buffer().clone();
-        let text: Vec<String> =
-            (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect();
+        let text: Vec<String> = (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect())
+            .collect();
         assert!(text[1].contains(" u  url"), "{:?}", text[1]);
         assert!(text[1].contains("no URL on this file"), "{:?}", text[1]);
         assert!(text[2].contains(" f  filename"), "{:?}", text[2]);
@@ -2534,7 +2991,11 @@ mod tests {
         assert!(text[4].contains(" l  location"), "{:?}", text[4]);
         assert!(text[4].contains("type a place to look up"), "{:?}", text[4]);
         assert!(text[5].contains("esc"), "{:?}", text[5]);
-        assert!(text[5].contains("j/k"), "the band must say how to choose: {:?}", text[5]);
+        assert!(
+            text[5].contains("j/k"),
+            "the band must say how to choose: {:?}",
+            text[5]
+        );
 
         // The caret sits on the source the cursor is on, and only on that one.
         assert!(text[2].starts_with("▸"), "{:?}", text[2]);
@@ -2542,8 +3003,9 @@ mod tests {
         app.import_pick = ImportSource::Url;
         term.draw(|fr| draw_import(fr, fr.area(), &app)).unwrap();
         let buf = term.backend().buffer().clone();
-        let moved: Vec<String> =
-            (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect();
+        let moved: Vec<String> = (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect())
+            .collect();
         assert!(moved[1].starts_with("▸"), "{:?}", moved[1]);
         assert!(!moved[2].starts_with("▸"), "{:?}", moved[2]);
         // Moving the caret must not shift the lines it moves between.
@@ -2586,16 +3048,26 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
         term.draw(|fr| draw_results(fr, fr.area(), &r)).unwrap();
         let buf = term.backend().buffer().clone();
-        let row = |y: u16| -> String { (0..60).map(|x| buf[(x, y)].symbol().to_string()).collect() };
+        let row =
+            |y: u16| -> String { (0..60).map(|x| buf[(x, y)].symbol().to_string()).collect() };
         let rows: Vec<String> = (0..12).map(row).collect();
-        let at = rows.iter().position(|l| l.contains("IMG_4855.MOV")).unwrap();
+        let at = rows
+            .iter()
+            .position(|l| l.contains("IMG_4855.MOV"))
+            .unwrap();
         // The name owns its line; the reason follows, indented, unwrapped.
         assert!(!rows[at].contains("remux"), "{:?}", rows[at]);
-        assert!(rows[at + 1].contains("the remux did not reproduce"), "{:?}", rows[at + 1]);
-        assert!(rows[at + 2].contains("lost:    data/mebx x3"), "{:?}", rows[at + 2]);
+        assert!(
+            rows[at + 1].contains("the remux did not reproduce"),
+            "{:?}",
+            rows[at + 1]
+        );
+        assert!(
+            rows[at + 2].contains("lost:    data/mebx x3"),
+            "{:?}",
+            rows[at + 2]
+        );
     }
-
-
 }
 
 #[cfg(test)]
@@ -2638,7 +3110,9 @@ mod progress_panel_tests {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|fr| draw(fr, a, None)).unwrap();
         let buf = term.backend().buffer().clone();
-        (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect()
+        (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect())
+            .collect()
     }
 
     /// Where the status went: the last row, under the mode bar -- not the
@@ -2652,7 +3126,10 @@ mod progress_panel_tests {
         let last = rows.last().unwrap();
         assert!(last.contains("1/3"), "{last:?}");
         // Said once, by the panel: not "writing", not the stage, not the name.
-        assert!(!last.contains("writing") && !last.contains("remuxing"), "{last:?}");
+        assert!(
+            !last.contains("writing") && !last.contains("remuxing"),
+            "{last:?}"
+        );
         assert!(!last.contains("clip-000"), "{last:?}");
         // Right-aligned: the left third of the line is untouched, and the
         // percentage is the last thing on the screen.
@@ -2660,8 +3137,15 @@ mod progress_panel_tests {
         // The batch, not this file: half of one file of three is 17% -- and
         // it is inside the bar, which runs on past it to the edge.
         let at = last.find("17%").expect("the bar is not the whole batch");
-        assert!(last[at + 3..].trim_end().is_empty() && last[at + 3..].len() > 4, "{last:?}");
-        assert!(!rows[0].contains("writing"), "still in the badge bar: {:?}", rows[0]);
+        assert!(
+            last[at + 3..].trim_end().is_empty() && last[at + 3..].len() > 4,
+            "{last:?}"
+        );
+        assert!(
+            !rows[0].contains("writing"),
+            "still in the badge bar: {:?}",
+            rows[0]
+        );
     }
 
     /// One file in the panel, and it is the one under the writer: its own
@@ -2674,10 +3158,16 @@ mod progress_panel_tests {
         let rows = paint(&a, 100, 30);
         let band = rows[2..8].join("\n");
         assert!(band.contains("clip-000.mov"), "{band}");
-        assert!(band.contains("remuxing"), "the stage is not in the panel: {band}");
+        assert!(
+            band.contains("remuxing"),
+            "the stage is not in the panel: {band}"
+        );
         let wide = band.matches('\u{2588}').count();
         let narrow = rows.last().unwrap().matches('\u{2588}').count();
-        assert!(wide > narrow, "panel bar {wide} is not bigger than the status bar {narrow}");
+        assert!(
+            wide > narrow,
+            "panel bar {wide} is not bigger than the status bar {narrow}"
+        );
     }
 
     /// A file still in the queue says where it stands rather than pretending
@@ -2690,7 +3180,10 @@ mod progress_panel_tests {
         a.progress = Some(progress(0, 3, "remuxing", 0.5));
         let band = paint(&a, 100, 30)[2..8].join("\n");
         assert!(band.contains("2 ahead"), "{band}");
-        assert!(!band.contains('\u{2588}'), "a waiting file must not show a filled bar: {band}");
+        assert!(
+            !band.contains('\u{2588}'),
+            "a waiting file must not show a filled bar: {band}"
+        );
         assert!(band.contains('\u{2591}'), "no empty bar: {band}");
     }
 
@@ -2703,12 +3196,21 @@ mod progress_panel_tests {
         a.progress = Some(progress(0, 6, "verifying", 0.75));
         let rows = paint(&a, 120, 30);
         let band = rows[2..8].join("\n");
-        assert!(band.contains("clip-003.mov"), "the busy file is not on top: {band}");
+        assert!(
+            band.contains("clip-003.mov"),
+            "the busy file is not on top: {band}"
+        );
         assert!(band.contains("verifying"), "{band}");
-        assert!(band.contains("waiting"), "the files behind it are not listed: {band}");
+        assert!(
+            band.contains("waiting"),
+            "the files behind it are not listed: {band}"
+        );
         // One live bar, on the busy row alone.
-        let filled: Vec<usize> =
-            rows[2..8].iter().filter(|r| r.contains('\u{2588}')).map(|r| r.len()).collect();
+        let filled: Vec<usize> = rows[2..8]
+            .iter()
+            .filter(|r| r.contains('\u{2588}'))
+            .map(|r| r.len())
+            .collect();
         assert_eq!(filled.len(), 1, "more than one row is running: {band}");
     }
 
@@ -2722,7 +3224,10 @@ mod progress_panel_tests {
         a.progress = Some(progress(0, 40, "remuxing", 0.1));
         let band = paint(&a, 120, 30)[2..9].join("\n");
         assert!(band.contains("more waiting"), "{band}");
-        assert!(band.contains("35 more") || band.contains("34 more"), "{band}");
+        assert!(
+            band.contains("35 more") || band.contains("34 more"),
+            "{band}"
+        );
     }
 
     /// `w` over a draining queue raises the confirmation for the next batch
@@ -2740,9 +3245,15 @@ mod progress_panel_tests {
             not_renamed: Vec::new(),
         });
         let rows = paint(&a, 100, 30);
-        assert!(rows.iter().any(|r| r.contains("Wrote 1 of 1")), "no dialog: {rows:?}");
+        assert!(
+            rows.iter().any(|r| r.contains("Wrote 1 of 1")),
+            "no dialog: {rows:?}"
+        );
         let last = rows.last().unwrap();
-        assert!(last.contains("1/3") && last.contains('%'), "the bar went under the dialog: {last:?}");
+        assert!(
+            last.contains("1/3") && last.contains('%'),
+            "the bar went under the dialog: {last:?}"
+        );
     }
 
     /// A long status message is cut rather than run under the bar: two
@@ -2755,7 +3266,10 @@ mod progress_panel_tests {
         a.status = "x".repeat(200);
         let rows = paint(&a, 100, 30);
         let last = rows.last().unwrap();
-        assert!(last.contains("1/2") && last.contains("25%"), "the message overran the bar: {last:?}");
+        assert!(
+            last.contains("1/2") && last.contains("25%"),
+            "the message overran the bar: {last:?}"
+        );
         assert!(last.contains('…'), "the message was not cut: {last:?}");
     }
 
@@ -2766,12 +3280,24 @@ mod progress_panel_tests {
     fn the_view_line_sits_over_the_band() {
         let mut a = app(6);
         let rows = paint(&a, 100, 30);
-        assert!(!rows[0].contains("6 files") && !rows[0].contains("custom"), "{:?}", rows[0]);
+        assert!(
+            !rows[0].contains("6 files") && !rows[0].contains("custom"),
+            "{:?}",
+            rows[0]
+        );
         assert!(rows[2].trim_start().starts_with("6 files"), "{:?}", rows[2]);
-        assert!(rows[3].contains("clip-000.mov"), "the list is not under it: {:?}", rows[3]);
+        assert!(
+            rows[3].contains("clip-000.mov"),
+            "the list is not under it: {:?}",
+            rows[3]
+        );
         a.view = Some(0);
         let rows = paint(&a, 100, 30);
-        assert!(rows[2].trim_start().starts_with("file 1 of 6"), "{:?}", rows[2]);
+        assert!(
+            rows[2].trim_start().starts_with("file 1 of 6"),
+            "{:?}",
+            rows[2]
+        );
         assert!(rows[3].contains("clip-000.mov"), "{:?}", rows[3]);
         // Too short for the band: the count goes back to the badge bar
         // rather than vanishing.
@@ -2795,8 +3321,14 @@ mod progress_panel_tests {
                 a.set_staged(i, k, Value::text(*v));
             }
         }
-        a.on_key(crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('w')));
-        assert!(a.pending.is_some(), "w did not raise the dialog: {}", a.status);
+        a.on_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('w'),
+        ));
+        assert!(
+            a.pending.is_some(),
+            "w did not raise the dialog: {}",
+            a.status
+        );
         paint(&a, 100, h)
     }
 
@@ -2804,12 +3336,23 @@ mod progress_panel_tests {
     /// and the route said once for the batch, not under every name.
     #[test]
     fn the_write_dialog_lists_each_file_once_with_its_fields() {
-        let rows = confirm(3, &[("title", "T"), ("channel", "C"), ("url", "https://x.test/v")], 40);
+        let rows = confirm(
+            3,
+            &[
+                ("title", "T"),
+                ("channel", "C"),
+                ("url", "https://x.test/v"),
+            ],
+            40,
+        );
         let named: Vec<&String> = rows.iter().filter(|r| r.contains("A Very Long")).collect();
         assert_eq!(named.len(), 3, "{rows:#?}");
         for r in &named {
             assert!(r.contains('…'), "the name was not elided: {r:?}");
-            assert!(r.contains("Title") && r.contains("Channel") && r.contains("URL"), "{r:?}");
+            assert!(
+                r.contains("Title") && r.contains("Channel") && r.contains("URL"),
+                "{r:?}"
+            );
         }
         let routes = rows.iter().filter(|r| r.contains("· 3 files")).count();
         assert_eq!(routes, 1, "the route should be said once: {rows:#?}");
@@ -2819,11 +3362,25 @@ mod progress_panel_tests {
     /// More fields than the line holds: the names that fit, then a count.
     #[test]
     fn a_long_field_list_ends_in_a_count() {
-        let edits: Vec<FileEdit> = ["Actors", "Category", "Channel", "Orientation", "Tags", "Title"]
+        let edits: Vec<FileEdit> = [
+            "Actors",
+            "Category",
+            "Channel",
+            "Orientation",
+            "Tags",
+            "Title",
+        ]
+        .iter()
+        .map(|l| FileEdit {
+            label: l.to_string(),
+            removed: false,
+            refused: false,
+        })
+        .collect();
+        let text: String = field_chips(&edits, 26)
             .iter()
-            .map(|l| FileEdit { label: l.to_string(), removed: false, refused: false })
+            .map(|s| s.content.to_string())
             .collect();
-        let text: String = field_chips(&edits, 26).iter().map(|s| s.content.to_string()).collect();
         assert!(text.starts_with("Actors, Category"), "{text:?}");
         assert!(text.ends_with(" +4") || text.ends_with(" +3"), "{text:?}");
         assert!(text.width() <= 26, "{text:?}");
@@ -2835,7 +3392,11 @@ mod progress_panel_tests {
     fn a_long_batch_is_counted_rather_than_cut_off() {
         let rows = confirm(40, &[("title", "T")], 30);
         assert!(rows.iter().any(|r| r.contains("more")), "{rows:#?}");
-        assert!(rows.iter().any(|r| r.contains("esc") && r.contains("cancel")), "{rows:#?}");
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("esc") && r.contains("cancel")),
+            "{rows:#?}"
+        );
     }
 
     /// The percentage sits inside the bar, and each of its characters takes
@@ -2845,7 +3406,11 @@ mod progress_panel_tests {
         let spans = labelled_bar(10, 0.5, "50%");
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert_eq!(text, "   50%    ");
-        assert_eq!(spans[3].style.bg, Some(t::accent()), "5 is on the filled half");
+        assert_eq!(
+            spans[3].style.bg,
+            Some(t::accent()),
+            "5 is on the filled half"
+        );
         assert_eq!(spans[5].style.bg, Some(t::rule()), "% is on the empty half");
         assert_eq!(spans[3].style.fg, Some(t::badge_fg()));
         assert_eq!(spans[5].style.fg, Some(t::value()));
@@ -2865,7 +3430,10 @@ mod progress_panel_tests {
         assert_eq!(line(&a), "9 files · 6 staged", "files, not fields");
         a.fake_queue(Some(0), &[1, 2]);
         assert_eq!(line(&a), "9 files · 1 writing · 2 queued · 3 staged");
-        assert!(!paint(&a, 120, 30)[0].contains("staged"), "still in the badge bar");
+        assert!(
+            !paint(&a, 120, 30)[0].contains("staged"),
+            "still in the badge bar"
+        );
 
         a.view = Some(0);
         assert_eq!(line(&a), "file 1 of 9 · writing");
@@ -2885,7 +3453,10 @@ mod progress_panel_tests {
         let rows = paint(&a, 100, 30);
         let all = rows.join("\n");
         assert!(!all.contains("writing"), "{all}");
-        assert!(!all.contains('\u{2588}'), "a bar with nothing to report: {all}");
+        assert!(
+            !all.contains('\u{2588}'),
+            "a bar with nothing to report: {all}"
+        );
     }
 }
 
@@ -2927,7 +3498,11 @@ mod help_tests {
     fn every_binding_is_painted_somewhere() {
         let wide = paint(160, 40, 0).join("\n");
         for k in KEYMAP.iter().flat_map(|s| s.binds.iter()) {
-            assert!(wide.contains(k.keys), "{:?} missing from the map: {wide}", k.keys);
+            assert!(
+                wide.contains(k.keys),
+                "{:?} missing from the map: {wide}",
+                k.keys
+            );
         }
         for s in KEYMAP {
             assert!(wide.contains(s.title), "{:?} heading missing", s.title);
@@ -2941,9 +3516,15 @@ mod help_tests {
     fn a_short_terminal_scrolls_and_says_so() {
         let top = paint(72, 24, 0).join("\n");
         assert!(top.contains("scroll"), "{top}");
-        assert!(!top.contains("clear the line"), "the whole map cannot fit in 24 rows");
+        assert!(
+            !top.contains("clear the line"),
+            "the whole map cannot fit in 24 rows"
+        );
         let bottom = paint(72, 24, 200).join("\n");
-        assert!(bottom.contains("clear the line"), "scrolled to the end: {bottom}");
+        assert!(
+            bottom.contains("clear the line"),
+            "scrolled to the end: {bottom}"
+        );
     }
 
     /// Where the map fits whole there is nothing to scroll, and offering the
@@ -2965,6 +3546,9 @@ mod help_tests {
         assert!(a.help);
         a.on_key(KeyEvent::from(KeyCode::Char('w')));
         assert!(!a.help);
-        assert!(a.pending.is_none(), "w over the map reached the form behind it");
+        assert!(
+            a.pending.is_none(),
+            "w over the map reached the form behind it"
+        );
     }
 }

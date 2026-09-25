@@ -93,7 +93,6 @@ pub static FIELDS: &[FieldDef] = &[
     // claims atoms that were (invariant 1).
     field!("category", "Category", Control::Enum,
         mdta: ["category"], read: ["category"], xmp: [], ilst: None),
-
     // Which version of the work this file is: the original, an excerpt, or a
     // remastered/upscaled pass over it. Called `type` on disk until now, which
     // was both too generic to read and a reserved word in every language that
@@ -106,22 +105,26 @@ pub static FIELDS: &[FieldDef] = &[
     // open fields below the rule describe that thing.
     field!("variant", "Variant", Control::Enum,
         mdta: ["variant"], read: ["variant", "type"], xmp: [], ilst: None),
-
     field!("title", "Title", Control::Text,
         mdta: ["title"], read: ["title"], xmp: ["XMP-dc:Title"], ilst: Some("\u{a9}nam")),
-
     // The third closed set, and the first that belongs to one Category alone:
     // Straight, Gay, Sapphic or Trans (`ORIENTATIONS` in config.rs). Only the adult
     // profile offers it unprompted; anywhere else it appears once it holds a
     // value, so the key is never hidden from a write (invariant 4). Its own
     // mdta key, not a tag -- a tag is free text and this is not.
     FieldDef {
-        id: "orientation", label: "Orientation", control: Control::Enum,
-        mdta: &["orientation"], read: &["orientation"], xmp: &[], ilst: None,
-        footage_only: false, clip_only: false, adult_only: true,
+        id: "orientation",
+        label: "Orientation",
+        control: Control::Enum,
+        mdta: &["orientation"],
+        read: &["orientation"],
+        xmp: &[],
+        ilst: None,
+        footage_only: false,
+        clip_only: false,
+        adult_only: true,
         numeric: false,
     },
-
     // A clip's number within the work it was cut from. Only the adult-clip
     // profile shows it unprompted; anywhere else it appears once it holds a
     // value. `track` under mdta, not the iTunes `trkn` pair -- that atom is a
@@ -131,56 +134,53 @@ pub static FIELDS: &[FieldDef] = &[
     // The one numeric field: a clip number is digits and nothing else, so a
     // digit pressed on the row is the value rather than a command.
     FieldDef {
-        id: "track", label: "Track", control: Control::Text,
-        mdta: &["track"], read: &["track"], xmp: &[], ilst: None,
-        footage_only: false, clip_only: true, adult_only: false,
+        id: "track",
+        label: "Track",
+        control: Control::Text,
+        mdta: &["track"],
+        read: &["track"],
+        xmp: &[],
+        ilst: None,
+        footage_only: false,
+        clip_only: true,
+        adult_only: false,
         numeric: true,
     },
-
     // yt-dlp writes %(cast,uploader)l to both actors and artist; rename-footage
     // writes the same people to XMP as a true list.
     field!("actors", "Actors", Control::List,
         mdta: ["actors", "artist"], read: ["actors", "cast", "artist"],
         xmp: ["XMP-iptcExt:PersonInImage"], ilst: Some("\u{a9}ART")),
-
     field!("artist", "Artist", Control::Text,
         mdta: ["artist"], read: ["artist"], xmp: [], ilst: Some("\u{a9}ART")),
-
     // Stars, 0-5. Not rtng, not iTunEXTC (DESIGN §3.3). XMP-xmp:Rating is a real
     // standard 0-5 field and is authoritative wherever it is present.
     field!("rating", "Rating", Control::Stars,
         mdta: ["rating"], read: ["rating"], xmp: ["XMP-xmp:Rating"], ilst: None),
-
     field!("description", "Description", Control::TextArea,
         mdta: ["description"], read: ["description"],
         xmp: ["XMP-dc:Description"], ilst: Some("desc")),
-
     // One field, five keys.
     field!("url", "URL", Control::Url,
         mdta: ["webpage_url", "source_url", "purl", "comment", "original_url"],
         read: ["webpage_url", "source_url", "purl", "original_url", "comment"],
         xmp: [], ilst: Some("purl")),
-
     field!("channel", "Channel", Control::Text,
         mdta: ["channel", "album_artist", "album"],
         read: ["channel", "album_artist", "album"],
         xmp: ["XMP-xmpDM:Album"], ilst: Some("aART")),
-
     field!("tags", "Tags", Control::HashTags,
         mdta: ["keywords"], read: ["keywords", "keyw"],
         xmp: ["XMP-dc:Subject"], ilst: Some("keyw")),
-
     // The real one now: an open text field for the musical or cinematic style,
     // which is what `genre`/`©gen` means to Plex, Jellyfin, Music.app and
     // Finder. No enum -- a style list is not a closed set, and the closed set
     // that used to live here moved to Category above.
     field!("genre", "Genre", Control::Text,
         mdta: ["genre"], read: ["genre"], xmp: [], ilst: Some("\u{a9}gen")),
-
     // The iTunes media kind (stik).
     field!("kind", "Kind", Control::Enum,
         mdta: ["media_type"], read: ["media_type"], xmp: [], ilst: Some("stik")),
-
     // `com.apple.quicktime.creationdate` is what an iPhone writes: a real
     // authored capture time. Without it a camera clip showed "Date —" while its
     // actual date sat in the Custom section a few rows below.
@@ -198,13 +198,10 @@ pub static FIELDS: &[FieldDef] = &[
         mdta: ["date"],
         read: ["date", "com.apple.quicktime.creationdate", "creation_time"],
         xmp: ["XMP-xmp:CreateDate"], ilst: Some("\u{a9}day")),
-
     field!("synopsis", "Synopsis", Control::TextArea,
         mdta: ["synopsis"], read: ["synopsis"], xmp: [], ilst: Some("ldes")),
-
     field!("origin", "Origin", Control::Text,
         mdta: ["origin"], read: ["origin"], xmp: [], ilst: None),
-
     // The venue: "Coro Hotel", where Location below is "Makati". The one
     // location row that is always in the form, because it is where a place
     // is typed: committing text here runs the MapKit lookup (src/geocode.rs),
@@ -213,9 +210,16 @@ pub static FIELDS: &[FieldDef] = &[
     // leaves alone -- asked what is at a coordinate, the geocoder names the
     // nearest thing it knows, not the subject. IPTC's sublocation.
     FieldDef {
-        id: "location_place", label: "Place", control: Control::Text,
-        mdta: &[], read: &[],
-        xmp: &["XMP-iptcExt:LocationCreatedSublocation"], ilst: None, footage_only: false, clip_only: false, adult_only: false,
+        id: "location_place",
+        label: "Place",
+        control: Control::Text,
+        mdta: &[],
+        read: &[],
+        xmp: &["XMP-iptcExt:LocationCreatedSublocation"],
+        ilst: None,
+        footage_only: false,
+        clip_only: false,
+        adult_only: false,
         numeric: false,
     },
     // A city name, and only that. It deliberately does NOT read the `location`
@@ -224,9 +228,16 @@ pub static FIELDS: &[FieldDef] = &[
     // would have written a place name into a coordinate. The numbers get
     // their own field below.
     FieldDef {
-        id: "location", label: "Location", control: Control::Text,
-        mdta: &[], read: &[],
-        xmp: &["XMP-iptcExt:LocationCreatedCity"], ilst: None, footage_only: true, clip_only: false, adult_only: false,
+        id: "location",
+        label: "Location",
+        control: Control::Text,
+        mdta: &[],
+        read: &[],
+        xmp: &["XMP-iptcExt:LocationCreatedCity"],
+        ilst: None,
+        footage_only: true,
+        clip_only: false,
+        adult_only: false,
         numeric: false,
     },
     // The whole ISO 6709 string, which is what the container actually holds,
@@ -240,10 +251,20 @@ pub static FIELDS: &[FieldDef] = &[
     // its own it is half a coordinate, and it shows up in the Custom group
     // alongside its longitude.
     FieldDef {
-        id: "coordinates", label: "Coordinates", control: Control::Text,
+        id: "coordinates",
+        label: "Coordinates",
+        control: Control::Text,
         mdta: &["com.apple.quicktime.location.ISO6709"],
-        read: &["com.apple.quicktime.location.iso6709", "location", "location-eng"],
-        xmp: &[], ilst: None, footage_only: true, clip_only: false, adult_only: false,
+        read: &[
+            "com.apple.quicktime.location.iso6709",
+            "location",
+            "location-eng",
+        ],
+        xmp: &[],
+        ilst: None,
+        footage_only: true,
+        clip_only: false,
+        adult_only: false,
         numeric: false,
     },
     // Write-once: the only surviving copy of a camera's own IMG_4855.MOV.
@@ -252,21 +273,42 @@ pub static FIELDS: &[FieldDef] = &[
     // the numbers it came from end up in the same structure". Editing the city
     // without seeing the province and country next to it is how they drift apart.
     FieldDef {
-        id: "location_state", label: "State", control: Control::Text,
-        mdta: &[], read: &[],
-        xmp: &["XMP-iptcExt:LocationCreatedProvinceState"], ilst: None, footage_only: true, clip_only: false, adult_only: false,
+        id: "location_state",
+        label: "State",
+        control: Control::Text,
+        mdta: &[],
+        read: &[],
+        xmp: &["XMP-iptcExt:LocationCreatedProvinceState"],
+        ilst: None,
+        footage_only: true,
+        clip_only: false,
+        adult_only: false,
         numeric: false,
     },
     FieldDef {
-        id: "location_country", label: "Country", control: Control::Text,
-        mdta: &[], read: &[],
-        xmp: &["XMP-iptcExt:LocationCreatedCountryName"], ilst: None, footage_only: true, clip_only: false, adult_only: false,
+        id: "location_country",
+        label: "Country",
+        control: Control::Text,
+        mdta: &[],
+        read: &[],
+        xmp: &["XMP-iptcExt:LocationCreatedCountryName"],
+        ilst: None,
+        footage_only: true,
+        clip_only: false,
+        adult_only: false,
         numeric: false,
     },
     FieldDef {
-        id: "preserved_name", label: "Original name", control: Control::ReadOnly,
-        mdta: &[], read: &[], xmp: &["XMP-xmpMM:PreservedFileName"],
-        ilst: None, footage_only: true, clip_only: false, adult_only: false,
+        id: "preserved_name",
+        label: "Original name",
+        control: Control::ReadOnly,
+        mdta: &[],
+        read: &[],
+        xmp: &["XMP-xmpMM:PreservedFileName"],
+        ilst: None,
+        footage_only: true,
+        clip_only: false,
+        adult_only: false,
         numeric: false,
     },
 ];
@@ -285,8 +327,17 @@ pub static FOOTAGE_HIDDEN: &[&str] = &["artist", "url", "channel", "synopsis"];
 /// then how good, then how to find it again, then where -- and only after
 /// all that the prose, which is the part most clips never get. The remaining
 /// fields keep their schema order below these.
-pub static FOOTAGE_ORDER: &[&str] =
-    &["category", "variant", "date", "actors", "rating", "tags", "location_place", "title", "description"];
+pub static FOOTAGE_ORDER: &[&str] = &[
+    "category",
+    "variant",
+    "date",
+    "actors",
+    "rating",
+    "tags",
+    "location_place",
+    "title",
+    "description",
+];
 
 /// Where a footage clip wears a different name. `actors` is the container key
 /// and stays one -- yt-dlp's cast list lands there -- but nobody filming a
@@ -317,8 +368,21 @@ pub static ADULT_HIDDEN: &[&str] = &["artist", "location_place"];
 /// qualifies it -- "this work, cut N". Kind and the footage fields are not
 /// named and keep schema order behind these.
 pub static ADULT_ORDER: &[&str] = &[
-    "category", "variant", "orientation", "title", "track", "channel", "actors", "rating",
-    "url", "tags", "date", "description", "genre", "synopsis", "origin",
+    "category",
+    "variant",
+    "orientation",
+    "title",
+    "track",
+    "channel",
+    "actors",
+    "rating",
+    "url",
+    "tags",
+    "date",
+    "description",
+    "genre",
+    "synopsis",
+    "origin",
 ];
 
 /// Position in a profile's order, or past its end for a field it does not
@@ -337,8 +401,12 @@ pub fn profile_rank(order: &[&str], id: &str) -> usize {
 /// dictionary, for the same accumulation reason, and restores it into `mvhd`
 /// afterwards (plan::junk_clears).
 pub static JUNK_KEYS: &[&str] = &[
-    "major_brand", "minor_version", "compatible_brands", "encoder",
-    "handler_name", "vendor_id",
+    "major_brand",
+    "minor_version",
+    "compatible_brands",
+    "encoder",
+    "handler_name",
+    "vendor_id",
 ];
 
 /// Every XMP tag any field claims, for splitting known from custom. Without
@@ -357,8 +425,10 @@ pub fn field_by_id(id: &str) -> Option<&'static FieldDef> {
 }
 
 pub fn claimed_atom_keys() -> Vec<&'static str> {
-    let mut v: Vec<&'static str> =
-        FIELDS.iter().flat_map(|f| f.read.iter().chain(f.mdta.iter()).copied()).collect();
+    let mut v: Vec<&'static str> = FIELDS
+        .iter()
+        .flat_map(|f| f.read.iter().chain(f.mdta.iter()).copied())
+        .collect();
     v.sort_unstable();
     v.dedup();
     v
@@ -428,9 +498,15 @@ mod tests {
             assert!(field_by_id(id).is_some(), "{id} is not a field");
         }
         for id in FOOTAGE_HIDDEN {
-            assert!(!FOOTAGE_ORDER.contains(id), "{id} is both hidden and ordered");
+            assert!(
+                !FOOTAGE_ORDER.contains(id),
+                "{id} is both hidden and ordered"
+            );
         }
-        assert_eq!(FOOTAGE_ORDER[0], "category", "the answer that picks the profile leads it");
+        assert_eq!(
+            FOOTAGE_ORDER[0], "category",
+            "the answer that picks the profile leads it"
+        );
         assert!(FOOTAGE_HIDDEN.contains(&"artist"));
     }
 
@@ -441,7 +517,11 @@ mod tests {
         assert_eq!(footage_rank("category"), 0);
         assert_eq!(footage_rank("description"), FOOTAGE_ORDER.len() - 1);
         assert!(footage_rank("genre") > footage_rank("description"));
-        assert_eq!(footage_rank("genre"), footage_rank("origin"), "ties keep schema order");
+        assert_eq!(
+            footage_rank("genre"),
+            footage_rank("origin"),
+            "ties keep schema order"
+        );
     }
 
     #[test]
@@ -462,7 +542,11 @@ mod tests {
                 // Probed names are lower-cased, so the read list holds the
                 // lower-cased spelling of a reverse-DNS key.
                 let read = k.to_ascii_lowercase();
-                assert!(f.read.contains(&read.as_str()), "{}: writes {k} but cannot read it", f.id);
+                assert!(
+                    f.read.contains(&read.as_str()),
+                    "{}: writes {k} but cannot read it",
+                    f.id
+                );
             }
         }
     }

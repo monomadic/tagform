@@ -105,13 +105,22 @@ fn run() -> Result<()> {
 
     if let Some(name) = &theme {
         if !ui::theme::set_by_name(name) {
-            bail!("unknown theme {name:?}; try one of: {}", ui::theme::names().join(", "));
+            bail!(
+                "unknown theme {name:?}; try one of: {}",
+                ui::theme::names().join(", ")
+            );
         }
     }
 
     // Takes no files: it describes the schema, not a selection.
     if print_schema {
-        println!("{}", serde_json::to_string_pretty(&Schema { fields: FIELDS, junk_keys: JUNK_KEYS })?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&Schema {
+                fields: FIELDS,
+                junk_keys: JUNK_KEYS
+            })?
+        );
         return Ok(());
     }
 
@@ -146,7 +155,11 @@ fn build_report(files: &[FileTags]) -> Report {
         }
         fields.insert(
             f.id.to_string(),
-            FieldReport { label: f.label, control: f.control, agg },
+            FieldReport {
+                label: f.label,
+                control: f.control,
+                agg,
+            },
         );
         for t in files {
             if let Some((xmp, atom)) = t.disputes(f) {

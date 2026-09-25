@@ -46,7 +46,10 @@ fn citations(text: &str, marker: &str, skip_near: &[&str]) -> Vec<(usize, String
             continue;
         }
         let rest = &text[at + marker.len()..];
-        let n: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+        let n: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
         let n = n.trim_end_matches('.');
         if !n.is_empty() {
             out.push((at, n.to_string()));
@@ -75,7 +78,10 @@ fn every_design_citation_resolves() {
     let doc_path = root().join("DESIGN.md");
     let doc = fs::read_to_string(&doc_path).expect("reading DESIGN.md");
     let defined = headings(&doc);
-    assert!(defined.len() > 15, "no headings parsed; the format must have changed");
+    assert!(
+        defined.len() > 15,
+        "no headings parsed; the format must have changed"
+    );
 
     let mut dangling: Vec<String> = Vec::new();
 

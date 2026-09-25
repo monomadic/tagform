@@ -31,9 +31,16 @@
 /// sides of the form's "did this change" comparison come through here, so a
 /// set stored out of order on disk is not an edit until something else is.
 pub fn split(line: &str) -> Vec<String> {
-    let parts: Vec<&str> =
-        if line.contains(',') { line.split(',').collect() } else { line.split_whitespace().collect() };
-    let mut tags: Vec<String> = parts.iter().map(|p| repair(p)).filter(|p| !p.is_empty()).collect();
+    let parts: Vec<&str> = if line.contains(',') {
+        line.split(',').collect()
+    } else {
+        line.split_whitespace().collect()
+    };
+    let mut tags: Vec<String> = parts
+        .iter()
+        .map(|p| repair(p))
+        .filter(|p| !p.is_empty())
+        .collect();
     tags.sort_by_cached_key(|t| t.to_lowercase());
     tags
 }
@@ -63,7 +70,10 @@ pub fn repair(raw: &str) -> String {
 
 /// Filename-hostile, and not something a repair can guess at.
 pub fn is_hostile(tag: &str) -> bool {
-    tag.starts_with('.') || tag.chars().any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
+    tag.starts_with('.')
+        || tag
+            .chars()
+            .any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
 }
 
 /// The first tag a write must refuse, if any.
@@ -74,7 +84,8 @@ pub fn first_hostile(tags: &[String]) -> Option<&str> {
 /// Why a value cannot be stored in a hashtag field — the sentence the form and
 /// the write path both say.
 pub fn why_invalid(tags: &[String]) -> Option<String> {
-    first_hostile(tags).map(|bad| format!("‘{bad}’ is not a valid tag: / \\ : and a leading . cannot be repaired"))
+    first_hostile(tags)
+        .map(|bad| format!("‘{bad}’ is not a valid tag: / \\ : and a leading . cannot be repaired"))
 }
 
 #[cfg(test)]
@@ -88,7 +99,10 @@ mod tests {
     /// The reported case: a comma-separated line whose tags contain spaces.
     #[test]
     fn spaces_inside_a_comma_separated_tag_are_repaired() {
-        assert_eq!(v("tag, tag two, tag three, another"), ["another", "tag", "tag-three", "tag-two"]);
+        assert_eq!(
+            v("tag, tag two, tag three, another"),
+            ["another", "tag", "tag-three", "tag-two"]
+        );
     }
 
     /// A line without commas is still a stream of hashtags, which is how a
@@ -109,7 +123,10 @@ mod tests {
     /// rather than ahead of every lowercase one.
     #[test]
     fn tags_come_back_sorted_ignoring_case() {
-        assert_eq!(v("zebra, Apple, mango, banana"), ["Apple", "banana", "mango", "zebra"]);
+        assert_eq!(
+            v("zebra, Apple, mango, banana"),
+            ["Apple", "banana", "mango", "zebra"]
+        );
     }
 
     /// Repair has to be a fixed point, or seeding a control from its own value

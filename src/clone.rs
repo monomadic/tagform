@@ -19,7 +19,9 @@ use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::model::schema::{claimed_atom_keys, claimed_xmp_tags, field_by_id, footage_label, FIELDS};
+use crate::model::schema::{
+    claimed_atom_keys, claimed_xmp_tags, field_by_id, footage_label, FIELDS,
+};
 use crate::model::value::Value;
 use crate::tags::plan::{self, atom_text};
 use crate::tags::probe::{probe, FileTags};
@@ -61,7 +63,9 @@ struct Opts {
 /// reports as `2`; a target that fails is reported here and counted instead,
 /// so one bad target never stops the rest.
 pub fn run(args: impl IntoIterator<Item = String>) -> Result<i32> {
-    let Some(opts) = parse(args)? else { return Ok(0) };
+    let Some(opts) = parse(args)? else {
+        return Ok(0);
+    };
 
     let src = probe(&opts.source).context("reading the source")?;
     let same = |t: &PathBuf| match (t.canonicalize(), opts.source.canonicalize()) {
@@ -77,9 +81,15 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<i32> {
         None => all.clone(),
         Some(want) => {
             for k in want.iter().filter(|k| !all.contains_key(*k)) {
-                eprintln!("tagform: the source has no {}; left alone on every target", name(k));
+                eprintln!(
+                    "tagform: the source has no {}; left alone on every target",
+                    name(k)
+                );
             }
-            all.iter().filter(|(k, _)| want.contains(k)).map(|(k, v)| (k.clone(), v.clone())).collect()
+            all.iter()
+                .filter(|(k, _)| want.contains(k))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
         }
     };
     let rows = untangle(rows, &all);
@@ -102,7 +112,11 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<i32> {
             continue;
         }
         if opts.dry_run {
-            println!("{shown}: would write via {} ({})", plan.writer.label(), plan.why);
+            println!(
+                "{shown}: would write via {} ({})",
+                plan.writer.label(),
+                plan.why
+            );
             for (k, v) in &plan.atoms {
                 println!("  {k} = {v}");
             }
@@ -125,7 +139,13 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<i32> {
             }
         }
     }
-    Ok(if failed { 1 } else if no_space { 3 } else { 0 })
+    Ok(if failed {
+        1
+    } else if no_space {
+        3
+    } else {
+        0
+    })
 }
 
 /// `None` when `--help` was asked for and printed.
@@ -170,7 +190,13 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Option<Opts>> {
         bail!("clone needs a source and at least one target\n\n{USAGE}");
     }
     let source = paths.remove(0);
-    Ok(Some(Opts { source, targets: paths, only, dry_run, faststart }))
+    Ok(Some(Opts {
+        source,
+        targets: paths,
+        only,
+        dry_run,
+        faststart,
+    }))
 }
 
 /// A name from `--only` as the row key it stands for. A field answers to its
@@ -253,14 +279,20 @@ fn source_rows(src: &FileTags) -> BTreeMap<String, Value> {
 /// actors, `artist` keeps the artist, and nothing is asked twice. `all` is
 /// every field the source carries, so an Artist left out by `--only` still
 /// owns its key and a copied Actors does not overwrite it.
-fn untangle(mut rows: BTreeMap<String, Value>, all: &BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+fn untangle(
+    mut rows: BTreeMap<String, Value>,
+    all: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
     let mut defs: Vec<_> = all.keys().filter_map(|k| field_by_id(k)).collect();
     defs.sort_by_key(|d| d.mdta.len()); // stable: schema order within a length
     let mut owner: BTreeMap<&str, String> = BTreeMap::new();
     let mut tangled = Vec::new();
     for d in defs {
         let text = atom_text(&all[d.id]);
-        if d.mdta.iter().any(|k| owner.get(k).is_some_and(|t| *t != text)) {
+        if d.mdta
+            .iter()
+            .any(|k| owner.get(k).is_some_and(|t| *t != text))
+        {
             tangled.push(d);
         } else {
             owner.extend(d.mdta.iter().map(|k| (*k, text.clone())));
@@ -287,7 +319,9 @@ fn changes(target: &FileTags, rows: &BTreeMap<String, Value>) -> BTreeMap<String
 
 /// A row key as a person would name it: the field's label, or the key itself.
 fn name(key: &str) -> String {
-    field_by_id(key).map(|f| f.label.to_string()).unwrap_or_else(|| key.to_string())
+    field_by_id(key)
+        .map(|f| f.label.to_string())
+        .unwrap_or_else(|| key.to_string())
 }
 
 #[cfg(test)]
@@ -297,8 +331,14 @@ mod tests {
     fn file(atoms: &[(&str, &str)], xmp: &[(&str, &str)]) -> FileTags {
         FileTags {
             path: PathBuf::from("/tmp/tagform-clone-test.mp4"),
-            atoms: atoms.iter().map(|(k, v)| (k.to_string(), Value::text(*v))).collect(),
-            xmp: xmp.iter().map(|(k, v)| (k.to_string(), Value::text(*v))).collect(),
+            atoms: atoms
+                .iter()
+                .map(|(k, v)| (k.to_string(), Value::text(*v)))
+                .collect(),
+            xmp: xmp
+                .iter()
+                .map(|(k, v)| (k.to_string(), Value::text(*v)))
+                .collect(),
         }
     }
     fn args(a: &[&str]) -> Vec<String> {
@@ -307,9 +347,15 @@ mod tests {
 
     #[test]
     fn only_takes_ids_and_labels_in_any_case() {
-        let o = parse(args(&["--only=Title, tags", "--only", "People,URL", "a.mp4", "b.mp4"]))
-            .unwrap()
-            .unwrap();
+        let o = parse(args(&[
+            "--only=Title, tags",
+            "--only",
+            "People,URL",
+            "a.mp4",
+            "b.mp4",
+        ]))
+        .unwrap()
+        .unwrap();
         assert_eq!(o.only.unwrap(), ["title", "tags", "actors", "url"]);
         assert_eq!(o.source, PathBuf::from("a.mp4"));
         assert_eq!(o.targets, [PathBuf::from("b.mp4")]);
@@ -317,7 +363,10 @@ mod tests {
 
     #[test]
     fn an_unknown_field_is_refused_with_the_list() {
-        let e = parse(args(&["--only=titel", "a.mp4", "b.mp4"])).err().unwrap().to_string();
+        let e = parse(args(&["--only=titel", "a.mp4", "b.mp4"]))
+            .err()
+            .unwrap()
+            .to_string();
         assert!(e.contains("titel") && e.contains("title"), "{e}");
     }
 
@@ -329,7 +378,10 @@ mod tests {
     #[test]
     fn device_keys_are_refused_by_name_and_skipped_by_default() {
         assert!(resolve("custom:com.apple.quicktime.make").is_err());
-        let src = file(&[("com.apple.quicktime.make", "Apple"), ("yt_dlp_id", "abc")], &[]);
+        let src = file(
+            &[("com.apple.quicktime.make", "Apple"), ("yt_dlp_id", "abc")],
+            &[],
+        );
         let rows = source_rows(&src);
         assert!(rows.contains_key("custom:yt_dlp_id"));
         assert!(!rows.keys().any(|k| k.contains("quicktime")));
@@ -339,14 +391,27 @@ mod tests {
     #[test]
     fn source_rows_are_fields_then_unclaimed_keys() {
         let src = file(
-            &[("title", "T"), ("keywords", "a, b"), ("sound_designer", "S")],
-            &[("XMP-iptcExt:LocationCreatedCity", "Makati"), ("XMP-exif:GPSLatitude", "14.5")],
+            &[
+                ("title", "T"),
+                ("keywords", "a, b"),
+                ("sound_designer", "S"),
+            ],
+            &[
+                ("XMP-iptcExt:LocationCreatedCity", "Makati"),
+                ("XMP-exif:GPSLatitude", "14.5"),
+            ],
         );
         let rows = source_rows(&src);
         let keys: Vec<&str> = rows.keys().map(String::as_str).collect();
         assert_eq!(
             keys,
-            ["custom:sound_designer", "location", "tags", "title", "xmp:XMP-exif:GPSLatitude"]
+            [
+                "custom:sound_designer",
+                "location",
+                "tags",
+                "title",
+                "xmp:XMP-exif:GPSLatitude"
+            ]
         );
         assert_eq!(rows["tags"], Value::List(vec!["a".into(), "b".into()]));
     }
@@ -359,8 +424,14 @@ mod tests {
         let all = source_rows(&src);
         let rows = untangle(all.clone(), &all);
         assert_eq!(rows.get("artist"), Some(&Value::text("Someone Else")));
-        assert!(!rows.contains_key("actors"), "Actors would ask `artist` for a second value");
-        assert_eq!(rows.get("custom:actors"), Some(&Value::List(vec!["One".into(), "Two".into()])));
+        assert!(
+            !rows.contains_key("actors"),
+            "Actors would ask `artist` for a second value"
+        );
+        assert_eq!(
+            rows.get("custom:actors"),
+            Some(&Value::List(vec!["One".into(), "Two".into()]))
+        );
 
         let p = plan::build(&file(&[], &[]), &rows, false);
         let artist: Vec<_> = p.atoms.iter().filter(|(k, _)| k == "artist").collect();
@@ -372,7 +443,11 @@ mod tests {
     fn untangling_sees_fields_left_out_by_only() {
         let src = file(&[("actors", "One"), ("artist", "Someone Else")], &[]);
         let all = source_rows(&src);
-        let only: BTreeMap<_, _> = all.iter().filter(|(k, _)| *k == "actors").map(|(k, v)| (k.clone(), v.clone())).collect();
+        let only: BTreeMap<_, _> = all
+            .iter()
+            .filter(|(k, _)| *k == "actors")
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         let rows = untangle(only, &all);
         assert_eq!(rows.keys().collect::<Vec<_>>(), ["custom:actors"]);
     }

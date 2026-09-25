@@ -98,7 +98,12 @@ pub fn key_width(keys: &str) -> usize {
 /// measure -- so the key column is padded to the widest key in the whole table
 /// and every section lines up with every other.
 pub fn usage() -> String {
-    let width = KEYMAP.iter().flat_map(|s| s.binds.iter()).map(|k| key_width(k.keys)).max().unwrap_or(0);
+    let width = KEYMAP
+        .iter()
+        .flat_map(|s| s.binds.iter())
+        .map(|k| key_width(k.keys))
+        .max()
+        .unwrap_or(0);
     let mut out = String::new();
     for s in KEYMAP {
         out.push_str(&format!("\n  {} — {}\n", s.title, s.note));
@@ -118,7 +123,10 @@ mod tests {
     /// list it would leave the overlay undiscoverable from inside itself.
     #[test]
     fn the_help_key_is_in_the_map() {
-        assert!(KEYMAP.iter().flat_map(|s| s.binds.iter()).any(|k| k.keys == "?"));
+        assert!(KEYMAP
+            .iter()
+            .flat_map(|s| s.binds.iter())
+            .any(|k| k.keys == "?"));
     }
 
     #[test]

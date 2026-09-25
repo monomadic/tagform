@@ -46,7 +46,10 @@ const EMPTY_STAR: char = '☆';
 
 /// The field values a path's filename yields, in form order.
 pub fn parse_path(path: &Path) -> Vec<(&'static str, Value)> {
-    let stem = path.file_stem().map(|s| s.to_string_lossy()).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy())
+        .unwrap_or_default();
     parse(&stem)
 }
 
@@ -61,7 +64,10 @@ pub fn parse(stem: &str) -> Vec<(&'static str, Value)> {
     if rest.chars().any(|c| c == STAR || c == EMPTY_STAR) {
         let n = rest.chars().filter(|&c| c == STAR).count().min(5) as u8;
         rating = Some(n);
-        rest = rest.chars().filter(|&c| c != STAR && c != EMPTY_STAR).collect();
+        rest = rest
+            .chars()
+            .filter(|&c| c != STAR && c != EMPTY_STAR)
+            .collect();
     }
 
     // Hashtags: any whitespace-delimited token opening with `#`. Repaired
@@ -150,18 +156,37 @@ fn strip_meta(s: &str) -> String {
 /// control accepts without a warning, and what follows it.
 fn take_date(s: &str) -> Option<(String, &str)> {
     let b = s.as_bytes();
-    let digits = |from: usize, n: usize| b.len() >= from + n && b[from..from + n].iter().all(u8::is_ascii_digit);
-    if !(digits(0, 4) && b.get(4) == Some(&b'-') && digits(5, 2) && b.get(7) == Some(&b'-') && digits(8, 2)) {
+    let digits = |from: usize, n: usize| {
+        b.len() >= from + n && b[from..from + n].iter().all(u8::is_ascii_digit)
+    };
+    if !(digits(0, 4)
+        && b.get(4) == Some(&b'-')
+        && digits(5, 2)
+        && b.get(7) == Some(&b'-')
+        && digits(8, 2))
+    {
         return None;
     }
     let date = &s[..10];
     // rename-footage: `2024-05-01--13-22-08`.
-    if s[10..].starts_with("--") && digits(12, 2) && b.get(14) == Some(&b'-') && digits(15, 2) && b.get(17) == Some(&b'-') && digits(18, 2) {
+    if s[10..].starts_with("--")
+        && digits(12, 2)
+        && b.get(14) == Some(&b'-')
+        && digits(15, 2)
+        && b.get(17) == Some(&b'-')
+        && digits(18, 2)
+    {
         let stamp = format!("{date}T{}:{}:{}", &s[12..14], &s[15..17], &s[18..20]);
         return Some((stamp, s[20..].trim_start()));
     }
     // ISO: `2024-05-01T13:22:08`.
-    if b.get(10) == Some(&b'T') && digits(11, 2) && b.get(13) == Some(&b':') && digits(14, 2) && b.get(16) == Some(&b':') && digits(17, 2) {
+    if b.get(10) == Some(&b'T')
+        && digits(11, 2)
+        && b.get(13) == Some(&b':')
+        && digits(14, 2)
+        && b.get(16) == Some(&b':')
+        && digits(17, 2)
+    {
         return Some((s[..19].to_string(), s[19..].trim_start()));
     }
     // A bare date must end at a word boundary: `2024-05-01x` is not a date.
@@ -191,7 +216,6 @@ fn split_people(p: &str) -> (Vec<String>, Option<String>) {
         .collect();
     (actors, channel)
 }
-
 
 /// A digit run longer than this is not a clip number. Four digits is where the
 /// numbers that are *never* a track live -- `2019`, `1080`, `2160` -- and
@@ -241,7 +265,9 @@ pub fn track_sequence(stems: &[&str]) -> Option<Vec<u32>> {
     let mut found: Vec<Vec<u32>> = Vec::new();
     for slot in 0..runs.iter().map(Vec::len).max()? {
         for from_end in [false, true] {
-            let Some(vals) = at_slot(&runs, slot, from_end) else { continue };
+            let Some(vals) = at_slot(&runs, slot, from_end) else {
+                continue;
+            };
             if !climbs(&vals, &given) && !climbs(&vals, &natural) {
                 continue;
             }
@@ -262,7 +288,11 @@ pub fn track_sequence(stems: &[&str]) -> Option<Vec<u32>> {
 fn at_slot(runs: &[Vec<u32>], slot: usize, from_end: bool) -> Option<Vec<u32>> {
     runs.iter()
         .map(|r| {
-            let at = if from_end { r.len().checked_sub(slot + 1)? } else { slot };
+            let at = if from_end {
+                r.len().checked_sub(slot + 1)?
+            } else {
+                slot
+            };
             r.get(at).copied()
         })
         .collect()
@@ -317,7 +347,10 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 /// of forty digits is not a number anyone is sequencing by, and only its
 /// relative order matters here.
 fn take_number(s: &[u8]) -> (u128, &[u8]) {
-    let end = s.iter().position(|b| !b.is_ascii_digit()).unwrap_or(s.len());
+    let end = s
+        .iter()
+        .position(|b| !b.is_ascii_digit())
+        .unwrap_or(s.len());
     let n = s[..end].iter().fold(0u128, |acc, b| {
         acc.saturating_mul(10).saturating_add(u128::from(b - b'0'))
     });
@@ -368,7 +401,10 @@ mod tests {
             assert_eq!(text(&out, "title").as_deref(), Some("T"), "{stem}");
             assert_eq!(list(&out, "tags"), ["a"], "{stem}");
             assert_eq!(text(&out, "rating").as_deref(), Some("3"), "{stem}");
-            assert!(!out.iter().any(|(_, v)| format!("{v:?}").contains("1080p")), "{stem}");
+            assert!(
+                !out.iter().any(|(_, v)| format!("{v:?}").contains("1080p")),
+                "{stem}"
+            );
         }
     }
 
@@ -449,7 +485,10 @@ mod tests {
         // its `@`-words.
         let out = parse("Ann - see you @ 7 @g @Gmail");
         assert!(get(&out, "orientation").is_none());
-        assert_eq!(text(&out, "title").as_deref(), Some("see you @ 7 @g @Gmail"));
+        assert_eq!(
+            text(&out, "title").as_deref(),
+            Some("see you @ 7 @g @Gmail")
+        );
     }
 
     #[test]
@@ -475,18 +514,30 @@ mod tests {
     /// a name with an extra number in front of the sequence still lines up.
     #[test]
     fn the_slot_is_found_from_either_end() {
-        assert_eq!(track_sequence(&["s01 clip 1", "clip 2", "s01 clip 3"]), Some(vec![1, 2, 3]));
+        assert_eq!(
+            track_sequence(&["s01 clip 1", "clip 2", "s01 clip 3"]),
+            Some(vec![1, 2, 3])
+        );
     }
 
     /// Natural order, not byte order: unpadded numbers run 9, 10, 11 rather
     /// than 10, 11, 9, and byte order would read that as decreasing.
     #[test]
     fn an_unpadded_sequence_is_read_in_natural_order() {
-        assert_eq!(track_sequence(&["clip 9", "clip 10", "clip 11"]), Some(vec![9, 10, 11]));
+        assert_eq!(
+            track_sequence(&["clip 9", "clip 10", "clip 11"]),
+            Some(vec![9, 10, 11])
+        );
         // Whatever order the caller passes them in: each name still gives its
         // own number, and only which slot is the sequence was in question.
-        assert_eq!(track_sequence(&["clip 11", "clip 9", "clip 10"]), Some(vec![11, 9, 10]));
-        assert_eq!(track_sequence(&["clip 03", "clip 02", "clip 01"]), Some(vec![3, 2, 1]));
+        assert_eq!(
+            track_sequence(&["clip 11", "clip 9", "clip 10"]),
+            Some(vec![11, 9, 10])
+        );
+        assert_eq!(
+            track_sequence(&["clip 03", "clip 02", "clip 01"]),
+            Some(vec![3, 2, 1])
+        );
     }
 
     /// What must not become a track: a number that never moves, a number

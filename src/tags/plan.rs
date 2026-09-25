@@ -58,7 +58,10 @@ pub const EXIFTOOL_KEY_NAMES: &[(&str, &str)] = &[
 pub const REWRITE_ONLY_KEYS: &[&str] = &["com.apple.quicktime.location.ISO6709"];
 
 pub fn exiftool_name(key: &str) -> Option<&'static str> {
-    EXIFTOOL_KEY_NAMES.iter().find(|(k, _)| *k == key).map(|(_, n)| *n)
+    EXIFTOOL_KEY_NAMES
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, n)| *n)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,11 +126,7 @@ fn xmp_values(v: &Value) -> Vec<String> {
     }
 }
 
-pub fn build(
-    file: &FileTags,
-    staged: &BTreeMap<String, Value>,
-    want_faststart: bool,
-) -> FilePlan {
+pub fn build(file: &FileTags, staged: &BTreeMap<String, Value>, want_faststart: bool) -> FilePlan {
     let mut atoms: Vec<(String, String)> = Vec::new();
     let mut xmp: Vec<(String, Vec<String>)> = Vec::new();
 
@@ -143,7 +142,9 @@ pub fn build(
             xmp.push((tag.to_string(), xmp_values(value)));
             continue;
         }
-        let Some(def) = field_by_id(row_key) else { continue };
+        let Some(def) = field_by_id(row_key) else {
+            continue;
+        };
         for k in def.mdta {
             atoms.push((k.to_string(), atom_text(value)));
         }
@@ -168,9 +169,12 @@ pub fn build(
     let layout = crate::tags::atoms::layout(&file.path);
     // Probed names are lower-cased; a reverse-DNS key is planned in its own
     // case, and must not read as new on a file that already has it.
-    let adds_new_key = atoms.iter().any(|(k, _)| !file.atoms.contains_key(&k.to_ascii_lowercase()));
-    let unwritable_in_place =
-        atoms.iter().any(|(k, _)| exiftool_name(k).is_none() || REWRITE_ONLY_KEYS.contains(&k.as_str()));
+    let adds_new_key = atoms
+        .iter()
+        .any(|(k, _)| !file.atoms.contains_key(&k.to_ascii_lowercase()));
+    let unwritable_in_place = atoms
+        .iter()
+        .any(|(k, _)| exiftool_name(k).is_none() || REWRITE_ONLY_KEYS.contains(&k.as_str()));
     let has_xmp = !file.xmp.is_empty();
     // Only a remux can move the moov atom.
     let needs_remux_for_faststart = want_faststart && !layout.is_faststart();
@@ -178,7 +182,10 @@ pub fn build(
     // The native writer handles everything the remux was for, without the two
     // losses that made the remux a last resort. It declines some layouts
     // (DESIGN §9.5), and ffmpeg stays the fallback for those.
-    let native = crate::tags::native::survey(&file.path).ok().flatten().is_some();
+    let native = crate::tags::native::survey(&file.path)
+        .ok()
+        .flatten()
+        .is_some();
 
     let (writer, why) = if !adds_new_key && !unwritable_in_place && !needs_remux_for_faststart {
         (Writer::Exiftool, "no new keys; keeps XMP, inode and xattrs")
@@ -254,12 +261,21 @@ mod tests {
     fn file(atoms: &[(&str, &str)], xmp: &[(&str, &str)]) -> FileTags {
         FileTags {
             path: PathBuf::from("/tmp/tagform-plan-test.mp4"),
-            atoms: atoms.iter().map(|(k, v)| (k.to_string(), Value::text(*v))).collect(),
-            xmp: xmp.iter().map(|(k, v)| (k.to_string(), Value::text(*v))).collect(),
+            atoms: atoms
+                .iter()
+                .map(|(k, v)| (k.to_string(), Value::text(*v)))
+                .collect(),
+            xmp: xmp
+                .iter()
+                .map(|(k, v)| (k.to_string(), Value::text(*v)))
+                .collect(),
         }
     }
     fn staged(pairs: &[(&str, Value)]) -> BTreeMap<String, Value> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect()
     }
 
     /// The shipped config and the name table are two halves of one fact, in
@@ -281,12 +297,16 @@ mod tests {
         let mut declared = 0;
         for line in cfg.lines().map(str::trim) {
             // `key => { Name => 'Tag', Writable => 'string' },`
-            let Some((key, rest)) = line.split_once("=>") else { continue };
+            let Some((key, rest)) = line.split_once("=>") else {
+                continue;
+            };
             let key = key.trim();
             if key.is_empty() || !key.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
                 continue;
             }
-            let Some(name) = rest.split('\'').nth(1) else { continue };
+            let Some(name) = rest.split('\'').nth(1) else {
+                continue;
+            };
             declared += 1;
             assert_eq!(
                 exiftool_name(key),
@@ -296,7 +316,10 @@ mod tests {
                 exiftool_name(key)
             );
         }
-        assert!(declared > 10, "parsed only {declared} declarations; the config format must have changed");
+        assert!(
+            declared > 10,
+            "parsed only {declared} declarations; the config format must have changed"
+        );
     }
 
     #[test]
@@ -363,7 +386,10 @@ mod tests {
         let f = file(&[("title", "old")], &[]);
         let p = build(
             &f,
-            &staged(&[("genre", Value::text("Pop")), ("location_place", Value::text("Coro Hotel"))]),
+            &staged(&[
+                ("genre", Value::text("Pop")),
+                ("location_place", Value::text("Coro Hotel")),
+            ]),
             false,
         );
         assert!(!p.xmp.is_empty());
@@ -374,12 +400,29 @@ mod tests {
     /// sprout an XMP block that then shadows its atoms on every later read.
     #[test]
     fn xmp_is_updated_only_when_present() {
-        let with = file(&[("actors", "a")], &[("XMP-iptcExt:PersonInImage", "Alice")]);
-        let p = build(&with, &staged(&[("actors", Value::List(vec!["Bob".into()]))]), false);
-        assert_eq!(p.xmp, vec![("XMP-iptcExt:PersonInImage".to_string(), vec!["Bob".to_string()])]);
+        let with = file(
+            &[("actors", "a")],
+            &[("XMP-iptcExt:PersonInImage", "Alice")],
+        );
+        let p = build(
+            &with,
+            &staged(&[("actors", Value::List(vec!["Bob".into()]))]),
+            false,
+        );
+        assert_eq!(
+            p.xmp,
+            vec![(
+                "XMP-iptcExt:PersonInImage".to_string(),
+                vec!["Bob".to_string()]
+            )]
+        );
 
         let without = file(&[("actors", "a")], &[]);
-        let p2 = build(&without, &staged(&[("actors", Value::List(vec!["Bob".into()]))]), false);
+        let p2 = build(
+            &without,
+            &staged(&[("actors", Value::List(vec!["Bob".into()]))]),
+            false,
+        );
         assert!(p2.xmp.is_empty());
     }
 
@@ -412,12 +455,24 @@ mod tests {
     #[test]
     fn the_url_field_writes_every_alias() {
         let f = file(
-            &[("webpage_url", "a"), ("source_url", "a"), ("purl", "a"), ("comment", "a"), ("original_url", "a")],
+            &[
+                ("webpage_url", "a"),
+                ("source_url", "a"),
+                ("purl", "a"),
+                ("comment", "a"),
+                ("original_url", "a"),
+            ],
             &[],
         );
         let p = build(&f, &staged(&[("url", Value::text("https://x/y"))]), false);
         let keys: Vec<&str> = p.atoms.iter().map(|(k, _)| k.as_str()).collect();
-        for expected in ["webpage_url", "source_url", "purl", "comment", "original_url"] {
+        for expected in [
+            "webpage_url",
+            "source_url",
+            "purl",
+            "comment",
+            "original_url",
+        ] {
             assert!(keys.contains(&expected), "missing {expected}");
         }
         assert_eq!(p.writer, Writer::Exiftool);
@@ -431,19 +486,31 @@ mod tests {
         let p = build(&f, &staged(&[("location", Value::text("Berlin"))]), false);
         assert_eq!(
             p.xmp,
-            vec![("XMP-iptcExt:LocationCreatedCity".to_string(), vec!["Berlin".to_string()])]
+            vec![(
+                "XMP-iptcExt:LocationCreatedCity".to_string(),
+                vec!["Berlin".to_string()]
+            )]
         );
-        assert!(p.atoms.is_empty(), "a place name must never be written as an atom");
+        assert!(
+            p.atoms.is_empty(),
+            "a place name must never be written as an atom"
+        );
     }
 
     /// An unclaimed XMP tag edited in the Custom section goes back to XMP, not
     /// to an atom of the same name.
     #[test]
     fn an_unclaimed_xmp_row_writes_xmp() {
-        let f = file(&[], &[("XMP-iptcExt:LocationCreatedCountryName", "Thailand")]);
+        let f = file(
+            &[],
+            &[("XMP-iptcExt:LocationCreatedCountryName", "Thailand")],
+        );
         let p = build(
             &f,
-            &staged(&[("xmp:XMP-iptcExt:LocationCreatedCountryName", Value::text("Germany"))]),
+            &staged(&[(
+                "xmp:XMP-iptcExt:LocationCreatedCountryName",
+                Value::text("Germany"),
+            )]),
             false,
         );
         assert!(p.atoms.is_empty());
@@ -460,16 +527,24 @@ mod tests {
     #[test]
     fn junk_is_always_cleared_on_a_remux() {
         let clears = junk_clears();
-        assert!(clears.iter().any(|(k, v)| k == "major_brand" && v.is_empty()));
+        assert!(clears
+            .iter()
+            .any(|(k, v)| k == "major_brand" && v.is_empty()));
         assert!(clears.iter().any(|(k, _)| k == "compatible_brands"));
         // Not junk, but cleared so it is not promoted; restored by the remux.
-        assert!(clears.iter().any(|(k, v)| k == "creation_time" && v.is_empty()));
+        assert!(clears
+            .iter()
+            .any(|(k, v)| k == "creation_time" && v.is_empty()));
     }
 
     #[test]
     fn custom_keys_pass_straight_through() {
         let f = file(&[("yt_dlp_id", "abc")], &[]);
-        let p = build(&f, &staged(&[("custom:yt_dlp_id", Value::text("xyz"))]), false);
+        let p = build(
+            &f,
+            &staged(&[("custom:yt_dlp_id", Value::text("xyz"))]),
+            false,
+        );
         assert_eq!(p.atoms, vec![("yt_dlp_id".to_string(), "xyz".to_string())]);
         // Not in the exiftool config, so it cannot go in place.
         assert_eq!(p.writer, Writer::Ffmpeg);

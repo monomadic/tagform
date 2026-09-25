@@ -75,7 +75,11 @@ fn scan(path: &Path) -> std::io::Result<Layout> {
         match kind {
             b"moof" => return Ok(Layout::Fragmented),
             b"mdat" => {
-                return Ok(if seen_moov { Layout::FastStart } else { Layout::MoovAtEnd })
+                return Ok(if seen_moov {
+                    Layout::FastStart
+                } else {
+                    Layout::MoovAtEnd
+                })
             }
             b"moov" => seen_moov = true,
             _ => {}
@@ -116,8 +120,12 @@ pub fn times(path: &Path) -> Option<Times> {
 /// time is put back here, exactly as ffmpeg itself would have set it.
 pub fn restore_times(path: &Path, t: Times) -> anyhow::Result<()> {
     use std::io::Write;
-    let (start, moov) = read_moov(path)?
-        .ok_or_else(|| anyhow::anyhow!("{}: no moov to restore the capture time into", path.display()))?;
+    let (start, moov) = read_moov(path)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}: no moov to restore the capture time into",
+            path.display()
+        )
+    })?;
     let mut patches: Vec<(u64, Vec<u8>)> = Vec::new();
     walk(&moov, 0, moov.len(), &mut |kind, off, size| {
         if matches!(kind, b"mvhd" | b"tkhd" | b"mdhd") {
@@ -183,9 +191,10 @@ fn read_moov(path: &Path) -> std::io::Result<Option<(u64, Vec<u8>)>> {
 fn walk(buf: &[u8], mut off: usize, end: usize, f: &mut dyn FnMut(&[u8], usize, usize)) {
     while off + 8 <= end {
         let (size, hlen) = match u32::from_be_bytes(buf[off..off + 4].try_into().unwrap()) {
-            1 if off + 16 <= end => {
-                (u64::from_be_bytes(buf[off + 8..off + 16].try_into().unwrap()) as usize, 16)
-            }
+            1 if off + 16 <= end => (
+                u64::from_be_bytes(buf[off + 8..off + 16].try_into().unwrap()) as usize,
+                16,
+            ),
             0 => (end - off, 8),
             n => (n as usize, 8),
         };
@@ -269,7 +278,10 @@ mod tests {
 
     #[test]
     fn a_missing_file_is_inconclusive_not_a_panic() {
-        assert_eq!(layout(Path::new("/nonexistent/nope.mp4")), Layout::Inconclusive);
+        assert_eq!(
+            layout(Path::new("/nonexistent/nope.mp4")),
+            Layout::Inconclusive
+        );
     }
 
     #[test]
@@ -300,8 +312,11 @@ mod tests {
     #[test]
     fn any_moof_is_fragmented() {
         let p = std::env::temp_dir().join("tagform-atoms-frag.bin");
-        std::fs::write(&p, chain(&[(b"ftyp", 8), (b"moov", 16), (b"moof", 16), (b"mdat", 32)]))
-            .unwrap();
+        std::fs::write(
+            &p,
+            chain(&[(b"ftyp", 8), (b"moov", 16), (b"moof", 16), (b"mdat", 32)]),
+        )
+        .unwrap();
         assert_eq!(layout(&p), Layout::Fragmented);
         std::fs::remove_file(&p).ok();
     }
@@ -346,11 +361,21 @@ mod tests {
         file.extend_from_slice(&boxed(b"moov", &moov));
         file.extend_from_slice(&boxed(b"mdat", &[0; 8]));
 
-        let p = std::env::temp_dir().join(format!("tagform-atoms-times-{}.bin", std::process::id()));
+        let p =
+            std::env::temp_dir().join(format!("tagform-atoms-times-{}.bin", std::process::id()));
         std::fs::write(&p, &file).unwrap();
-        assert_eq!(times(&p), Some(Times { creation: 0xAAAAAAAA, modification: 0xAAAAAAAA }));
+        assert_eq!(
+            times(&p),
+            Some(Times {
+                creation: 0xAAAAAAAA,
+                modification: 0xAAAAAAAA
+            })
+        );
 
-        let t = Times { creation: 3_790_000_739, modification: 3_790_000_740 };
+        let t = Times {
+            creation: 3_790_000_739,
+            modification: 3_790_000_740,
+        };
         restore_times(&p, t).unwrap();
         assert_eq!(times(&p), Some(t));
 

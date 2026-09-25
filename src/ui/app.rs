@@ -22,14 +22,14 @@ use crate::model::schema::{
     FOOTAGE_HIDDEN,
 };
 use crate::model::tag;
-use crate::ui::edit::{Editor, Opt, Reaction, Validation};
-use crate::ui::theme;
 use crate::model::value::{Agg, Value};
 use crate::tags::plan::{self, FilePlan};
 use crate::tags::probe::{self, FileTags};
 use crate::tags::rename::{self, Outcome};
 use crate::tags::write;
 use crate::thumb::{self, MediaInfo};
+use crate::ui::edit::{Editor, Opt, Reaction, Validation};
+use crate::ui::theme;
 
 /// One line in the form. A schema field, or -- below them -- a key found on
 /// disk that no field claims. Custom keys get rows of their own so that an
@@ -219,15 +219,19 @@ fn majority(values: &[Option<Value>], opts: &[Opt]) -> Option<String> {
 }
 
 fn file_name(p: &std::path::Path) -> String {
-    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// The three extensions the format supports (README, DESIGN §1): `.mp4`,
 /// `.m4v` and `.mov`, matched case-insensitively.
 fn is_video(p: &std::path::Path) -> bool {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("mp4") || e.eq_ignore_ascii_case("m4v") || e.eq_ignore_ascii_case("mov"))
+    p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        e.eq_ignore_ascii_case("mp4")
+            || e.eq_ignore_ascii_case("m4v")
+            || e.eq_ignore_ascii_case("mov")
+    })
 }
 
 /// Where the running write has got to. One file at a time, so this is a
@@ -349,7 +353,12 @@ pub enum Msg {
     /// it finishes rather than at the end of a forty-file run.
     /// The last field is the rename that followed a flagged write, if one
     /// was asked for.
-    WroteFile(usize, Option<Box<FileTags>>, Result<(), String>, Option<Result<Outcome, String>>),
+    WroteFile(
+        usize,
+        Option<Box<FileTags>>,
+        Result<(), String>,
+        Option<Result<Outcome, String>>,
+    ),
     /// The queue ran dry: the whole run's outcome.
     Wrote(Box<WriteResults>),
     /// One outcome per file a `rename-video` run was given, by file index.
@@ -382,7 +391,11 @@ pub enum ImportSource {
 impl ImportSource {
     /// The sources in the order the band paints them, which is the order the
     /// cursor walks.
-    pub const ALL: [ImportSource; 3] = [ImportSource::Url, ImportSource::Filename, ImportSource::Location];
+    pub const ALL: [ImportSource; 3] = [
+        ImportSource::Url,
+        ImportSource::Filename,
+        ImportSource::Location,
+    ];
 }
 
 /// The place lookup, after `i l` (§5.5). Modal like the import menu it came
@@ -395,7 +408,11 @@ pub enum Locate {
     /// The helper is running. Esc here drops the answer when it comes.
     Looking,
     /// More than one hit: the cursor is on one of them.
-    Pick { hits: Vec<Hit>, at: usize, named: bool },
+    Pick {
+        hits: Vec<Hit>,
+        at: usize,
+        named: bool,
+    },
 }
 
 /// The import menu's preview of one file: what each source has to offer.
@@ -625,8 +642,11 @@ impl App {
     /// Fields rather than file/field pairs, because "3 staged" should not
     /// become "12 staged" for the same three edits across four files.
     pub fn staged_count(&self) -> usize {
-        let mut keys: Vec<&str> =
-            self.staged.values().flat_map(|m| m.keys().map(String::as_str)).collect();
+        let mut keys: Vec<&str> = self
+            .staged
+            .values()
+            .flat_map(|m| m.keys().map(String::as_str))
+            .collect();
         keys.sort_unstable();
         keys.dedup();
         keys.len()
@@ -660,7 +680,11 @@ impl App {
             }
         };
         paths.sort();
-        let files: Vec<FileTags> = match paths.iter().map(|p| probe::probe(p)).collect::<Result<Vec<FileTags>>>() {
+        let files: Vec<FileTags> = match paths
+            .iter()
+            .map(|p| probe::probe(p))
+            .collect::<Result<Vec<FileTags>>>()
+        {
             Ok(files) => files,
             Err(e) => {
                 self.status = format!("{e:#}");
@@ -721,8 +745,7 @@ impl App {
                     if self.thumb_for == Some(i) {
                         use image::GenericImageView;
                         let (w, h) = img.dimensions();
-                        self.thumb_aspect =
-                            (w > 0 && h > 0).then(|| w as f32 / h as f32);
+                        self.thumb_aspect = (w > 0 && h > 0).then(|| w as f32 / h as f32);
                         self.thumb_image = Some(*img);
                     }
                 }
@@ -766,7 +789,9 @@ impl App {
     /// anywhere. Order is first-seen; duplicates are folded case-insensitively
     /// so "Alice" and "alice" do not both survive.
     fn merge_focused(&mut self) {
-        let Some(row) = self.rows.get(self.focus) else { return };
+        let Some(row) = self.rows.get(self.focus) else {
+            return;
+        };
         if !matches!(row.control, Control::List | Control::HashTags) {
             self.status = "merge applies to list fields".into();
             return;
@@ -783,7 +808,10 @@ impl App {
         let key = row.key.clone();
         let n = merged.len();
         self.stage(key, Value::List(merged));
-        self.status = format!("merged {n} value{} across the selection", if n == 1 { "" } else { "s" });
+        self.status = format!(
+            "merged {n} value{} across the selection",
+            if n == 1 { "" } else { "s" }
+        );
     }
 
     /// Every staged edit, for the confirmation dialog.
@@ -792,8 +820,11 @@ impl App {
     /// writes every edit, including one made on a file that has since been
     /// walked away from, and the dialog is the last chance to see that.
     pub fn staged_summary(&self) -> Vec<StagedEdit> {
-        let mut keys: Vec<&str> =
-            self.staged.values().flat_map(|m| m.keys().map(String::as_str)).collect();
+        let mut keys: Vec<&str> = self
+            .staged
+            .values()
+            .flat_map(|m| m.keys().map(String::as_str))
+            .collect();
         keys.sort_unstable();
         keys.dedup();
         keys.into_iter()
@@ -836,7 +867,9 @@ impl App {
     /// this says which of them land on which file -- in a batch they need not
     /// be the same.
     pub fn file_edits(&self, path: &std::path::Path) -> Vec<FileEdit> {
-        let Some(i) = self.files.iter().position(|f| f.path == path) else { return Vec::new() };
+        let Some(i) = self.files.iter().position(|f| f.path == path) else {
+            return Vec::new();
+        };
         self.staged
             .get(&i)
             .map(|edits| {
@@ -903,7 +936,10 @@ impl App {
         // first reason. Naming every reason would bury the field names, and
         // the field is what the user has to go and fix.
         let refused_note = why.map(|why| {
-            format!("{} not written · {why}", refused.into_iter().collect::<Vec<_>>().join(", "))
+            format!(
+                "{} not written · {why}",
+                refused.into_iter().collect::<Vec<_>>().join(", ")
+            )
         });
         if plans.is_empty() {
             self.status = refused_note.unwrap_or_else(|| "nothing to write".into());
@@ -921,14 +957,22 @@ impl App {
     /// being remuxed. A second `w` while it runs appends to the queue; a file
     /// already waiting gets its plan replaced rather than a second turn.
     fn apply(&mut self) {
-        let Some(plans) = self.pending.take() else { return };
+        let Some(plans) = self.pending.take() else {
+            return;
+        };
         let jobs: Vec<Job> = plans
             .into_iter()
             .filter_map(|plan| {
                 let file = self.files.iter().position(|f| f.path == plan.path)?;
                 let rename = self.rename_after.contains(&file);
                 let bytes = file_bytes(&plan.path);
-                Some(Job { file, xmp: self.files[file].xmp.clone(), plan, rename, bytes })
+                Some(Job {
+                    file,
+                    xmp: self.files[file].xmp.clone(),
+                    plan,
+                    rename,
+                    bytes,
+                })
             })
             .collect();
         if jobs.is_empty() {
@@ -956,8 +1000,10 @@ impl App {
         if spawn {
             self.spawn_writer();
         } else {
-            self.status =
-                format!("queued {n} file{} behind the running write", if n == 1 { "" } else { "s" });
+            self.status = format!(
+                "queued {n} file{} behind the running write",
+                if n == 1 { "" } else { "s" }
+            );
         }
     }
 
@@ -1017,7 +1063,10 @@ impl App {
                 // whole reason it waited. Only after a write that landed: a
                 // file whose write failed keeps the name its old tags gave it.
                 let renamed = (job.rename && res.is_ok()).then(|| {
-                    on(write::Step { label: "renaming", frac: 1.0 });
+                    on(write::Step {
+                        label: "renaming",
+                        frac: 1.0,
+                    });
                     rename::run(&job.plan.path).map_err(|e| format!("{e:#}"))
                 });
                 let mut path = job.plan.path.clone();
@@ -1120,7 +1169,13 @@ impl App {
         };
         let jobs: Vec<Job> = waiting
             .iter()
-            .map(|&file| Job { file, plan: plan(file), xmp: BTreeMap::new(), rename: false, bytes: 0 })
+            .map(|&file| Job {
+                file,
+                plan: plan(file),
+                xmp: BTreeMap::new(),
+                rename: false,
+                bytes: 0,
+            })
             .collect();
         let mut q = lock(&self.queue);
         q.busy = busy;
@@ -1143,7 +1198,11 @@ impl App {
             .take(max)
             .map(|(file, busy)| QueueRow {
                 file,
-                name: self.files.get(file).map(|f| file_name(&f.path)).unwrap_or_default(),
+                name: self
+                    .files
+                    .get(file)
+                    .map(|f| file_name(&f.path))
+                    .unwrap_or_default(),
                 busy,
             })
             .collect();
@@ -1203,7 +1262,9 @@ impl App {
                 out.busy.push(i);
                 continue;
             }
-            let Some(at) = q.waiting.iter().position(|j| j.file == i) else { continue };
+            let Some(at) = q.waiting.iter().position(|j| j.file == i) else {
+                continue;
+            };
             q.waiting.remove(at);
             out.evicted += 1;
         }
@@ -1235,8 +1296,12 @@ impl App {
     /// write correct rather than a second reason to ask for `w` again.
     fn replan_after_write(&mut self, i: usize) {
         let mut q = lock(&self.queue);
-        let Some(at) = q.waiting.iter().position(|j| j.file == i) else { return };
-        let Some(file) = self.files.get(i) else { return };
+        let Some(at) = q.waiting.iter().position(|j| j.file == i) else {
+            return;
+        };
+        let Some(file) = self.files.get(i) else {
+            return;
+        };
         let sound: BTreeMap<String, Value> = self
             .staged
             .get(&i)
@@ -1254,14 +1319,24 @@ impl App {
         } else {
             let rename = self.rename_after.contains(&i);
             let bytes = file_bytes(&file.path);
-            q.waiting[at] = Job { file: i, xmp: file.xmp.clone(), plan, rename, bytes };
+            q.waiting[at] = Job {
+                file: i,
+                xmp: file.xmp.clone(),
+                plan,
+                rename,
+                bytes,
+            };
         }
     }
 
     /// Say what `evict_edited` did, where it did anything.
     fn note_queue(&mut self, sync: &QueueSync) {
         if let Some(&i) = sync.busy.first() {
-            let name = self.files.get(i).map(|f| file_name(&f.path)).unwrap_or_default();
+            let name = self
+                .files
+                .get(i)
+                .map(|f| file_name(&f.path))
+                .unwrap_or_default();
             self.status = format!("{name} is being written now · press w to queue this edit");
             return;
         }
@@ -1303,7 +1378,8 @@ impl App {
             )
         };
         if !results.not_renamed.is_empty() {
-            self.status.push_str(&format!(" · {} not renamed", results.not_renamed.len()));
+            self.status
+                .push_str(&format!(" · {} not renamed", results.not_renamed.len()));
         }
         self.status_error = results.has_problems();
         // The results stay up until a key, with any unwritten edits still
@@ -1355,8 +1431,10 @@ impl App {
                 (false, n) => format!("rename unqueued for {n} files"),
             };
         }
-        let jobs: Vec<(usize, PathBuf)> =
-            clean.iter().map(|i| (*i, self.files[*i].path.clone())).collect();
+        let jobs: Vec<(usize, PathBuf)> = clean
+            .iter()
+            .map(|i| (*i, self.files[*i].path.clone()))
+            .collect();
         let Some((_, first)) = jobs.first() else {
             self.status = note;
             return;
@@ -1396,7 +1474,11 @@ impl App {
         let mut failed: Vec<(PathBuf, String)> = Vec::new();
         let mut ok: Vec<PathBuf> = Vec::new();
         for (i, r) in out {
-            let path = self.files.get(i).map(|f| f.path.clone()).unwrap_or_default();
+            let path = self
+                .files
+                .get(i)
+                .map(|f| f.path.clone())
+                .unwrap_or_default();
             match r {
                 Ok(Outcome::Renamed(to)) => {
                     name = file_name(&to);
@@ -1430,7 +1512,12 @@ impl App {
         // Only a failure earns the dialog. A clean batch, or a file already
         // named right, is a one-line fact; a refusal is a paragraph.
         if !failed.is_empty() {
-            self.results = Some(WriteResults { verb: "Renamed", ok, failed, not_renamed: vec![] });
+            self.results = Some(WriteResults {
+                verb: "Renamed",
+                ok,
+                failed,
+                not_renamed: vec![],
+            });
         }
     }
 
@@ -1468,7 +1555,10 @@ impl App {
         if let Some(to) = self.conflicts.get(&i) {
             // The reason before the name: a composed name runs past the
             // width of the band, and what is cut off is the name.
-            out.push(format!("rename blocked: another file is already named {}", file_name(to)));
+            out.push(format!(
+                "rename blocked: another file is already named {}",
+                file_name(to)
+            ));
         }
         if let Some(edits) = self.staged.get(&i) {
             for (key, value) in edits {
@@ -1502,7 +1592,11 @@ impl App {
             self.status.clear();
             self.status_error = false;
         } else {
-            let from = if self.files.len() == 1 { "the filename" } else { "the filenames" };
+            let from = if self.files.len() == 1 {
+                "the filename"
+            } else {
+                "the filenames"
+            };
             self.status = format!("{} from {from} · u undoes", self.status);
         }
         self.open_editor();
@@ -1586,14 +1680,22 @@ impl App {
                     fields.push(("track", Value::Text(n.to_string())));
                 }
                 let r = if fields.is_empty() {
-                    Err(format!("nothing recognised in {}", file_name(&self.files[i].path)))
+                    Err(format!(
+                        "nothing recognised in {}",
+                        file_name(&self.files[i].path)
+                    ))
                 } else {
                     Ok(fields)
                 };
                 (i, r)
             })
             .collect();
-        self.stage_import("imported", "every field the name carries is already set", out, true);
+        self.stage_import(
+            "imported",
+            "every field the name carries is already set",
+            out,
+            true,
+        );
     }
 
     /// Stage what a source said about each file, as one undoable step, and
@@ -1601,13 +1703,7 @@ impl App {
     /// and so is not touched. With `only_empty`, a field that already shows
     /// a value keeps it -- the filename rule; without, the source's value
     /// replaces it -- the fetch's rule, where `u` takes the whole step back.
-    fn stage_import(
-        &mut self,
-        verb: &str,
-        agrees: &str,
-        out: fetch::Fetched,
-        only_empty: bool,
-    ) {
+    fn stage_import(&mut self, verb: &str, agrees: &str, out: fetch::Fetched, only_empty: bool) {
         let total = out.len();
         let before = self.staged.clone();
         let mut filled = 0usize;
@@ -1642,7 +1738,10 @@ impl App {
             (1, 1) if filled == 0 => format!("nothing new: {agrees}"),
             (1, 1) => format!("{verb} {}", n_fields(filled)),
             (n, t) if n == t => format!("{verb} {} across {n} files", n_fields(filled)),
-            (n, t) => format!("{verb} {} across {n} of {t} files: {note}", n_fields(filled)),
+            (n, t) => format!(
+                "{verb} {} across {n} of {t} files: {note}",
+                n_fields(filled)
+            ),
         };
     }
 
@@ -1672,7 +1771,14 @@ impl App {
         }
         let stems: Vec<String> = scope
             .iter()
-            .map(|i| self.files[*i].path.file_stem().unwrap_or_default().to_string_lossy().into_owned())
+            .map(|i| {
+                self.files[*i]
+                    .path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
         let stems: Vec<&str> = stems.iter().map(String::as_str).collect();
         match filename::track_sequence(&stems) {
@@ -1695,8 +1801,15 @@ impl App {
                 _ => None,
             }
         });
-        let path = self.files.get(idx).map(|f| f.path.clone()).unwrap_or_default();
-        let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let path = self
+            .files
+            .get(idx)
+            .map(|f| f.path.clone())
+            .unwrap_or_default();
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
         let mut fields = filename::parse_path(&path);
         if let Some(n) = self.filename_tracks().get(&idx) {
             fields.push(("track", Value::Text(n.to_string())));
@@ -1715,16 +1828,31 @@ impl App {
         }
         let place = self.place_text(idx);
         let place = if place.is_empty() { None } else { Some(place) };
-        ImportPreview { files: scope.len(), url, stem, fills, keeps, place, coords: self.coords_of(idx) }
+        ImportPreview {
+            files: scope.len(),
+            url,
+            stem,
+            fills,
+            keeps,
+            place,
+            coords: self.coords_of(idx),
+        }
     }
 
     /// The location block as the form shows it for one file, joined into the
     /// query a lookup would start from: "Coro Hotel, Makati, Metro Manila".
     fn place_text(&self, idx: usize) -> String {
         let mut parts: Vec<String> = Vec::new();
-        for id in ["location_place", "location", "location_state", "location_country"] {
+        for id in [
+            "location_place",
+            "location",
+            "location_state",
+            "location_country",
+        ] {
             let disk = self.files.get(idx).and_then(|f| disk_value(f, id));
-            if let Some(Value::Text(s)) = overlay(disk, self.staged.get(&idx).and_then(|m| m.get(id))) {
+            if let Some(Value::Text(s)) =
+                overlay(disk, self.staged.get(&idx).and_then(|m| m.get(id)))
+            {
                 let s = s.trim();
                 if !s.is_empty() && !parts.iter().any(|p| p == s) {
                     parts.push(s.to_string());
@@ -1736,8 +1864,14 @@ impl App {
 
     /// The coordinates the form shows for one file, if they parse.
     fn coords_of(&self, idx: usize) -> Option<(f64, f64)> {
-        let disk = self.files.get(idx).and_then(|f| disk_value(f, "coordinates"));
-        match overlay(disk, self.staged.get(&idx).and_then(|m| m.get("coordinates")))? {
+        let disk = self
+            .files
+            .get(idx)
+            .and_then(|f| disk_value(f, "coordinates"));
+        match overlay(
+            disk,
+            self.staged.get(&idx).and_then(|m| m.get("coordinates")),
+        )? {
             Value::Text(s) => geocode::parse_iso6709(&s),
             _ => None,
         }
@@ -1757,7 +1891,9 @@ impl App {
     /// file with coordinates names the place the camera recorded; an empty
     /// prompt with nothing to go on stays open and says so.
     fn run_locate(&mut self) {
-        let Some(Locate::Ask(ed)) = &self.locate else { return };
+        let Some(Locate::Ask(ed)) = &self.locate else {
+            return;
+        };
         let query = match ed.value() {
             Value::Text(s) => s.trim().to_string(),
             _ => String::new(),
@@ -1773,7 +1909,9 @@ impl App {
     /// Reverse lookup of the coordinates in view, from the Coordinates row
     /// or an empty prompt. False when the file has none to name.
     fn name_the_coordinates(&mut self) -> bool {
-        let Some((lat, lon)) = self.coords_of(self.current_file()) else { return false };
+        let Some((lat, lon)) = self.coords_of(self.current_file()) else {
+            return false;
+        };
         self.status = format!("naming the place at {}", geocode::iso6709(lat, lon));
         self.status_error = false;
         self.spawn_lookup(move || geocode::reverse(lat, lon), false);
@@ -1787,7 +1925,11 @@ impl App {
         self.spawn_lookup(move || geocode::search(&query), true);
     }
 
-    fn spawn_lookup(&mut self, job: impl FnOnce() -> anyhow::Result<Vec<Hit>> + Send + 'static, named: bool) {
+    fn spawn_lookup(
+        &mut self,
+        job: impl FnOnce() -> anyhow::Result<Vec<Hit>> + Send + 'static,
+        named: bool,
+    ) {
         self.locate = Some(Locate::Looking);
         // The suite must not reach MapKit: a test that commits a place checks
         // the state and answers the lookup itself.
@@ -1832,7 +1974,11 @@ impl App {
     fn stage_hit(&mut self, hit: Hit, named: bool) {
         self.locate = None;
         let fields = hit.fields(named);
-        let out = self.scope().into_iter().map(|i| (i, Ok(fields.clone()))).collect();
+        let out = self
+            .scope()
+            .into_iter()
+            .map(|i| (i, Ok(fields.clone())))
+            .collect();
         self.stage_import("located", "the place agrees with the file", out, false);
         if !self.status_error {
             self.status = format!("{}: {}", hit.summary(), self.status);
@@ -1923,7 +2069,9 @@ impl App {
         // whatever is half-typed first, so what is written is what is on
         // screen, and it leaves the form in Select mode behind the dialog.
         if key.code == KeyCode::Char('s')
-            && key.modifiers.intersects(KeyModifiers::SUPER | KeyModifiers::CONTROL)
+            && key
+                .modifiers
+                .intersects(KeyModifiers::SUPER | KeyModifiers::CONTROL)
         {
             self.prepare_write();
             self.mode = Mode::Select;
@@ -2185,7 +2333,9 @@ impl App {
             // Coordinates the file already holds are named, not retyped: ⏎
             // runs the reverse lookup straight away. An empty row opens for
             // typing like any other.
-            Some(row) if row.key == "coordinates" && self.coords_of(self.current_file()).is_some() => {
+            Some(row)
+                if row.key == "coordinates" && self.coords_of(self.current_file()).is_some() =>
+            {
                 self.commit_editor();
                 self.name_the_coordinates();
             }
@@ -2242,7 +2392,9 @@ impl App {
     /// the value, on a rating nudges the stars. Both are one keystroke for the
     /// common case, with the menu still there for picking out of a long list.
     fn nudge(&mut self, delta: isize) {
-        let Some(row) = self.rows.get(self.focus) else { return };
+        let Some(row) = self.rows.get(self.focus) else {
+            return;
+        };
         let key = row.key.clone();
 
         if row.control == Control::Stars {
@@ -2266,7 +2418,10 @@ impl App {
         // should end it on the likeliest answer, not the alphabetically first.
         if let Agg::Mixed { values } = &row.eff {
             if let Some(code) = majority(values, &opts) {
-                let label = opts.iter().find(|o| o.code == code).map_or(code.clone(), |o| o.label.clone());
+                let label = opts
+                    .iter()
+                    .find(|o| o.code == code)
+                    .map_or(code.clone(), |o| o.label.clone());
                 let field = row.label.clone();
                 let n = values.len();
                 self.stage(key, Value::Text(code));
@@ -2282,7 +2437,10 @@ impl App {
                 match opts.iter().position(|o| o.code == code) {
                     Some(i) => Some(i),
                     None => {
-                        opts.push(Opt { code: code.clone(), label: code });
+                        opts.push(Opt {
+                            code: code.clone(),
+                            label: code,
+                        });
                         Some(opts.len() - 1)
                     }
                 }
@@ -2316,7 +2474,9 @@ impl App {
     /// character of a new number, not an edit to the old one. Esc still backs
     /// out to whatever the row showed.
     fn type_digit(&mut self, c: char) {
-        let Some(row) = self.rows.get(self.focus) else { return };
+        let Some(row) = self.rows.get(self.focus) else {
+            return;
+        };
         if row.control == Control::Stars {
             if let Some(n) = c.to_digit(6) {
                 self.set_stars(n as u8);
@@ -2335,7 +2495,9 @@ impl App {
     }
 
     fn set_stars(&mut self, n: u8) {
-        let Some(row) = self.rows.get(self.focus) else { return };
+        let Some(row) = self.rows.get(self.focus) else {
+            return;
+        };
         if row.control != Control::Stars {
             return;
         }
@@ -2389,7 +2551,9 @@ impl App {
         };
         let mut n = 0;
         for i in targets {
-            let Some(file) = self.files.get(*i) else { continue };
+            let Some(file) = self.files.get(*i) else {
+                continue;
+            };
             let disk = disk_value(file, key);
             if only_empty {
                 let now = overlay(disk.clone(), self.staged.get(i).and_then(|m| m.get(key)));
@@ -2434,7 +2598,11 @@ impl App {
             }
         };
         let path = self.files[idx].path.clone();
-        let tool = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        let tool = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
         let spawned = std::process::Command::new(tool)
             .arg("--")
             .arg(&path)
@@ -2458,7 +2626,9 @@ impl App {
     /// that is the half of it worth being warned about: every other file's own
     /// value goes.
     fn copy_out(&mut self, only_empty: bool) {
-        let Some(row) = self.rows.get(self.focus) else { return };
+        let Some(row) = self.rows.get(self.focus) else {
+            return;
+        };
         if !row.editable() {
             self.status = format!("{} is read-only", row.label);
             return;
@@ -2506,18 +2676,29 @@ impl App {
     /// Options for the focused row's enum, if it has one.
     pub fn options_for(&self, row: &Row) -> Vec<Opt> {
         let same = |v: &Vec<String>| {
-            v.iter().map(|s| Opt { code: s.clone(), label: s.clone() }).collect::<Vec<_>>()
+            v.iter()
+                .map(|s| Opt {
+                    code: s.clone(),
+                    label: s.clone(),
+                })
+                .collect::<Vec<_>>()
         };
         match row.key.as_str() {
             "category" => same(&self.enums.category),
             "variant" => same(&self.enums.variant),
             "orientation" => ORIENTATIONS
                 .iter()
-                .map(|s| Opt { code: (*s).into(), label: (*s).into() })
+                .map(|s| Opt {
+                    code: (*s).into(),
+                    label: (*s).into(),
+                })
                 .collect(),
             "kind" => KINDS
                 .iter()
-                .map(|(c, l)| Opt { code: (*c).into(), label: (*l).into() })
+                .map(|(c, l)| Opt {
+                    code: (*c).into(),
+                    label: (*l).into(),
+                })
                 .collect(),
             _ => Vec::new(),
         }
@@ -2543,7 +2724,9 @@ impl App {
     /// held the staged value made the untouched control look like a revert,
     /// and the edit was dropped for every other file with it.
     fn commit_editor(&mut self) {
-        let (Some(ed), Some(row)) = (&self.editor, self.rows.get(self.focus)) else { return };
+        let (Some(ed), Some(row)) = (&self.editor, self.rows.get(self.focus)) else {
+            return;
+        };
         if !row.editable() {
             return;
         }
@@ -2564,7 +2747,11 @@ impl App {
         // is the case that confuses: the row showed a channel, the file never
         // had one, and `w` then says "nothing to write" with no reason given.
         // So the reason is given here, when it happens.
-        if self.scope().iter().all(|i| !self.staged.get(i).is_some_and(|e| e.contains_key(&key))) {
+        if self
+            .scope()
+            .iter()
+            .all(|i| !self.staged.get(i).is_some_and(|e| e.contains_key(&key)))
+        {
             self.status = if cleared {
                 format!("{label} is not in the file's tags · nothing to remove")
             } else {
@@ -2580,7 +2767,10 @@ impl App {
     }
 
     pub fn validation(&self) -> Validation {
-        self.editor.as_ref().map(|e| e.validate()).unwrap_or(Validation::Ok)
+        self.editor
+            .as_ref()
+            .map(|e| e.validate())
+            .unwrap_or(Validation::Ok)
     }
 
     /// Why the row's staged value cannot be written, if it cannot.
@@ -2615,7 +2805,10 @@ impl App {
     /// The only way to stage against a file that is not in view, which is what
     /// the tests need and what nothing in the UI does.
     pub fn set_staged(&mut self, file: usize, key: &str, value: Value) {
-        self.staged.entry(file).or_default().insert(key.to_string(), value);
+        self.staged
+            .entry(file)
+            .or_default()
+            .insert(key.to_string(), value);
         self.rebuild_rows();
     }
 
@@ -2633,7 +2826,13 @@ impl App {
         } else {
             let rename = self.rename_after.contains(&file);
             let bytes = file_bytes(&self.files[file].path);
-            q.waiting.push_back(Job { file, xmp: self.files[file].xmp.clone(), plan, rename, bytes });
+            q.waiting.push_back(Job {
+                file,
+                xmp: self.files[file].xmp.clone(),
+                plan,
+                rename,
+                bytes,
+            });
         }
     }
 
@@ -2690,7 +2889,9 @@ impl App {
     /// transform on a rating or an enum code would be a no-op at best, so the
     /// menu refuses to open rather than offering keys that do nothing.
     fn begin_format(&mut self) {
-        let Some(row) = self.rows.get(self.focus) else { return };
+        let Some(row) = self.rows.get(self.focus) else {
+            return;
+        };
         if !row.editable() {
             self.status = format!("{} is read-only", row.label);
             return;
@@ -2704,7 +2905,9 @@ impl App {
     }
 
     fn apply_case(&mut self, case: Case) {
-        let Some(row) = self.rows.get(self.focus) else { return };
+        let Some(row) = self.rows.get(self.focus) else {
+            return;
+        };
         let Some(value) = self.shown_value(row) else {
             self.status = format!("{} is empty", row.label);
             return;
@@ -2727,7 +2930,9 @@ impl App {
     /// not change the text is skipped -- "Hello" is both capitalized and title
     /// case, and a press that redraws nothing reads as a dead key.
     fn cycle_case(&mut self) {
-        let Some(row) = self.rows.get(self.focus) else { return };
+        let Some(row) = self.rows.get(self.focus) else {
+            return;
+        };
         if !row.editable() {
             self.status = format!("{} is read-only", row.label);
             return;
@@ -2765,7 +2970,9 @@ impl App {
     /// Copy the focused field, staged value and all -- what you see is what
     /// you get, which is the only reading that matches the display.
     fn yank(&mut self) {
-        let Some(row) = self.rows.get(self.focus) else { return };
+        let Some(row) = self.rows.get(self.focus) else {
+            return;
+        };
         match self.shown_value(row) {
             Some(v) => {
                 self.status = format!("yanked {}", row.label);
@@ -2779,7 +2986,9 @@ impl App {
     /// text/list split: the same words are meant either way, and the form is
     /// small enough that the two shapes meet constantly.
     fn paste(&mut self) {
-        let Some(row) = self.rows.get(self.focus) else { return };
+        let Some(row) = self.rows.get(self.focus) else {
+            return;
+        };
         if !row.editable() {
             self.status = format!("{} is read-only", row.label);
             return;
@@ -2791,7 +3000,10 @@ impl App {
         let listy = matches!(row.control, Control::List | Control::HashTags);
         let value = match (v, listy) {
             (Value::Text(s), true) => Value::List(
-                s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect(),
+                s.split(',')
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect(),
             ),
             (Value::List(l), false) => Value::Text(l.join(", ")),
             (v, _) => v,
@@ -2810,7 +3022,9 @@ impl App {
     /// they are the one place an edit is made without an Esc of its own to
     /// back out of it. Undoable like any other staging change.
     fn revert_focused_set(&mut self) -> bool {
-        let Some(row) = self.rows.get(self.focus) else { return false };
+        let Some(row) = self.rows.get(self.focus) else {
+            return false;
+        };
         if row.control != Control::Enum || !row.staged {
             return false;
         }
@@ -2841,7 +3055,9 @@ impl App {
     }
 
     fn clear_focused(&mut self) {
-        let Some(row) = self.rows.get(self.focus) else { return };
+        let Some(row) = self.rows.get(self.focus) else {
+            return;
+        };
         if !row.editable() {
             self.status = format!("{} is read-only", row.label);
             return;
@@ -2896,7 +3112,11 @@ impl App {
             None => Some((n - 1) as usize),
             Some(i) => {
                 let next = i as isize + delta;
-                if next < 0 || next >= n { None } else { Some(next as usize) }
+                if next < 0 || next >= n {
+                    None
+                } else {
+                    Some(next as usize)
+                }
             }
         };
         if let Some(i) = self.view {
@@ -2972,7 +3192,9 @@ fn custom_label(key: &str) -> String {
 /// dated the day you shot it, not the UTC day, which is the mistake a bare
 /// `now_utc` makes for half the world for part of every day.
 pub fn now_stamp() -> String {
-    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string()
+    chrono::Local::now()
+        .format("%Y-%m-%dT%H:%M:%S%:z")
+        .to_string()
 }
 
 /// The Category the whole selection agrees on, if it agrees on one. A mixed
@@ -3006,10 +3228,14 @@ fn build_rows(
     // is what-then-when-then-who rather than the publishing order the rest of
     // the schema is written in.
     let category = agreed_field(files, scope, staged, "category");
-    let footage = category.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(FOOTAGE));
+    let footage = category
+        .as_deref()
+        .is_some_and(|c| c.eq_ignore_ascii_case(FOOTAGE));
     // Adult is the second: no artist, a publishing order that leads with the
     // channel and the people, and -- for a Clip -- a track number.
-    let adult = category.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(ADULT));
+    let adult = category
+        .as_deref()
+        .is_some_and(|c| c.eq_ignore_ascii_case(ADULT));
     let clip = adult
         && agreed_field(files, scope, staged, "variant")
             .is_some_and(|v| v.eq_ignore_ascii_case(CLIP));
@@ -3020,9 +3246,17 @@ fn build_rows(
             .zip(disk.iter())
             .map(|(i, d)| overlay(d.clone(), staged.get(i).and_then(|m| m.get(&key))))
             .collect();
-        let is_staged =
-            scope.iter().any(|i| staged.get(i).is_some_and(|m| m.contains_key(&key)));
-        Row { key, label, control, def, eff: Agg::fold(eff), staged: is_staged }
+        let is_staged = scope
+            .iter()
+            .any(|i| staged.get(i).is_some_and(|m| m.contains_key(&key)));
+        Row {
+            key,
+            label,
+            control,
+            def,
+            eff: Agg::fold(eff),
+            staged: is_staged,
+        }
     };
 
     let mut rows: Vec<Row> = FIELDS
@@ -3031,7 +3265,9 @@ fn build_rows(
             let disk: Vec<Option<Value>> = scope.iter().map(|i| files[*i].lookup(def)).collect();
             // A footage field appears once it holds something -- or once it has
             // been edited, since hiding the row would hide the edit with it.
-            let edited = scope.iter().any(|i| staged.get(i).is_some_and(|m| m.contains_key(def.id)));
+            let edited = scope
+                .iter()
+                .any(|i| staged.get(i).is_some_and(|m| m.contains_key(def.id)));
             if def.footage_only && !edited && disk.iter().all(Option::is_none) {
                 return None;
             }
@@ -3055,7 +3291,13 @@ fn build_rows(
                 Some(l) => l,
                 None => def.label,
             };
-            Some(row(def.id.to_string(), label.to_string(), def.control, Some(def), disk))
+            Some(row(
+                def.id.to_string(),
+                label.to_string(),
+                def.control,
+                Some(def),
+                disk,
+            ))
         })
         .collect();
     // Stable, so the fields the profile does not name keep schema order behind
@@ -3063,7 +3305,10 @@ fn build_rows(
     if footage {
         rows.sort_by_key(|r| r.def.map_or(usize::MAX, |d| schema::footage_rank(d.id)));
     } else if adult {
-        rows.sort_by_key(|r| r.def.map_or(usize::MAX, |d| schema::profile_rank(ADULT_ORDER, d.id)));
+        rows.sort_by_key(|r| {
+            r.def
+                .map_or(usize::MAX, |d| schema::profile_rank(ADULT_ORDER, d.id))
+        });
     }
     // Keys are already named by origin ("custom:" atom / "xmp:" tag), which the
     // write plan needs in order to put an edit back where it came from.
@@ -3148,7 +3393,10 @@ fn make_picker(no_thumbnail: bool) -> ratatui_image::picker::Picker {
         || !env("WEZTERM_EXECUTABLE").is_empty()
         || term.contains("kitty")
         || term.contains("ghostty")
-        || matches!(program.as_str(), "iterm.app" | "wezterm" | "ghostty" | "kitty");
+        || matches!(
+            program.as_str(),
+            "iterm.app" | "wezterm" | "ghostty" | "kitty"
+        );
     if graphical {
         Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
     } else {
@@ -3204,7 +3452,10 @@ pub fn run(files: Vec<FileTags>, custom: BTreeMap<String, Agg>, no_thumbnail: bo
     })();
 
     if enhanced {
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::PopKeyboardEnhancementFlags);
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::PopKeyboardEnhancementFlags
+        );
     }
     ratatui::restore();
     res
@@ -3243,7 +3494,15 @@ mod progress_tests {
     use super::*;
 
     fn p(file_bytes: u64, done_bytes: u64, total_bytes: u64, frac: f64) -> WriteProgress {
-        WriteProgress { file: 0, total: 0, label: "", frac, file_bytes, done_bytes, total_bytes }
+        WriteProgress {
+            file: 0,
+            total: 0,
+            label: "",
+            frac,
+            file_bytes,
+            done_bytes,
+            total_bytes,
+        }
     }
 
     /// Four equal-sized files walk the bar exactly like the old count-based
@@ -3303,15 +3562,24 @@ mod tests {
     /// row of capitals. First and last word are exempt whatever they are.
     #[test]
     fn title_case_leaves_the_little_words_lowered() {
-        assert_eq!(Case::Title.apply("the cat in the hat"), "The Cat in the Hat");
+        assert_eq!(
+            Case::Title.apply("the cat in the hat"),
+            "The Cat in the Hat"
+        );
         assert_eq!(Case::Title.apply("what it is for"), "What It Is For");
-        assert_eq!(Case::Title.apply("a day at the beach (and a night)"), "A Day at the Beach (and a Night)");
+        assert_eq!(
+            Case::Title.apply("a day at the beach (and a night)"),
+            "A Day at the Beach (and a Night)"
+        );
     }
 
     /// A colon starts a new phrase, and a phrase never opens lowered.
     #[test]
     fn title_case_capitalizes_after_a_colon() {
-        assert_eq!(Case::Title.apply("part two: the long way home"), "Part Two: The Long Way Home");
+        assert_eq!(
+            Case::Title.apply("part two: the long way home"),
+            "Part Two: The Long Way Home"
+        );
     }
 
     #[test]
@@ -3369,11 +3637,17 @@ mod tests {
         app.finish_write(WriteResults {
             verb: "Wrote",
             ok: vec![],
-            failed: vec![(PathBuf::from("/nonexistent/tagform-test.mov"), "boom".into())],
+            failed: vec![(
+                PathBuf::from("/nonexistent/tagform-test.mov"),
+                "boom".into(),
+            )],
             ..Default::default()
         });
 
-        assert_eq!(app.staged[&0].get("title"), Some(&Value::Text("kept".into())));
+        assert_eq!(
+            app.staged[&0].get("title"),
+            Some(&Value::Text("kept".into()))
+        );
         assert!(app.status.contains("1 edit kept"), "{}", app.status);
     }
 
@@ -3408,7 +3682,11 @@ mod tests {
     #[test]
     fn tags_typed_with_spaces_are_repaired_into_one_token_each() {
         let mut app = one(&[]);
-        let tags = app.rows.iter().position(|r| r.key == "tags").expect("tags row");
+        let tags = app
+            .rows
+            .iter()
+            .position(|r| r.key == "tags")
+            .expect("tags row");
         app.jump(tags);
         press(&mut app, KeyCode::Enter);
         for c in "tag, tag two, tag three, another".chars() {
@@ -3436,7 +3714,11 @@ mod tests {
         let mut app = one(&[]);
         app.set_staged(0, "tags", Value::List(vec!["fine".into(), "a/b".into()]));
         let row = app.rows.iter().find(|r| r.key == "tags").unwrap();
-        assert!(app.row_error(row).is_some_and(|e| e.contains("a/b")), "{:?}", app.row_error(row));
+        assert!(
+            app.row_error(row).is_some_and(|e| e.contains("a/b")),
+            "{:?}",
+            app.row_error(row)
+        );
     }
 
     /// A tag set already on disk is not this run's problem: there is no edit to
@@ -3472,7 +3754,14 @@ mod tests {
         app.set_staged(0, "title", Value::text("kept"));
         app.set_staged(0, "tags", Value::List(vec!["a/b".into()]));
         let summary = app.staged_summary();
-        let by = |l: &str| summary.iter().find(|e| e.label == l).expect(l).refused.clone();
+        let by = |l: &str| {
+            summary
+                .iter()
+                .find(|e| e.label == l)
+                .expect(l)
+                .refused
+                .clone()
+        };
         assert!(by("Tags").is_some_and(|w| w.contains("a/b")));
         assert_eq!(by("Title"), None);
     }
@@ -3495,7 +3784,10 @@ mod tests {
         use crate::tags::probe::FileTags;
         let f = FileTags {
             path: PathBuf::from("/nonexistent/tagform-test.mov"),
-            atoms: atoms.iter().map(|(k, v)| (k.to_string(), Value::text(*v))).collect(),
+            atoms: atoms
+                .iter()
+                .map(|(k, v)| (k.to_string(), Value::text(*v)))
+                .collect(),
             xmp: BTreeMap::new(),
         };
         App::new(vec![f], BTreeMap::new(), false)
@@ -3511,15 +3803,18 @@ mod tests {
         assert!(app.status.contains("staged"), "{}", app.status);
         assert!(app.status_error);
         assert_eq!(app.files.len(), 1);
-        assert_eq!(app.files[0].path, PathBuf::from("/nonexistent/tagform-test.mov"));
+        assert_eq!(
+            app.files[0].path,
+            PathBuf::from("/nonexistent/tagform-test.mov")
+        );
     }
 
     /// ⌘U loads every video next to the open file, and only videos -- a
     /// non-media sibling in the same folder is left out.
     #[test]
     fn cmd_u_loads_every_video_sibling_and_nothing_else() {
-        let dir = std::env::temp_dir()
-            .join(format!("tagform-app-tests-{}-siblings", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tagform-app-tests-{}-siblings", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let one_path = dir.join("a.mp4");
         let two_path = dir.join("b.mov");
@@ -3538,7 +3833,11 @@ mod tests {
                 .arg(path)
                 .output()
                 .expect("ffmpeg must be on PATH to run this test");
-            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
         std::fs::write(&junk_path, b"not a video").unwrap();
 
@@ -3564,12 +3863,18 @@ mod tests {
         use crate::tags::probe::FileTags;
         let mk = |name: &str, atoms: &[(&str, &str)]| FileTags {
             path: PathBuf::from(format!("/nonexistent/{name}")),
-            atoms: atoms.iter().map(|(k, v)| (k.to_string(), Value::text(*v))).collect(),
+            atoms: atoms
+                .iter()
+                .map(|(k, v)| (k.to_string(), Value::text(*v)))
+                .collect(),
             xmp: BTreeMap::new(),
         };
         let mut app = App::new(
             vec![
-                mk("Ann (Studio) - A Title #pov ★★★☆☆.mp4", &[("title", "Kept")]),
+                mk(
+                    "Ann (Studio) - A Title #pov ★★★☆☆.mp4",
+                    &[("title", "Kept")],
+                ),
                 mk("IMG_0412.mov", &[]),
             ],
             BTreeMap::new(),
@@ -3603,7 +3908,8 @@ mod tests {
     fn a_files_alerts_name_a_taken_rename_and_a_refused_value() {
         let mut app = one(&[]);
         assert!(app.file_alerts(0).is_empty());
-        app.conflicts.insert(0, PathBuf::from("/nonexistent/other.mov"));
+        app.conflicts
+            .insert(0, PathBuf::from("/nonexistent/other.mov"));
         app.set_staged(0, "tags", Value::List(vec!["pov".into(), ".bad".into()]));
         let alerts = app.file_alerts(0);
         assert_eq!(alerts.len(), 2, "{alerts:?}");
@@ -3618,10 +3924,18 @@ mod tests {
         let mut app = one(&[]);
         let here = app.files[0].path.clone();
         let taken = PathBuf::from("/nonexistent/taken.mov");
-        app.tx.send(Msg::Conflict(0, PathBuf::from("/nonexistent/old.mov"), Some(taken.clone()))).unwrap();
+        app.tx
+            .send(Msg::Conflict(
+                0,
+                PathBuf::from("/nonexistent/old.mov"),
+                Some(taken.clone()),
+            ))
+            .unwrap();
         app.drain();
         assert!(app.conflicts.is_empty(), "stale");
-        app.tx.send(Msg::Conflict(0, here.clone(), Some(taken.clone()))).unwrap();
+        app.tx
+            .send(Msg::Conflict(0, here.clone(), Some(taken.clone())))
+            .unwrap();
         app.drain();
         assert_eq!(app.conflicts.get(&0), Some(&taken));
         app.tx.send(Msg::Conflict(0, here, None)).unwrap();
@@ -3657,7 +3971,10 @@ mod tests {
     }
 
     fn shown(app: &App, id: &str) -> Option<Value> {
-        app.rows.iter().find(|r| r.key == id).and_then(|r| r.shown().cloned())
+        app.rows
+            .iter()
+            .find(|r| r.key == id)
+            .and_then(|r| r.shown().cloned())
     }
 
     /// A fetch takes the page's word for the fields it answered and leaves
@@ -3667,7 +3984,10 @@ mod tests {
         let mut app = one(&[("title", "Old Title"), ("channel", "Old Channel")]);
         app.finish_fetch(vec![(
             0,
-            Ok(vec![("title", Value::text("New Title")), ("tags", Value::List(vec!["a".into()]))]),
+            Ok(vec![
+                ("title", Value::text("New Title")),
+                ("tags", Value::List(vec!["a".into()])),
+            ]),
         )]);
         assert_eq!(shown(&app, "title"), Some(Value::text("New Title")));
         assert_eq!(shown(&app, "channel"), Some(Value::text("Old Channel")));
@@ -3718,7 +4038,11 @@ mod tests {
     #[test]
     fn a_digit_on_track_starts_typing_the_number() {
         let mut app = one(&[("track", "7")]);
-        let track = app.rows.iter().position(|r| r.key == "track").expect("track row");
+        let track = app
+            .rows
+            .iter()
+            .position(|r| r.key == "track")
+            .expect("track row");
         app.jump(track);
 
         press(&mut app, KeyCode::Char('1'));
@@ -3848,8 +4172,14 @@ mod tests {
         press(&mut app, KeyCode::Char('i'));
         assert!(app.import_menu);
         press(&mut app, KeyCode::Char('w'));
-        assert!(app.import_menu, "an unrecognised key must not close the menu");
-        assert!(app.pending.is_none(), "w inside the menu must not open a write plan");
+        assert!(
+            app.import_menu,
+            "an unrecognised key must not close the menu"
+        );
+        assert!(
+            app.pending.is_none(),
+            "w inside the menu must not open a write plan"
+        );
         press(&mut app, KeyCode::Esc);
         assert!(!app.import_menu);
         assert_eq!(app.status, "import cancelled");
@@ -3864,9 +4194,12 @@ mod tests {
         use crate::tags::probe::FileTags;
         let f = FileTags {
             path: PathBuf::from("/x/Ann Lee (Studio X) - A Title.mp4"),
-            atoms: [("webpage_url".to_string(), Value::text("https://example.com/v"))]
-                .into_iter()
-                .collect(),
+            atoms: [(
+                "webpage_url".to_string(),
+                Value::text("https://example.com/v"),
+            )]
+            .into_iter()
+            .collect(),
             xmp: BTreeMap::new(),
         };
         let mut app = App::new(vec![f], BTreeMap::new(), false);
@@ -3935,22 +4268,43 @@ mod tests {
     #[test]
     fn enter_on_place_opens_the_lookup() {
         let mut app = one(&[("title", "T")]);
-        let at = app.rows.iter().position(|r| r.key == "location_place").expect("Place is always shown");
-        assert_eq!(shown(&app, "location"), None, "the rest of the block waits for a hit");
+        let at = app
+            .rows
+            .iter()
+            .position(|r| r.key == "location_place")
+            .expect("Place is always shown");
+        assert_eq!(
+            shown(&app, "location"),
+            None,
+            "the rest of the block waits for a hit"
+        );
         app.jump(at);
         press(&mut app, KeyCode::Enter);
-        assert!(matches!(app.locate, Some(Locate::Ask(_))), "⏎ on Place is the prompt, not an inline edit");
+        assert!(
+            matches!(app.locate, Some(Locate::Ask(_))),
+            "⏎ on Place is the prompt, not an inline edit"
+        );
         assert_eq!(app.mode, Mode::Select);
         for c in "Coro Hotel Makati".chars() {
             press(&mut app, KeyCode::Char(c));
         }
         press(&mut app, KeyCode::Enter);
-        assert!(matches!(app.locate, Some(Locate::Looking)), "{}", app.status);
+        assert!(
+            matches!(app.locate, Some(Locate::Looking)),
+            "{}",
+            app.status
+        );
         assert_eq!(app.status, "looking up Coro Hotel Makati");
         app.finish_locate(Ok(vec![hit("Coro Hotel", "Makati")]), true);
-        assert_eq!(shown(&app, "location_place"), Some(Value::text("Coro Hotel")));
+        assert_eq!(
+            shown(&app, "location_place"),
+            Some(Value::text("Coro Hotel"))
+        );
         assert_eq!(shown(&app, "location"), Some(Value::text("Makati")));
-        assert_eq!(shown(&app, "coordinates"), Some(Value::text("+14.5641+121.0300/")));
+        assert_eq!(
+            shown(&app, "coordinates"),
+            Some(Value::text("+14.5641+121.0300/"))
+        );
         // Clearing the row is not a lookup.
         app.stage("location_place".into(), Value::text(""));
         assert!(app.locate.is_none());
@@ -3976,11 +4330,24 @@ mod tests {
         app.locate = Some(Locate::Looking);
         app.finish_locate(Ok(vec![hit("Coro Hotel", "Makati")]), true);
         assert!(app.locate.is_none());
-        assert_eq!(shown(&app, "location_place"), Some(Value::text("Coro Hotel")));
+        assert_eq!(
+            shown(&app, "location_place"),
+            Some(Value::text("Coro Hotel"))
+        );
         assert_eq!(shown(&app, "location"), Some(Value::text("Makati")));
-        assert_eq!(shown(&app, "location_country"), Some(Value::text("Philippines")));
-        assert_eq!(shown(&app, "coordinates"), Some(Value::text("+14.5641+121.0300/")));
-        assert!(app.status.starts_with("Coro Hotel, Makati"), "{}", app.status);
+        assert_eq!(
+            shown(&app, "location_country"),
+            Some(Value::text("Philippines"))
+        );
+        assert_eq!(
+            shown(&app, "coordinates"),
+            Some(Value::text("+14.5641+121.0300/"))
+        );
+        assert!(
+            app.status.starts_with("Coro Hotel, Makati"),
+            "{}",
+            app.status
+        );
         press(&mut app, KeyCode::Char('u'));
         assert_eq!(shown(&app, "location"), None);
     }
@@ -3991,10 +4358,18 @@ mod tests {
     fn a_reverse_hit_leaves_the_venue_alone() {
         let mut app = one(&[("com.apple.quicktime.location.iso6709", "+14.5641+121.0300/")]);
         assert_eq!(app.import_preview().coords, Some((14.5641, 121.03)));
-        let at = app.rows.iter().position(|r| r.key == "coordinates").unwrap();
+        let at = app
+            .rows
+            .iter()
+            .position(|r| r.key == "coordinates")
+            .unwrap();
         app.jump(at);
         press(&mut app, KeyCode::Enter);
-        assert!(matches!(app.locate, Some(Locate::Looking)), "{}", app.status);
+        assert!(
+            matches!(app.locate, Some(Locate::Looking)),
+            "{}",
+            app.status
+        );
         assert_eq!(app.mode, Mode::Select);
         app.finish_locate(Ok(vec![hit("Some Shop", "Makati")]), false);
         assert_eq!(shown(&app, "location_place"), None);
@@ -4007,12 +4382,18 @@ mod tests {
     fn several_hits_are_picked_from() {
         let mut app = one(&[("title", "T")]);
         app.locate = Some(Locate::Looking);
-        app.finish_locate(Ok(vec![hit("Coro Hotel", "Makati"), hit("Coro Cafe", "Pasay")]), true);
+        app.finish_locate(
+            Ok(vec![hit("Coro Hotel", "Makati"), hit("Coro Cafe", "Pasay")]),
+            true,
+        );
         assert!(matches!(app.locate, Some(Locate::Pick { at: 0, .. })));
         assert_eq!(shown(&app, "location"), None);
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Enter);
-        assert_eq!(shown(&app, "location_place"), Some(Value::text("Coro Cafe")));
+        assert_eq!(
+            shown(&app, "location_place"),
+            Some(Value::text("Coro Cafe"))
+        );
         assert_eq!(shown(&app, "location"), Some(Value::text("Pasay")));
     }
 
@@ -4057,7 +4438,9 @@ mod tests {
         use crate::tags::probe::FileTags;
         let f = FileTags {
             path: PathBuf::from("/x/Ann Lee, Bo Cruz (Studio X) - A Title #pov #hd ★★★★☆.mp4"),
-            atoms: [("title".to_string(), Value::text("Kept Title"))].into_iter().collect(),
+            atoms: [("title".to_string(), Value::text("Kept Title"))]
+                .into_iter()
+                .collect(),
             xmp: BTreeMap::new(),
         };
         let mut app = App::new(vec![f], BTreeMap::new(), false);
@@ -4067,10 +4450,16 @@ mod tests {
         press(&mut app, KeyCode::Char('i'));
         press(&mut app, KeyCode::Char('f'));
         assert_eq!(shown(&app, "title"), Some(Value::text("Kept Title")));
-        assert_eq!(shown(&app, "actors"), Some(Value::List(vec!["Ann Lee".into(), "Bo Cruz".into()])));
+        assert_eq!(
+            shown(&app, "actors"),
+            Some(Value::List(vec!["Ann Lee".into(), "Bo Cruz".into()]))
+        );
         assert_eq!(shown(&app, "channel"), Some(Value::text("Studio X")));
         assert_eq!(shown(&app, "rating"), Some(Value::text("4")));
-        assert_eq!(shown(&app, "tags"), Some(Value::List(vec!["pov".into(), "hd".into()])));
+        assert_eq!(
+            shown(&app, "tags"),
+            Some(Value::List(vec!["pov".into(), "hd".into()]))
+        );
         assert_eq!(app.status, "imported 4 fields");
         press(&mut app, KeyCode::Char('u'));
         assert!(app.staged.is_empty(), "{:?}", app.staged);
@@ -4083,7 +4472,10 @@ mod tests {
         assert!(app.status.starts_with("imported"), "{}", app.status);
         press(&mut app, KeyCode::Char('i'));
         press(&mut app, KeyCode::Char('f'));
-        assert_eq!(app.status, "nothing new: every field the name carries is already set");
+        assert_eq!(
+            app.status,
+            "nothing new: every field the name carries is already set"
+        );
     }
 
     /// Clips, in a batch, with one number climbing through their names: the
@@ -4097,13 +4489,21 @@ mod tests {
         ]);
         // The menu previews what the import will do, for the file in view.
         let p = app.import_preview();
-        assert!(p.fills.contains(&("Track".to_string(), Value::text("1"))), "{:?}", p.fills);
+        assert!(
+            p.fills.contains(&("Track".to_string(), Value::text("1"))),
+            "{:?}",
+            p.fills
+        );
 
         press(&mut app, KeyCode::Char('i'));
         press(&mut app, KeyCode::Char('f'));
         assert_eq!(app.staged[&0].get("track"), Some(&Value::text("1")));
         assert_eq!(app.staged[&1].get("track"), Some(&Value::text("2")));
-        assert_eq!(app.staged[&2].get("track"), None, "a Track already on the file is not overwritten");
+        assert_eq!(
+            app.staged[&2].get("track"),
+            None,
+            "a Track already on the file is not overwritten"
+        );
         // And the whole of it is one undo step, like every other import.
         press(&mut app, KeyCode::Char('u'));
         assert!(app.staged.is_empty(), "{:?}", app.staged);
@@ -4119,7 +4519,9 @@ mod tests {
         assert!(app.filename_tracks().is_empty());
 
         // Names with no sequence in them.
-        assert!(clips(&[("one clip", None), ("another clip", None)]).filename_tracks().is_empty());
+        assert!(clips(&[("one clip", None), ("another clip", None)])
+            .filename_tracks()
+            .is_empty());
 
         // A single file: in single-file view there is no batch to read, even
         // though the files either side of it are numbered.
@@ -4160,7 +4562,11 @@ mod tests {
         press(&mut app, KeyCode::Char('i'));
         press(&mut app, KeyCode::Char('f'));
         assert!(app.staged.is_empty());
-        assert!(app.status.starts_with("nothing recognised in"), "{}", app.status);
+        assert!(
+            app.status.starts_with("nothing recognised in"),
+            "{}",
+            app.status
+        );
     }
 
     /// Footage is a different form, not the same form with a label on it: the
@@ -4176,7 +4582,17 @@ mod tests {
         let head: Vec<&str> = k.iter().take(9).copied().collect();
         assert_eq!(
             head,
-            ["category", "variant", "date", "actors", "rating", "tags", "location_place", "title", "description"]
+            [
+                "category",
+                "variant",
+                "date",
+                "actors",
+                "rating",
+                "tags",
+                "location_place",
+                "title",
+                "description"
+            ]
         );
         // The fields the profile does not name keep their schema order behind
         // the ones it does.
@@ -4210,18 +4626,37 @@ mod tests {
         assert_eq!(
             k[..14],
             [
-                "category", "variant", "orientation", "title", "channel", "actors", "rating",
-                "url", "tags", "date", "description", "genre", "synopsis", "origin"
+                "category",
+                "variant",
+                "orientation",
+                "title",
+                "channel",
+                "actors",
+                "rating",
+                "url",
+                "tags",
+                "date",
+                "description",
+                "genre",
+                "synopsis",
+                "origin"
             ]
         );
         assert_eq!(k[14..], ["kind"]);
-        let opts: Vec<String> =
-            app.options_for(row(&app, "orientation")).into_iter().map(|o| o.code).collect();
+        let opts: Vec<String> = app
+            .options_for(row(&app, "orientation"))
+            .into_iter()
+            .map(|o| o.code)
+            .collect();
         assert_eq!(opts, ["Straight", "Gay", "Sapphic", "Trans"]);
 
         let app = one(&[("category", "Adult"), ("variant", "Clip")]);
         let k = keys(&app);
-        assert_eq!(k[..5], ["category", "variant", "orientation", "title", "track"], "{k:?}");
+        assert_eq!(
+            k[..5],
+            ["category", "variant", "orientation", "title", "track"],
+            "{k:?}"
+        );
         assert_eq!(row(&app, "track").label, "Track");
     }
 
@@ -4280,7 +4715,9 @@ mod tests {
         use crate::tags::probe::FileTags;
         let f = FileTags {
             path: PathBuf::from("/nonexistent/(Studio) - A Title.mp4"),
-            atoms: [("title".to_string(), Value::text("A Title"))].into_iter().collect(),
+            atoms: [("title".to_string(), Value::text("A Title"))]
+                .into_iter()
+                .collect(),
             xmp: BTreeMap::new(),
         };
         let mut app = App::new(vec![f], BTreeMap::new(), false);
@@ -4293,7 +4730,10 @@ mod tests {
         }
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.staged_count(), 0);
-        assert_eq!(app.status, "Channel is not in the file's tags · nothing to remove");
+        assert_eq!(
+            app.status,
+            "Channel is not in the file's tags · nothing to remove"
+        );
     }
 
     /// Hiding a row must never hide a pending write. Same escape the
@@ -4303,7 +4743,10 @@ mod tests {
         let mut app = one(&[("category", "Footage")]);
         assert!(!keys(&app).contains(&"url"));
         app.set_staged(0, "url", Value::text("https://example.com/a"));
-        assert!(keys(&app).contains(&"url"), "an invisible edit would still be written");
+        assert!(
+            keys(&app).contains(&"url"),
+            "an invisible edit would still be written"
+        );
     }
 
     /// A selection that disagrees about Category has no profile: reshaping the
@@ -4333,7 +4776,10 @@ mod tests {
         // And h/l still step it in place, from the mode it never left.
         focus_on(&mut app, "category");
         press(&mut app, KeyCode::Char('l'));
-        assert_eq!(row(&app, "category").shown(), Some(&Value::text(&app.enums.category[0])));
+        assert_eq!(
+            row(&app, "category").shown(),
+            Some(&Value::text(&app.enums.category[0]))
+        );
     }
 
     /// ⏎ on an empty Date fills in now rather than an empty line to type into.
@@ -4348,8 +4794,15 @@ mod tests {
         let now = now_stamp();
         let shown = app.editor.as_ref().unwrap().display().0;
         assert_eq!(shown[..10], now[..10], "today's date, in full: {shown}");
-        assert_eq!(app.validation(), Validation::Ok, "{shown} must not paint as a warning");
-        assert!(app.staged.is_empty(), "nothing is staged until it is accepted");
+        assert_eq!(
+            app.validation(),
+            Validation::Ok,
+            "{shown} must not paint as a warning"
+        );
+        assert!(
+            app.staged.is_empty(),
+            "nothing is staged until it is accepted"
+        );
 
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.staged[&0].get("date"), Some(&Value::text(&shown)));
@@ -4380,7 +4833,11 @@ mod tests {
                 .unwrap_or_default(),
             xmp: BTreeMap::new(),
         };
-        App::new(vec![mk("a", Some("A")), mk("b", Some("B"))], BTreeMap::new(), false)
+        App::new(
+            vec![mk("a", Some("A")), mk("b", Some("B"))],
+            BTreeMap::new(),
+            false,
+        )
     }
 
     fn focus_on(app: &mut App, key: &str) {
@@ -4451,7 +4908,10 @@ mod tests {
         press(&mut app, KeyCode::Enter);
 
         assert_eq!(app.queue_place(0), None);
-        assert_eq!(app.status, "taken off the write queue · press w to write it");
+        assert_eq!(
+            app.status,
+            "taken off the write queue · press w to write it"
+        );
         assert_eq!(app.staged[&0].get("title"), Some(&Value::text("Anew")));
         assert_eq!(app.staged[&0].get("channel"), Some(&Value::text("first")));
     }
@@ -4484,7 +4944,11 @@ mod tests {
         press(&mut app, KeyCode::Char('x'));
         press(&mut app, KeyCode::Enter);
 
-        assert!(app.status.contains("being written now") && app.status.contains("press w"), "{}", app.status);
+        assert!(
+            app.status.contains("being written now") && app.status.contains("press w"),
+            "{}",
+            app.status
+        );
         assert_eq!(app.staged[&0].get("title"), Some(&Value::text("Ax")));
     }
 
@@ -4512,7 +4976,11 @@ mod tests {
         assert!(app.pending.is_some(), "{}", app.status);
         app.apply();
         assert_eq!(app.queue_place(0), Some(QueuePlace::Waiting(1)));
-        assert!(app.status.contains("behind the running write"), "{}", app.status);
+        assert!(
+            app.status.contains("behind the running write"),
+            "{}",
+            app.status
+        );
         assert!(app.writing);
     }
 
@@ -4571,12 +5039,22 @@ mod tests {
     fn a_finished_rename_moves_the_path_and_clears_the_flag() {
         let mut app = pair();
         app.rename_after.insert(0);
-        app.file_written(0, None, Ok(()), Some(Ok(Outcome::Renamed(PathBuf::from("/nonexistent/new.mov")))));
+        app.file_written(
+            0,
+            None,
+            Ok(()),
+            Some(Ok(Outcome::Renamed(PathBuf::from("/nonexistent/new.mov")))),
+        );
         assert!(app.files[0].path.ends_with("new.mov"));
         assert!(!app.rename_after.contains(&0));
 
         app.rename_after.insert(1);
-        app.file_written(1, None, Ok(()), Some(Ok(Outcome::Taken(PathBuf::from("/x.mov")))));
+        app.file_written(
+            1,
+            None,
+            Ok(()),
+            Some(Ok(Outcome::Taken(PathBuf::from("/x.mov")))),
+        );
         assert!(app.files[1].path.ends_with("b.mov"));
         assert!(!app.rename_after.contains(&1));
     }
@@ -4666,7 +5144,11 @@ mod tests {
         // Nothing staged on the file it came from: it already holds the value,
         // and an edit that changes nothing is not an edit.
         assert!(!app.staged.contains_key(&0), "{:?}", app.staged);
-        assert!(app.status.contains("overwritten on 2 files"), "{}", app.status);
+        assert!(
+            app.status.contains("overwritten on 2 files"),
+            "{}",
+            app.status
+        );
     }
 
     /// Backfill fills the gaps and disturbs nothing else.
@@ -4685,8 +5167,16 @@ mod tests {
         app.copy_out(true);
 
         assert_eq!(app.staged[&2].get("title"), Some(&Value::text("A")));
-        assert!(!app.staged.contains_key(&1), "B kept its own title: {:?}", app.staged);
-        assert!(app.status.contains("backfilled into 1 file"), "{}", app.status);
+        assert!(
+            !app.staged.contains_key(&1),
+            "B kept its own title: {:?}",
+            app.staged
+        );
+        assert!(
+            app.status.contains("backfilled into 1 file"),
+            "{}",
+            app.status
+        );
     }
 
     /// A clear reads as absent rather than as an empty string, so the row
@@ -4741,7 +5231,12 @@ mod mixed_set_tests {
     /// on the first or last option in the list.
     #[test]
     fn a_step_on_a_mixed_set_puts_every_file_on_the_commonest_answer() {
-        for key in [KeyCode::Char('l'), KeyCode::Char('h'), KeyCode::Right, KeyCode::Left] {
+        for key in [
+            KeyCode::Char('l'),
+            KeyCode::Char('h'),
+            KeyCode::Right,
+            KeyCode::Left,
+        ] {
             let mut app = trio();
             assert!(variant(&app).is_mixed());
             press(&mut app, key);
@@ -4788,11 +5283,20 @@ mod mixed_set_tests {
     fn a_tie_goes_to_the_earlier_option() {
         let opts: Vec<Opt> = ["Original", "Enhanced", "Clip"]
             .iter()
-            .map(|s| Opt { code: s.to_string(), label: s.to_string() })
+            .map(|s| Opt {
+                code: s.to_string(),
+                label: s.to_string(),
+            })
             .collect();
         let v = |s: &str| Some(Value::text(s));
-        assert_eq!(majority(&[v("Clip"), v("Original")], &opts).as_deref(), Some("Original"));
-        assert_eq!(majority(&[v("Clip"), v("Clip"), v("Original")], &opts).as_deref(), Some("Clip"));
+        assert_eq!(
+            majority(&[v("Clip"), v("Original")], &opts).as_deref(),
+            Some("Original")
+        );
+        assert_eq!(
+            majority(&[v("Clip"), v("Clip"), v("Original")], &opts).as_deref(),
+            Some("Clip")
+        );
         assert_eq!(majority(&[None, v("")], &opts), None);
     }
 }

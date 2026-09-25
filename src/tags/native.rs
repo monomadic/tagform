@@ -41,7 +41,10 @@ impl Entry {
         data.extend_from_slice(&1u32.to_be_bytes()); // well-known type: UTF-8
         data.extend_from_slice(&0u32.to_be_bytes()); // locale
         data.extend_from_slice(value.as_bytes());
-        Entry { name: name.to_string(), payload: data }
+        Entry {
+            name: name.to_string(),
+            payload: data,
+        }
     }
 
     /// The value, when it is text. `None` for the typed payloads this module
@@ -52,7 +55,8 @@ impl Entry {
     #[cfg(test)]
     pub fn as_text(&self) -> Option<&str> {
         let d = &self.payload;
-        if d.len() < 16 || &d[4..8] != b"data" || u32::from_be_bytes(d[8..12].try_into().ok()?) != 1 {
+        if d.len() < 16 || &d[4..8] != b"data" || u32::from_be_bytes(d[8..12].try_into().ok()?) != 1
+        {
             return None;
         }
         std::str::from_utf8(&d[16..]).ok()
@@ -158,7 +162,14 @@ fn be32(b: &[u8]) -> u32 {
     u32::from_be_bytes([b[0], b[1], b[2], b[3]])
 }
 
-fn scan(buf: &[u8], mut off: usize, end: usize, path: &str, out: &mut Vec<Survey>, frag: &mut bool) {
+fn scan(
+    buf: &[u8],
+    mut off: usize,
+    end: usize,
+    path: &str,
+    out: &mut Vec<Survey>,
+    frag: &mut bool,
+) {
     while off + 8 <= end {
         let size = be32(&buf[off..off + 4]) as usize;
         let typ = &buf[off + 4..off + 8];
@@ -264,7 +275,10 @@ fn pair(names: &[String], items: &[(u32, Vec<u8>)]) -> Option<Vec<Entry>> {
     let mut out = Vec::with_capacity(items.len());
     for (idx, payload) in items {
         let name = names.get(idx.checked_sub(1)? as usize)?;
-        out.push(Entry { name: name.clone(), payload: payload.clone() });
+        out.push(Entry {
+            name: name.clone(),
+            payload: payload.clone(),
+        });
     }
     Some(out)
 }
@@ -396,7 +410,11 @@ mod tests {
     }
 
     fn file(meta: &[u8], nested_in_udta: bool) -> Vec<u8> {
-        let inner = if nested_in_udta { boxed(b"udta", meta) } else { meta.to_vec() };
+        let inner = if nested_in_udta {
+            boxed(b"udta", meta)
+        } else {
+            meta.to_vec()
+        };
         let mut moov = Vec::new();
         moov.extend_from_slice(&inner);
         let mut f = boxed(b"ftyp", b"qt  ");
@@ -426,8 +444,11 @@ mod tests {
     /// carries no value, and rebuilding the box is the one chance to drop it.
     #[test]
     fn a_key_with_no_item_is_dropped() {
-        let s = survey_bytes(&file(&meta_box(false, &["title", "orphan"], &[(1, "a")]), true))
-            .unwrap();
+        let s = survey_bytes(&file(
+            &meta_box(false, &["title", "orphan"], &[(1, "a")]),
+            true,
+        ))
+        .unwrap();
         assert_eq!(s.entries.len(), 1);
         assert_eq!(s.entries[0].name, "title");
     }
@@ -469,7 +490,11 @@ mod tests {
     #[test]
     fn the_two_boxes_always_agree() {
         let entries = apply(
-            &[Entry::text("a", "1"), Entry::text("b", "2"), Entry::text("c", "3")],
+            &[
+                Entry::text("a", "1"),
+                Entry::text("b", "2"),
+                Entry::text("c", "3"),
+            ],
             &[("b".into(), String::new()), ("d".into(), "4".into())],
         );
         let keys = build_keys(&entries);
@@ -485,9 +510,15 @@ mod tests {
         p.extend_from_slice(&keys);
         p.extend_from_slice(&ilst);
         let back = survey_bytes(&file(&boxed(b"meta", &p), true)).unwrap();
-        let pairs: Vec<(&str, Option<&str>)> =
-            back.entries.iter().map(|e| (e.name.as_str(), e.as_text())).collect();
-        assert_eq!(pairs, [("a", Some("1")), ("c", Some("3")), ("d", Some("4"))]);
+        let pairs: Vec<(&str, Option<&str>)> = back
+            .entries
+            .iter()
+            .map(|e| (e.name.as_str(), e.as_text()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [("a", Some("1")), ("c", Some("3")), ("d", Some("4"))]
+        );
     }
 
     /// A file written in place by the exiftool path carries a second mdta box
@@ -507,11 +538,17 @@ mod tests {
         let s = survey_bytes(&f).unwrap();
         assert_eq!(s.base, "moov/udta/meta");
         assert_eq!(s.absorb, ["moov/meta"]);
-        let pairs: Vec<(&str, Option<&str>)> =
-            s.entries.iter().map(|e| (e.name.as_str(), e.as_text())).collect();
+        let pairs: Vec<(&str, Option<&str>)> = s
+            .entries
+            .iter()
+            .map(|e| (e.name.as_str(), e.as_text()))
+            .collect();
         assert_eq!(
             pairs,
-            [("title", Some("kept")), ("com.apple.quicktime.origin", Some("stray"))],
+            [
+                ("title", Some("kept")),
+                ("com.apple.quicktime.origin", Some("stray"))
+            ],
             "the file's own box wins, and the stray value is kept rather than dropped"
         );
     }
@@ -523,11 +560,20 @@ mod tests {
         let typed = Entry {
             name: "com.apple.quicktime.camera.focal_length.35mm_equivalent".into(),
             // A `data` box of well-known type 21 (signed int), not text.
-            payload: vec![0, 0, 0, 18, b'd', b'a', b't', b'a', 0, 0, 0, 21, 0, 0, 0, 0, 0, 26],
+            payload: vec![
+                0, 0, 0, 18, b'd', b'a', b't', b'a', 0, 0, 0, 21, 0, 0, 0, 0, 0, 26,
+            ],
         };
-        let out = apply(std::slice::from_ref(&typed), &[("title".into(), "new".into())]);
+        let out = apply(
+            std::slice::from_ref(&typed),
+            &[("title".into(), "new".into())],
+        );
         assert_eq!(out[0], typed);
-        assert_eq!(out[0].as_text(), None, "a typed payload must not read as text");
+        assert_eq!(
+            out[0].as_text(),
+            None,
+            "a typed payload must not read as text"
+        );
     }
 
     /// The one test here that needs a real file, because the layouts that
@@ -548,9 +594,20 @@ mod tests {
         let had = found.entries.len();
 
         let out = std::env::temp_dir().join("tagform-native-fixture.out.mov");
-        rewrite(&dst, &out, &found, &[("origin".into(), "fixture".into())], false).unwrap();
+        rewrite(
+            &dst,
+            &out,
+            &found,
+            &[("origin".into(), "fixture".into())],
+            false,
+        )
+        .unwrap();
 
-        assert_eq!(crate::tags::write::probe_streams(&out), before, "a track changed");
+        assert_eq!(
+            crate::tags::write::probe_streams(&out),
+            before,
+            "a track changed"
+        );
         let after = survey(&out).unwrap().unwrap();
         assert_eq!(after.entries.len(), had + 1);
         // The proof that §3.2 is gone: the reader that could not see an added

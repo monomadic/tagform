@@ -63,7 +63,9 @@ impl Agg {
         };
         let all_present = per_file.iter().all(|v| v.is_some());
         if all_present && present.all(|v| v == first) {
-            Agg::Same { value: first.clone() }
+            Agg::Same {
+                value: first.clone(),
+            }
         } else {
             Agg::Mixed { values: per_file }
         }
@@ -106,7 +108,13 @@ mod tests {
     #[test]
     fn lists_compare_by_content() {
         let l = |v: &[&str]| Some(Value::List(v.iter().map(|s| s.to_string()).collect()));
-        assert!(matches!(Agg::fold(vec![l(&["a", "b"]), l(&["a", "b"])]), Agg::Same { .. }));
-        assert!(matches!(Agg::fold(vec![l(&["a", "b"]), l(&["b", "a"])]), Agg::Mixed { .. }));
+        assert!(matches!(
+            Agg::fold(vec![l(&["a", "b"]), l(&["a", "b"])]),
+            Agg::Same { .. }
+        ));
+        assert!(matches!(
+            Agg::fold(vec![l(&["a", "b"]), l(&["b", "a"])]),
+            Agg::Mixed { .. }
+        ));
     }
 }

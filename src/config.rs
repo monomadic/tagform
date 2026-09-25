@@ -41,7 +41,10 @@ pub const VARIANT_ORDER: &[&str] = &["Original", "Enhanced", "Clip"];
 /// Stable, so unnamed values keep the order the config gave them.
 fn order_variants(v: &mut [String]) {
     v.sort_by_key(|x| {
-        VARIANT_ORDER.iter().position(|o| o.eq_ignore_ascii_case(x)).unwrap_or(VARIANT_ORDER.len())
+        VARIANT_ORDER
+            .iter()
+            .position(|o| o.eq_ignore_ascii_case(x))
+            .unwrap_or(VARIANT_ORDER.len())
     });
 }
 
@@ -129,7 +132,9 @@ fn parse_alias_values(text: &str, field: &str) -> Vec<String> {
         for (idx, _) in line.match_indices(&needle) {
             // Walk back from the marker to the quote that opens the literal.
             let before = &line[..idx];
-            let Some(start) = before.rfind('"') else { continue };
+            let Some(start) = before.rfind('"') else {
+                continue;
+            };
             let value = normalize(unwrap_const(&before[start + 1..]));
             if !value.is_empty() && !out.iter().any(|v| v.eq_ignore_ascii_case(&value)) {
                 out.push(value);
@@ -217,7 +222,10 @@ mod tests {
         let e = Enums::from_ytdlp_config(SAMPLE);
         // The alias literals are still "Media" and "VJ Clip"; the form offers
         // "Adult" and "Live Visual".
-        assert_eq!(e.category, vec!["Adult", "Footage", "Karaoke", "Live Visual"]);
+        assert_eq!(
+            e.category,
+            vec!["Adult", "Footage", "Karaoke", "Live Visual"]
+        );
     }
 
     /// The literals arrive in config order -- clip, master, original -- and
@@ -297,9 +305,8 @@ mod tests {
         // Not a constant: a per-file field, which can never be a set member.
         assert_eq!(unwrap_const("%(title)s"), "");
         assert_eq!(unwrap_const("%(uploader|unknown)s"), "");
-        let e = Enums::from_ytdlp_config(
-            "--alias x '--parse-metadata \"%(title)s:%(meta_genre)s\"'",
-        );
+        let e =
+            Enums::from_ytdlp_config("--alias x '--parse-metadata \"%(title)s:%(meta_genre)s\"'");
         assert_eq!(e.category, DEFAULT_CATEGORIES);
     }
 

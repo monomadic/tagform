@@ -70,7 +70,11 @@ impl FileTags {
     /// as the local-time rendering of exactly that `mvhd` instant, so the two
     /// differ on every footage file without anything having been clobbered.
     pub fn disputes(&self, f: &crate::model::schema::FieldDef) -> Option<(Value, Value)> {
-        let x = f.xmp.iter().find_map(|k| self.xmp.get(*k)).filter(|v| !v.is_empty())?;
+        let x = f
+            .xmp
+            .iter()
+            .find_map(|k| self.xmp.get(*k))
+            .filter(|v| !v.is_empty())?;
         let a = f
             .read
             .iter()
@@ -100,11 +104,20 @@ fn probe_atoms(path: &Path) -> Result<BTreeMap<String, Value>> {
         .output()
         .context("running ffprobe (is it installed?)")?;
     if !out.status.success() {
-        bail!("ffprobe failed on {}: {}", path.display(), String::from_utf8_lossy(&out.stderr).trim());
+        bail!(
+            "ffprobe failed on {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).context("parsing ffprobe json")?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).context("parsing ffprobe json")?;
     let mut map = BTreeMap::new();
-    if let Some(tags) = v.get("format").and_then(|f| f.get("tags")).and_then(|t| t.as_object()) {
+    if let Some(tags) = v
+        .get("format")
+        .and_then(|f| f.get("tags"))
+        .and_then(|t| t.as_object())
+    {
         for (k, val) in tags {
             let key = k.to_ascii_lowercase();
             if crate::model::schema::JUNK_KEYS.contains(&key.as_str()) {
@@ -139,7 +152,8 @@ fn probe_xmp(path: &Path) -> Result<BTreeMap<String, Value>> {
     if out.stdout.is_empty() {
         return Ok(BTreeMap::new());
     }
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).context("parsing exiftool json")?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).context("parsing exiftool json")?;
     let mut map = BTreeMap::new();
     let Some(obj) = v.get(0).and_then(|o| o.as_object()) else {
         return Ok(map);
@@ -151,9 +165,7 @@ fn probe_xmp(path: &Path) -> Result<BTreeMap<String, Value>> {
         // exiftool collapses a single-entry list to a scalar, so a list field
         // has to accept both shapes or a one-actor file reads as no list.
         let value = match val {
-            serde_json::Value::Array(a) => {
-                Value::List(a.iter().filter_map(json_scalar).collect())
-            }
+            serde_json::Value::Array(a) => Value::List(a.iter().filter_map(json_scalar).collect()),
             other => match json_scalar(other) {
                 Some(s) => Value::text(s),
                 None => continue,
@@ -197,7 +209,11 @@ mod rename_tests {
     fn tagged(key: &str, value: &str) -> FileTags {
         let mut atoms = BTreeMap::new();
         atoms.insert(key.to_string(), Value::text(value));
-        FileTags { path: PathBuf::from("/tmp/x.mp4"), atoms, xmp: BTreeMap::new() }
+        FileTags {
+            path: PathBuf::from("/tmp/x.mp4"),
+            atoms,
+            xmp: BTreeMap::new(),
+        }
     }
 
     /// A renamed set value has to *replace* the old spelling on screen, not sit
@@ -207,9 +223,18 @@ mod rename_tests {
     #[test]
     fn an_old_variant_value_reads_as_its_current_name() {
         let def = field_by_id("variant").expect("variant field");
-        assert_eq!(tagged("type", "Master").lookup(def), Some(Value::text("Enhanced")));
-        assert_eq!(tagged("variant", "Master").lookup(def), Some(Value::text("Enhanced")));
-        assert_eq!(tagged("variant", "Clip").lookup(def), Some(Value::text("Clip")));
+        assert_eq!(
+            tagged("type", "Master").lookup(def),
+            Some(Value::text("Enhanced"))
+        );
+        assert_eq!(
+            tagged("variant", "Master").lookup(def),
+            Some(Value::text("Enhanced"))
+        );
+        assert_eq!(
+            tagged("variant", "Clip").lookup(def),
+            Some(Value::text("Clip"))
+        );
     }
 
     /// The same mechanism, and the case that was documented as working but
@@ -233,7 +258,10 @@ mod rename_tests {
     #[test]
     fn kind_integers_pass_through_normalisation() {
         let def = field_by_id("kind").expect("kind field");
-        assert_eq!(tagged("media_type", "9").lookup(def), Some(Value::text("9")));
+        assert_eq!(
+            tagged("media_type", "9").lookup(def),
+            Some(Value::text("9"))
+        );
     }
 }
 

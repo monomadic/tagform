@@ -99,7 +99,11 @@ fn run(args: &[&str]) -> Result<Vec<Hit>> {
     let hits = parse(&String::from_utf8_lossy(&out.stdout));
     if hits.is_empty() {
         let err = String::from_utf8_lossy(&out.stderr);
-        let why = err.lines().last().map(|l| l.trim_start_matches("geocode: ").trim()).unwrap_or("");
+        let why = err
+            .lines()
+            .last()
+            .map(|l| l.trim_start_matches("geocode: ").trim())
+            .unwrap_or("");
         bail!("{}", if why.is_empty() { "no hits" } else { why });
     }
     Ok(hits)
@@ -182,11 +186,16 @@ mod tests {
 
     #[test]
     fn parses_the_helpers_columns_and_skips_a_broken_line() {
-        let hits = parse("Coro Hotel\tMakati\tMetro Manila\tPhilippines\t14.56410\t121.02995\nbroken line\n");
+        let hits = parse(
+            "Coro Hotel\tMakati\tMetro Manila\tPhilippines\t14.56410\t121.02995\nbroken line\n",
+        );
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name, "Coro Hotel");
         assert_eq!(hits[0].country, "Philippines");
-        assert_eq!(hits[0].summary(), "Coro Hotel, Makati, Metro Manila, Philippines");
+        assert_eq!(
+            hits[0].summary(),
+            "Coro Hotel, Makati, Metro Manila, Philippines"
+        );
     }
 
     /// A forward hit stages the venue; a reverse hit deliberately does not.
@@ -195,17 +204,32 @@ mod tests {
         let h = parse("Coro Hotel\tMakati\t\tPhilippines\t14.56410\t121.03\n").remove(0);
         let f = h.fields(true);
         assert_eq!(f[0], ("location_place", Value::text("Coro Hotel")));
-        assert!(!f.iter().any(|(id, _)| *id == "location_state"), "an empty part is not staged");
-        assert_eq!(f.last().unwrap(), &("coordinates", Value::text("+14.5641+121.0300/")));
-        assert!(!h.fields(false).iter().any(|(id, _)| *id == "location_place"));
+        assert!(
+            !f.iter().any(|(id, _)| *id == "location_state"),
+            "an empty part is not staged"
+        );
+        assert_eq!(
+            f.last().unwrap(),
+            &("coordinates", Value::text("+14.5641+121.0300/"))
+        );
+        assert!(!h
+            .fields(false)
+            .iter()
+            .any(|(id, _)| *id == "location_place"));
     }
 
     #[test]
     fn iso6709_round_trips_with_and_without_altitude() {
         assert_eq!(iso6709(14.5641, 121.03), "+14.5641+121.0300/");
         assert_eq!(iso6709(-33.8688, 151.2093), "-33.8688+151.2093/");
-        assert_eq!(parse_iso6709("+13.7165+100.5867+018.071/"), Some((13.7165, 100.5867)));
-        assert_eq!(parse_iso6709("-33.8688+151.2093/"), Some((-33.8688, 151.2093)));
+        assert_eq!(
+            parse_iso6709("+13.7165+100.5867+018.071/"),
+            Some((13.7165, 100.5867))
+        );
+        assert_eq!(
+            parse_iso6709("-33.8688+151.2093/"),
+            Some((-33.8688, 151.2093))
+        );
         assert_eq!(parse_iso6709("Makati"), None);
         assert_eq!(parse_iso6709("+91.0+0.0/"), None);
     }

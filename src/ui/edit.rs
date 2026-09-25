@@ -92,19 +92,45 @@ impl Editor {
                 // real -- so it is appended for this field rather than being
                 // dropped on the floor the moment the field is stepped.
                 if !shown.trim().is_empty()
-                    && !options.iter().any(|o| o.label.eq_ignore_ascii_case(shown.trim()))
+                    && !options
+                        .iter()
+                        .any(|o| o.label.eq_ignore_ascii_case(shown.trim()))
                 {
-                    options.push(Opt { code: shown.clone(), label: shown.clone() });
+                    options.push(Opt {
+                        code: shown.clone(),
+                        label: shown.clone(),
+                    });
                 }
-                Editor::Enum(EnumEdit { input: Input::new(shown), options })
+                Editor::Enum(EnumEdit {
+                    input: Input::new(shown),
+                    options,
+                })
             }
-            Control::List => Editor::Chips(Chips { input: Input::new(text), hash: false }),
-            Control::HashTags => Editor::Chips(Chips { input: Input::new(text), hash: true }),
-            Control::Url => Editor::Line { input: Input::new(text), kind: LineKind::Url },
-            Control::Date => Editor::Line { input: Input::new(text), kind: LineKind::Date },
-            Control::TextArea => Editor::Line { input: Input::new(text), kind: LineKind::Long },
+            Control::List => Editor::Chips(Chips {
+                input: Input::new(text),
+                hash: false,
+            }),
+            Control::HashTags => Editor::Chips(Chips {
+                input: Input::new(text),
+                hash: true,
+            }),
+            Control::Url => Editor::Line {
+                input: Input::new(text),
+                kind: LineKind::Url,
+            },
+            Control::Date => Editor::Line {
+                input: Input::new(text),
+                kind: LineKind::Date,
+            },
+            Control::TextArea => Editor::Line {
+                input: Input::new(text),
+                kind: LineKind::Long,
+            },
             Control::ReadOnly => Editor::ReadOnly(text),
-            Control::Text => Editor::Line { input: Input::new(text), kind: LineKind::Plain },
+            Control::Text => Editor::Line {
+                input: Input::new(text),
+                kind: LineKind::Plain,
+            },
         }
     }
 
@@ -236,14 +262,21 @@ fn validate_line(v: &str, kind: LineKind) -> Validation {
 /// nonsense month is the write path's problem, not a reason to paint the field
 /// red while it is still being typed.
 fn is_iso_timestamp(v: &str) -> bool {
-    let Some((date, time)) = v.split_once('T') else { return false };
+    let Some((date, time)) = v.split_once('T') else {
+        return false;
+    };
     if !is_iso_date(date) || time.len() < 5 {
         return false;
     }
     let b = time.as_bytes();
     b[2] == b':'
-        && b[..5].iter().enumerate().all(|(i, c)| i == 2 || c.is_ascii_digit())
-        && time[5..].chars().all(|c| c.is_ascii_digit() || ":+-.Z".contains(c))
+        && b[..5]
+            .iter()
+            .enumerate()
+            .all(|(i, c)| i == 2 || c.is_ascii_digit())
+        && time[5..]
+            .chars()
+            .all(|c| c.is_ascii_digit() || ":+-.Z".contains(c))
 }
 
 fn is_iso_date(v: &str) -> bool {
@@ -251,7 +284,9 @@ fn is_iso_date(v: &str) -> bool {
     b.len() == 10
         && b[4] == b'-'
         && b[7] == b'-'
-        && b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+        && b.iter()
+            .enumerate()
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
 }
 
 /// Only the editing chords are claimed. Everything else passes back so the app
@@ -324,11 +359,17 @@ pub fn stars_glyphs(n: u8) -> String {
 }
 
 fn parse_stars(s: &str) -> u8 {
-    s.trim().parse::<u8>().unwrap_or_else(|_| s.chars().filter(|c| *c == '★').count() as u8).min(5)
+    s.trim()
+        .parse::<u8>()
+        .unwrap_or_else(|_| s.chars().filter(|c| *c == '★').count() as u8)
+        .min(5)
 }
 
 pub fn split_list(s: &str) -> Vec<String> {
-    s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
+    s.split(',')
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect()
 }
 
 /// The control's reading of a tag line: repaired, so what a field reports is
@@ -350,7 +391,12 @@ mod tests {
         KeyEvent::new(k, KeyModifiers::NONE)
     }
     fn opts(v: &[(&str, &str)]) -> Vec<Opt> {
-        v.iter().map(|(c, l)| Opt { code: c.to_string(), label: l.to_string() }).collect()
+        v.iter()
+            .map(|(c, l)| Opt {
+                code: c.to_string(),
+                label: l.to_string(),
+            })
+            .collect()
     }
 
     fn ctrl(c: char) -> KeyEvent {
@@ -444,11 +490,17 @@ mod tests {
     fn the_bindings_reach_list_fields_too() {
         let mut e = Editor::new(
             Control::List,
-            Some(&Value::List(vec!["Sasha Grey".into(), "Manuel Ferrara".into()])),
+            Some(&Value::List(vec![
+                "Sasha Grey".into(),
+                "Manuel Ferrara".into(),
+            ])),
             vec![],
         );
         e.handle(ctrl('w'));
-        assert_eq!(e.value(), Value::List(vec!["Sasha Grey".into(), "Manuel".into()]));
+        assert_eq!(
+            e.value(),
+            Value::List(vec!["Sasha Grey".into(), "Manuel".into()])
+        );
         e.handle(ctrl('u'));
         assert_eq!(e.value(), Value::List(vec![]));
     }
@@ -486,7 +538,11 @@ mod tests {
 
     #[test]
     fn hashtags_round_trip_without_storing_the_hash() {
-        let mut e = Editor::new(Control::HashTags, Some(&Value::List(vec!["pov".into()])), vec![]);
+        let mut e = Editor::new(
+            Control::HashTags,
+            Some(&Value::List(vec!["pov".into()])),
+            vec![],
+        );
         for c in " #hd".chars() {
             e.handle(key(c));
         }
@@ -511,7 +567,11 @@ mod tests {
         let e = Editor::new(Control::Enum, Some(&Value::Text("Bespoke".into())), o);
         assert_eq!(e.display().0, "Bespoke");
         assert_eq!(e.value(), Value::Text("Bespoke".into()));
-        assert_eq!(e.validate(), Validation::Ok, "a value on the file is never an error");
+        assert_eq!(
+            e.validate(),
+            Validation::Ok,
+            "a value on the file is never an error"
+        );
     }
 
     /// A set has no open state at all now: it holds a value and hands every
@@ -524,10 +584,19 @@ mod tests {
         for k in [key('x'), key('j'), key('k'), key('h'), key('l')] {
             assert_eq!(e.handle(k), Reaction::Pass, "a set is not open");
         }
-        for c in [KeyCode::Left, KeyCode::Right, KeyCode::Enter, KeyCode::Backspace] {
+        for c in [
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Enter,
+            KeyCode::Backspace,
+        ] {
             assert_eq!(e.handle(code(c)), Reaction::Pass);
         }
-        assert_eq!(e.value(), Value::Text("9".into()), "nothing typed, nothing changed");
+        assert_eq!(
+            e.value(),
+            Value::Text("9".into()),
+            "nothing typed, nothing changed"
+        );
     }
 
     /// The date field arrives pre-filled when it is opened empty, so `set_text`
@@ -539,9 +608,17 @@ mod tests {
         assert_eq!(e.value(), Value::Text("2026-09-02T14:30:00+07:00".into()));
         assert_eq!(e.validate(), Validation::Ok);
 
-        let mut set = Editor::new(Control::Enum, Some(&Value::Text("Clip".into())), opts(&[("Clip", "Clip")]));
+        let mut set = Editor::new(
+            Control::Enum,
+            Some(&Value::Text("Clip".into())),
+            opts(&[("Clip", "Clip")]),
+        );
         set.set_text("nonsense");
-        assert_eq!(set.value(), Value::Text("Clip".into()), "a set has no line to fill");
+        assert_eq!(
+            set.value(),
+            Value::Text("Clip".into()),
+            "a set has no line to fill"
+        );
     }
 
     #[test]
@@ -557,8 +634,14 @@ mod tests {
     #[test]
     fn date_validation() {
         assert_eq!(validate_line("2026-08-29", LineKind::Date), Validation::Ok);
-        assert!(matches!(validate_line("20260829", LineKind::Date), Validation::Warn(_)));
-        assert!(matches!(validate_line("29/08/26", LineKind::Date), Validation::Warn(_)));
+        assert!(matches!(
+            validate_line("20260829", LineKind::Date),
+            Validation::Warn(_)
+        ));
+        assert!(matches!(
+            validate_line("29/08/26", LineKind::Date),
+            Validation::Warn(_)
+        ));
     }
 
     /// A timestamp is what the container holds and what ⏎ fills in, so it must
@@ -573,15 +656,29 @@ mod tests {
         ] {
             assert_eq!(validate_line(v, LineKind::Date), Validation::Ok, "{v}");
         }
-        for v in ["2026-09-02T", "2026-09-02T1430", "2026-9-2T14:30:00", "2026-09-02 14:30"] {
-            assert!(matches!(validate_line(v, LineKind::Date), Validation::Warn(_)), "{v}");
+        for v in [
+            "2026-09-02T",
+            "2026-09-02T1430",
+            "2026-9-2T14:30:00",
+            "2026-09-02 14:30",
+        ] {
+            assert!(
+                matches!(validate_line(v, LineKind::Date), Validation::Warn(_)),
+                "{v}"
+            );
         }
     }
 
     #[test]
     fn long_text_warns_past_the_desc_limit() {
-        assert_eq!(validate_line(&"x".repeat(255), LineKind::Long), Validation::Ok);
-        assert!(matches!(validate_line(&"x".repeat(256), LineKind::Long), Validation::Warn(_)));
+        assert_eq!(
+            validate_line(&"x".repeat(255), LineKind::Long),
+            Validation::Ok
+        );
+        assert!(matches!(
+            validate_line(&"x".repeat(256), LineKind::Long),
+            Validation::Warn(_)
+        ));
     }
 
     /// Seeding a control from a value and reading it straight back must be a
@@ -600,9 +697,17 @@ mod tests {
             (Control::Stars, None, vec![]),
             (Control::Stars, Some(Value::Text("3".into())), vec![]),
             (Control::List, None, vec![]),
-            (Control::List, Some(Value::List(vec!["A".into(), "B".into()])), vec![]),
+            (
+                Control::List,
+                Some(Value::List(vec!["A".into(), "B".into()])),
+                vec![],
+            ),
             (Control::HashTags, None, vec![]),
-            (Control::HashTags, Some(Value::List(vec!["pov".into()])), vec![]),
+            (
+                Control::HashTags,
+                Some(Value::List(vec!["pov".into()])),
+                vec![],
+            ),
             (Control::Url, None, vec![]),
             (Control::Date, None, vec![]),
             (Control::TextArea, None, vec![]),
@@ -614,7 +719,10 @@ mod tests {
         for (control, value, options) in cases {
             let once = Editor::new(control, value.as_ref(), options.clone()).value();
             let twice = Editor::new(control, Some(&once), options).value();
-            assert_eq!(once, twice, "{control:?} with {value:?} is not a fixed point");
+            assert_eq!(
+                once, twice,
+                "{control:?} with {value:?} is not a fixed point"
+            );
         }
     }
 
@@ -622,7 +730,11 @@ mod tests {
     /// acts on -- not a warning the user is free to ignore into a bad file.
     #[test]
     fn tag_with_a_slash_is_an_error() {
-        let e = Editor::new(Control::HashTags, Some(&Value::List(vec!["a/b".into()])), vec![]);
+        let e = Editor::new(
+            Control::HashTags,
+            Some(&Value::List(vec!["a/b".into()])),
+            vec![],
+        );
         assert!(matches!(e.validate(), Validation::Error(_)));
     }
 
@@ -630,7 +742,11 @@ mod tests {
     /// never blocks a write.
     #[test]
     fn a_slash_in_a_list_still_only_warns() {
-        let e = Editor::new(Control::List, Some(&Value::List(vec!["AC/DC".into()])), vec![]);
+        let e = Editor::new(
+            Control::List,
+            Some(&Value::List(vec!["AC/DC".into()])),
+            vec![],
+        );
         assert!(matches!(e.validate(), Validation::Warn(_)));
     }
 
@@ -645,7 +761,12 @@ mod tests {
         assert_eq!(e.validate(), Validation::Ok);
         assert_eq!(
             e.value(),
-            Value::List(vec!["another".into(), "tag".into(), "tag-three".into(), "tag-two".into()])
+            Value::List(vec![
+                "another".into(),
+                "tag".into(),
+                "tag-three".into(),
+                "tag-two".into()
+            ])
         );
     }
 }

@@ -28,7 +28,14 @@ fn cache_path(file: &Path, box_w: u32, box_h: u32) -> Result<PathBuf> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let key = format!("{}:{}:{}:{}x{}", file.display(), mtime, meta.len(), box_w, box_h);
+    let key = format!(
+        "{}:{}:{}:{}x{}",
+        file.display(),
+        mtime,
+        meta.len(),
+        box_w,
+        box_h
+    );
     let dir = cache_dir();
     std::fs::create_dir_all(&dir).ok();
     Ok(dir.join(format!("{:016x}.jpg", fnv1a(key.as_bytes()))))
@@ -59,7 +66,11 @@ fn fit_inside(w: u32, h: u32) -> String {
 /// Extract (or reuse) a thumbnail. Returns the cached jpg path.
 pub fn extract(file: &Path, box_w: u32, box_h: u32) -> Result<PathBuf> {
     let out = cache_path(file, box_w, box_h)?;
-    if out.exists() && std::fs::metadata(&out).map(|m| m.len() > 0).unwrap_or(false) {
+    if out.exists()
+        && std::fs::metadata(&out)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
         return Ok(out);
     }
     let vf = fit_inside(box_w, box_h);
@@ -79,7 +90,9 @@ pub fn extract(file: &Path, box_w: u32, box_h: u32) -> Result<PathBuf> {
             .stderr(Stdio::null())
             .status();
         if matches!(status, Ok(s) if s.success())
-            && std::fs::metadata(&out).map(|m| m.len() > 0).unwrap_or(false)
+            && std::fs::metadata(&out)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
         {
             return Ok(out);
         }
@@ -137,7 +150,11 @@ fn human_size(n: u64) -> String {
         v /= 1024.0;
         i += 1;
     }
-    if i == 0 { format!("{n} B") } else { format!("{v:.1} {}", U[i]) }
+    if i == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", U[i])
+    }
 }
 
 pub fn probe_media(file: &Path) -> Result<MediaInfo> {
@@ -157,7 +174,11 @@ pub fn probe_media(file: &Path) -> Result<MediaInfo> {
         for s in streams {
             match s.get("codec_type").and_then(|t| t.as_str()) {
                 Some("video") if info.vcodec.is_empty() => {
-                    info.vcodec = s.get("codec_name").and_then(|c| c.as_str()).unwrap_or("").into();
+                    info.vcodec = s
+                        .get("codec_name")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .into();
                     let w = s.get("width").and_then(|w| w.as_u64()).unwrap_or(0) as u32;
                     let h = s.get("height").and_then(|h| h.as_u64()).unwrap_or(0) as u32;
                     // A phone clip is stored landscape with a 90/270 display
@@ -174,15 +195,27 @@ pub fn probe_media(file: &Path) -> Result<MediaInfo> {
                     (info.width, info.height) = if quarter_turn { (h, w) } else { (w, h) };
                 }
                 Some("audio") if info.acodec.is_empty() => {
-                    info.acodec = s.get("codec_name").and_then(|c| c.as_str()).unwrap_or("").into();
+                    info.acodec = s
+                        .get("codec_name")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .into();
                 }
                 _ => {}
             }
         }
     }
     if let Some(f) = v.get("format") {
-        info.duration = f.get("duration").and_then(|d| d.as_str()).and_then(|d| d.parse().ok()).unwrap_or(0.0);
-        info.size = f.get("size").and_then(|s| s.as_str()).and_then(|s| s.parse().ok()).unwrap_or(0);
+        info.duration = f
+            .get("duration")
+            .and_then(|d| d.as_str())
+            .and_then(|d| d.parse().ok())
+            .unwrap_or(0.0);
+        info.size = f
+            .get("size")
+            .and_then(|s| s.as_str())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
     }
     Ok(info)
 }
@@ -209,7 +242,10 @@ mod tests {
     #[test]
     fn a_quarter_turn_swaps_the_reported_dimensions() {
         for rot in [90.0_f64, -90.0, 270.0] {
-            assert!((rot.abs() as i64 % 180) == 90, "rot {rot} should be a quarter turn");
+            assert!(
+                (rot.abs() as i64 % 180) == 90,
+                "rot {rot} should be a quarter turn"
+            );
         }
         for rot in [0.0_f64, 180.0, -180.0] {
             assert!((rot.abs() as i64 % 180) != 90, "rot {rot} should not swap");

@@ -45,7 +45,9 @@ fn generate(dir: &Path, name: &str, args: &[&str]) -> PathBuf {
         .args(args)
         .arg("--")
         .arg(&path);
-    let out = cmd.output().expect("ffmpeg must be on PATH to run the fixture suite");
+    let out = cmd
+        .output()
+        .expect("ffmpeg must be on PATH to run the fixture suite");
     assert!(
         out.status.success(),
         "generating {name}: {}",
@@ -79,7 +81,11 @@ fn exiftool(args: &[&str]) {
         .args(args)
         .output()
         .expect("exiftool must be on PATH to run the fixture suite");
-    assert!(out.status.success(), "exiftool: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "exiftool: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn staged(pairs: &[(&str, &str)]) -> BTreeMap<String, Value> {
@@ -90,7 +96,11 @@ fn staged(pairs: &[(&str, &str)]) -> BTreeMap<String, Value> {
 }
 
 /// Plan and execute, the way the form does.
-fn write_it(path: &Path, edits: &BTreeMap<String, Value>, faststart: bool) -> (Writer, Result<(), String>) {
+fn write_it(
+    path: &Path,
+    edits: &BTreeMap<String, Value>,
+    faststart: bool,
+) -> (Writer, Result<(), String>) {
     let tags = probe::probe(path).expect("probing the fixture");
     let plan = plan::build(&tags, edits, faststart);
     let mut on = |_: write::Step| {};
@@ -129,16 +139,27 @@ fn every_xmp_field_survives_a_write() {
     ]);
     // Four tags, not five: the two Subject values are one list.
     let before = probe::probe(&f).unwrap().xmp;
-    assert_eq!(before.len(), 4, "the fixture must carry XMP to be worth testing");
+    assert_eq!(
+        before.len(),
+        4,
+        "the fixture must carry XMP to be worth testing"
+    );
 
     // A key the file does not have, so this cannot take the cheap in-place path.
     let (writer, r) = write_it(&f, &staged(&[("origin", "Camera")]), false);
     r.expect("the write must succeed");
-    assert_ne!(writer, Writer::Exiftool, "the fixture was meant to force a rewrite");
+    assert_ne!(
+        writer,
+        Writer::Exiftool,
+        "the fixture was meant to force a rewrite"
+    );
 
     let after = probe::probe(&f).unwrap().xmp;
     assert_eq!(after, before, "XMP changed across a write");
-    assert_eq!(text(&probe::probe(&f).unwrap(), "origin"), Some("Camera".into()));
+    assert_eq!(
+        text(&probe::probe(&f).unwrap(), "origin"),
+        Some("Camera".into())
+    );
 }
 
 /// The rule §9.2 encodes: a file carrying XMP must never be handed to a bare
@@ -150,8 +171,8 @@ fn a_file_carrying_xmp_never_routes_to_a_bare_remux() {
     exiftool(&["-xmp:Rating=4", "--", &f.to_string_lossy()]);
 
     for edits in [
-        staged(&[("title", "Updated")]),     // update only
-        staged(&[("origin", "Camera")]),     // adds a key
+        staged(&[("title", "Updated")]), // update only
+        staged(&[("origin", "Camera")]), // adds a key
     ] {
         let tags = probe::probe(&f).unwrap();
         for faststart in [false, true] {
@@ -207,7 +228,10 @@ fn every_field_round_trips() {
     let mut claimed: Vec<&str> = Vec::new();
     let mut edits: BTreeMap<String, Value> = BTreeMap::new();
     let mut fields: Vec<&crate::model::schema::FieldDef> = Vec::new();
-    for def in crate::model::schema::FIELDS.iter().filter(|d| !d.mdta.is_empty()) {
+    for def in crate::model::schema::FIELDS
+        .iter()
+        .filter(|d| !d.mdta.is_empty())
+    {
         if def.mdta.iter().any(|k| claimed.contains(k)) {
             continue;
         }
@@ -215,7 +239,10 @@ fn every_field_round_trips() {
         edits.insert(def.id.to_string(), Value::Text(format!("v-{}", def.id)));
         fields.push(def);
     }
-    assert!(edits.len() > 10, "the schema should have plenty of mdta-backed fields");
+    assert!(
+        edits.len() > 10,
+        "the schema should have plenty of mdta-backed fields"
+    );
 
     let (_, r) = write_it(&f, &edits, false);
     r.expect("the write must succeed");
@@ -230,7 +257,11 @@ fn every_field_round_trips() {
             }
         }
     }
-    assert!(missing.is_empty(), "keys did not round-trip:\n  {}", missing.join("\n  "));
+    assert!(
+        missing.is_empty(),
+        "keys did not round-trip:\n  {}",
+        missing.join("\n  ")
+    );
 }
 
 /// An emptied field must remove the key, not leave an empty one behind: an
@@ -240,14 +271,25 @@ fn every_field_round_trips() {
 fn an_emptied_field_removes_the_key() {
     let dir = workspace("delete");
     let f = tagged(&dir, "del.mp4");
-    assert_eq!(text(&probe::probe(&f).unwrap(), "title"), Some("Original".into()));
+    assert_eq!(
+        text(&probe::probe(&f).unwrap(), "title"),
+        Some("Original".into())
+    );
 
     let (_, r) = write_it(&f, &staged(&[("title", "")]), false);
     r.expect("the write must succeed");
 
     let got = probe::probe(&f).unwrap();
-    assert_eq!(text(&got, "title"), None, "the key should be gone, not empty");
-    assert_eq!(text(&got, "category"), Some("Footage".into()), "a neighbour was lost");
+    assert_eq!(
+        text(&got, "title"),
+        None,
+        "the key should be gone, not empty"
+    );
+    assert_eq!(
+        text(&got, "category"),
+        Some("Footage".into()),
+        "a neighbour was lost"
+    );
 }
 
 /// Unrecognised keys are never dropped (invariant 4): a key no field claims
@@ -258,7 +300,14 @@ fn a_key_no_field_claims_survives() {
     let f = generate(
         &dir,
         "custom.mp4",
-        &["-movflags", "+use_metadata_tags", "-metadata", "title=Original", "-metadata", "sound_designer=Someone"],
+        &[
+            "-movflags",
+            "+use_metadata_tags",
+            "-metadata",
+            "title=Original",
+            "-metadata",
+            "sound_designer=Someone",
+        ],
     );
     let (_, r) = write_it(&f, &staged(&[("origin", "Camera")]), false);
     r.expect("the write must succeed");
@@ -282,14 +331,22 @@ fn two_fields_writing_one_key_fail_rather_than_pick_a_winner() {
     let f = tagged(&dir, "collide.mp4");
     let before = std::fs::read(&f).unwrap();
 
-    let (_, r) = write_it(&f, &staged(&[("actors", "One, Two"), ("artist", "Someone Else")]), false);
+    let (_, r) = write_it(
+        &f,
+        &staged(&[("actors", "One, Two"), ("artist", "Someone Else")]),
+        false,
+    );
 
     assert!(r.is_err(), "two values for one key must not report success");
     assert!(
         r.unwrap_err().contains("did not round-trip"),
         "the verify is what catches this, and its message is what explains it"
     );
-    assert_eq!(std::fs::read(&f).unwrap(), before, "a failed write changed the file");
+    assert_eq!(
+        std::fs::read(&f).unwrap(),
+        before,
+        "a failed write changed the file"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -311,19 +368,32 @@ fn extra_tracks_survive_a_write() {
         .args(["-map", "0:v", "-map", "1:a", "-map", "2:a"])
         .args(["-c:v", "libx264", "-c:a", "aac"])
         .args(["-timecode", "01:00:00:00"])
-        .args(["-movflags", "+use_metadata_tags", "-metadata", "title=Original"])
+        .args([
+            "-movflags",
+            "+use_metadata_tags",
+            "-metadata",
+            "title=Original",
+        ])
         .arg("--")
         .arg(&f)
         .output()
         .expect("ffmpeg");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let before = write::probe_streams(&f);
     assert_eq!(before.len(), 4, "video, two audio, timecode");
 
     let (_, r) = write_it(&f, &staged(&[("origin", "Camera")]), false);
     r.expect("the write must succeed");
-    assert_eq!(write::probe_streams(&f), before, "a track changed across the write");
+    assert_eq!(
+        write::probe_streams(&f),
+        before,
+        "a track changed across the write"
+    );
 }
 
 /// A moov-at-end file is detected as such, and asking for faststart moves it.
@@ -332,12 +402,22 @@ fn a_moov_at_end_file_is_detected_and_moved() {
     use crate::tags::atoms::{layout, Layout};
     let dir = workspace("faststart");
     let f = tagged(&dir, "slow.mp4");
-    assert_eq!(layout(&f), Layout::MoovAtEnd, "ffmpeg's default should put moov last");
+    assert_eq!(
+        layout(&f),
+        Layout::MoovAtEnd,
+        "ffmpeg's default should put moov last"
+    );
 
     let (_, r) = write_it(&f, &staged(&[("title", "Updated")]), true);
     r.expect("the write must succeed");
-    assert!(layout(&f).is_faststart(), "faststart was asked for and not delivered");
-    assert_eq!(text(&probe::probe(&f).unwrap(), "title"), Some("Updated".into()));
+    assert!(
+        layout(&f).is_faststart(),
+        "faststart was asked for and not delivered"
+    );
+    assert_eq!(
+        text(&probe::probe(&f).unwrap(), "title"),
+        Some("Updated".into())
+    );
 }
 
 /// A fragmented file is declined by the native writer rather than written with
@@ -349,7 +429,12 @@ fn a_fragmented_file_is_declined_by_the_native_writer() {
     let f = generate(
         &dir,
         "frag.mp4",
-        &["-movflags", "+use_metadata_tags+frag_keyframe+empty_moov", "-metadata", "title=Original"],
+        &[
+            "-movflags",
+            "+use_metadata_tags+frag_keyframe+empty_moov",
+            "-metadata",
+            "title=Original",
+        ],
     );
     assert!(
         crate::tags::native::survey(&f).unwrap().is_none(),
@@ -358,7 +443,11 @@ fn a_fragmented_file_is_declined_by_the_native_writer() {
 
     let tags = probe::probe(&f).unwrap();
     let plan = plan::build(&tags, &staged(&[("origin", "Camera")]), false);
-    assert_ne!(plan.writer, Writer::Native, "routed to a writer that cannot handle it");
+    assert_ne!(
+        plan.writer,
+        Writer::Native,
+        "routed to a writer that cannot handle it"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -386,7 +475,11 @@ fn a_read_only_directory_fails_and_leaves_the_original_alone() {
     std::fs::set_permissions(&dir, perms).unwrap();
 
     assert!(r.is_err(), "a write into a read-only directory must fail");
-    assert_eq!(std::fs::read(&f).unwrap(), before, "the original was modified by a failed write");
+    assert_eq!(
+        std::fs::read(&f).unwrap(),
+        before,
+        "the original was modified by a failed write"
+    );
 }
 
 /// A truncated file is not a container. Every path must refuse it rather than
@@ -408,7 +501,11 @@ fn a_truncated_file_is_refused() {
             "a truncated file must not write successfully"
         );
     }
-    assert_eq!(std::fs::read(&f).unwrap(), before, "a refused write still changed the file");
+    assert_eq!(
+        std::fs::read(&f).unwrap(),
+        before,
+        "a refused write still changed the file"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -430,19 +527,34 @@ fn an_hevc_m4v_can_be_remuxed() {
         &dir,
         "hevc.mp4",
         &[
-            "-c:v", "libx265", "-x265-params", "log-level=none",
-            "-movflags", "+use_metadata_tags+frag_keyframe+empty_moov",
-            "-metadata", "title=Original",
+            "-c:v",
+            "libx265",
+            "-x265-params",
+            "log-level=none",
+            "-movflags",
+            "+use_metadata_tags+frag_keyframe+empty_moov",
+            "-metadata",
+            "title=Original",
         ],
     );
     let f = dir.join("hevc.m4v");
     std::fs::rename(&src, &f).expect("renaming the fixture to .m4v");
 
     let (writer, r) = write_it(&f, &staged(&[("origin", "Camera")]), false);
-    assert_ne!(writer, Writer::Native, "the fixture must reach ffmpeg to test anything");
+    assert_ne!(
+        writer,
+        Writer::Native,
+        "the fixture must reach ffmpeg to test anything"
+    );
     r.expect("an HEVC .m4v must remux");
-    assert_eq!(text(&probe::probe(&f).unwrap(), "origin"), Some("Camera".into()));
-    assert_eq!(text(&probe::probe(&f).unwrap(), "title"), Some("Original".into()));
+    assert_eq!(
+        text(&probe::probe(&f).unwrap(), "origin"),
+        Some("Camera".into())
+    );
+    assert_eq!(
+        text(&probe::probe(&f).unwrap(), "title"),
+        Some("Original".into())
+    );
 }
 
 /// `.mov` is the one extension where the muxer is a real difference in what
@@ -478,11 +590,19 @@ fn a_cameras_creation_time_is_the_date_and_survives_a_remux() {
     // No `use_metadata_tags`: the time lands in `mvhd` and nowhere else, as
     // a camera leaves it. No mdta box either, so the native writer declines
     // and the remux is the path taken.
-    let path = generate(&dir, "cam.mp4", &["-metadata", "creation_time=2024-02-04T03:18:59Z"]);
+    let path = generate(
+        &dir,
+        "cam.mp4",
+        &["-metadata", "creation_time=2024-02-04T03:18:59Z"],
+    );
     let date = field_by_id("date").unwrap();
     let shot = Value::text("2024-02-04T03:18:59.000000Z");
     let before = probe::probe(&path).unwrap();
-    assert_eq!(before.lookup(date), Some(shot.clone()), "the Date field reads mvhd");
+    assert_eq!(
+        before.lookup(date),
+        Some(shot.clone()),
+        "the Date field reads mvhd"
+    );
     let t = atoms::times(&path).expect("a readable mvhd");
     assert_ne!(t.creation, 0);
 
@@ -498,10 +618,16 @@ fn a_cameras_creation_time_is_the_date_and_survives_a_remux() {
         assert_eq!(w, writer, "{round} write took the expected path");
         assert_eq!(atoms::times(&path), Some(t), "{round} write kept mvhd");
         let after = probe::probe(&path).unwrap();
-        assert_eq!(after.lookup(date), Some(shot.clone()), "{round} write: Date still reads");
+        assert_eq!(
+            after.lookup(date),
+            Some(shot.clone()),
+            "{round} write: Date still reads"
+        );
         assert_eq!(text(&after, key).as_deref(), Some(value));
         assert!(
-            !text(&after, "creation_time").unwrap_or_default().contains(';'),
+            !text(&after, "creation_time")
+                .unwrap_or_default()
+                .contains(';'),
             "{round} write promoted creation_time into a second, accumulating copy"
         );
     }
