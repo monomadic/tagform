@@ -14,16 +14,62 @@
 //! the plan `w` confirms, and never written until then. A field the page does
 //! not answer is simply not in the list, which is what leaves the existing
 //! value alone.
+//!
+//! `Cache` is the same errand with a memory: the app holds one for the session
+//! so a page is asked once, however many files were pointed at it.
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value as Json;
+use std::collections::HashMap;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 use crate::model::value::Value;
 
 /// Looked up on PATH, like every other external tool here. Optional: a missing
 /// `yt-dlp` costs you `d` and nothing else.
 const TOOL: &str = "yt-dlp";
+
+/// The pages already asked, for as long as the program runs.
+///
+/// A page extraction is seconds of network, and the same page is asked more
+/// than once in ordinary use: a batch where forty cuts of one work share the
+/// URL they were downloaded from is one page, forty times over, and pressing
+/// `i u` again after undoing the last one is the same page once more. Cheap to
+/// hold -- what is kept is the handful of field values the page yielded, not
+/// the info dict it came from.
+///
+/// Successes only. A page that failed may have failed because the network was
+/// down or the cookies were stale, and a retry has to be allowed to work;
+/// nothing here should be able to make an error permanent.
+///
+/// Keyed on the URL exactly as the field holds it, trimmed. Two spellings of
+/// one page are two entries, which costs an extraction and cannot be wrong --
+/// deciding that two URLs are the same page is yt-dlp's job, not ours.
+///
+/// Shared with the thread the fetch runs on, so the cloneable handle is the
+/// type itself rather than an `Arc` the caller has to remember to wrap it in.
+#[derive(Clone, Default)]
+pub struct Cache(Arc<Mutex<HashMap<String, Vec<(&'static str, Value)>>>>);
+
+impl Cache {
+    /// `fetch`, but asking the page only the first time.
+    pub fn fetch(&self, url: &str) -> Result<Vec<(&'static str, Value)>> {
+        if let Some(hit) = self.map().get(url) {
+            return Ok(hit.clone());
+        }
+        let fields = fetch(url)?;
+        self.map().insert(url.to_string(), fields.clone());
+        Ok(fields)
+    }
+
+    /// A poisoned lock is a panic that happened while holding a map of strings,
+    /// which leaves the map itself perfectly usable -- and losing the cache is
+    /// not worth a second panic on top of the first.
+    fn map(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<(&'static str, Value)>>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
 
 /// Ask the page for its metadata and translate it into field values.
 ///
@@ -207,6 +253,19 @@ mod tests {
         assert_eq!(iso_date("20091025").as_deref(), Some("2009-10-25"));
         assert_eq!(iso_date("2009-10-25"), None);
         assert_eq!(iso_date("NA"), None);
+    }
+
+    /// A URL the cache already answers is answered from the cache: the URL
+    /// here could not survive an extraction, so an `Ok` proves yt-dlp was
+    /// never asked.
+    #[test]
+    fn a_cached_url_is_not_asked_again() {
+        let cache = Cache::default();
+        let fields = vec![("title", Value::text("A Title"))];
+        cache.map().insert("not://a.url".to_string(), fields.clone());
+        assert_eq!(cache.fetch("not://a.url").unwrap(), fields);
+        // And only that URL: a spelling the cache has not seen is a miss.
+        assert!(cache.map().get("not://a.url/other").is_none());
     }
 
     #[test]

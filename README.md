@@ -136,6 +136,18 @@ and Date. `f` parses the filename instead: `#tags`, `★` stars, and
 `Actor, Actor (Channel) - Title`, filling only the fields that are still
 empty. Both letters still work without moving the cursor first.
 
+Over a batch of clips — every file in view agreeing its Variant is `Clip` —
+`f` reads one more field that no single name can give: the Track number.
+Where the names carry exactly one number that climbs through the batch
+(`birds 2019 avary in the wind 01`, `birds 2019 cherry big 02`,
+`birds 2019 03` — the year never moves, the tail does), that number is staged
+as each file's Track. A name that already has a Track keeps it, and a batch
+whose names spell out two climbing numbers, or none, is left alone.
+
+A page is asked once. Forty cuts of one work that share a URL cost one
+extraction, and so does pressing `i u` again after undoing it; only successes
+are remembered, so a fetch that failed on a dropped network can be retried.
+
 ### Help is one key away
 
 `?` opens the full key map, which is rendered from the same table as `--help`.
@@ -169,7 +181,7 @@ ring.
 | `w` | write staged edits (shows a plan first) |
 | `ctrl-s` / `cmd-s` | the same, from either mode — commits the open field first (`cmd` needs a terminal with the kitty keyboard protocol) |
 | `r` | rename the file — or every file in the selection — from the tags on disk, by running `rename-video` |
-| `i` | import — `j`/`k` pick a source and `⏎` runs it, or name one outright: `u` fetches the page behind the URL field with `yt-dlp`, `f` reads the filename. A fetch takes the page's word; a filename fills only the fields that are still empty. `u` takes either back in one step |
+| `i` | import — `j`/`k` pick a source and `⏎` runs it, or name one outright: `u` fetches the page behind the URL field with `yt-dlp`, `f` reads the filename. A fetch takes the page's word; a filename fills only the fields that are still empty, and over a batch of clips also numbers the Track from the sequence in the names. `u` takes either back in one step |
 | `m` | merge a list field across every file in the selection |
 | `I` | inspector — per-file values for the focused field |
 | `]` / `[` (or `ctrl-n` / `ctrl-p`) / `a` | next file / previous file / all files |
