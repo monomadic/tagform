@@ -245,7 +245,13 @@ fn in_place(plan: &FilePlan, on: OnStep<'_>) -> Result<(), WriteError> {
         restore_mtime(&plan.path, t);
     }
     step(on, "verifying", 0.7);
-    verify_atoms(&plan.path, &plan.atoms).map_err(WriteError::Failed)
+    verify_atoms(&plan.path, &plan.atoms).map_err(WriteError::Failed)?;
+    // The other writers verify their XMP; this one used to check only the
+    // atoms, so an XMP edit exiftool silently declined was reported written.
+    if !plan.xmp.is_empty() {
+        verify_xmp(&plan.path, &plan.xmp).map_err(WriteError::Failed)?;
+    }
+    Ok(())
 }
 
 /// XMP list tags append on assignment, so a bare set would grow the list every
@@ -693,11 +699,15 @@ fn mtime(path: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).ok()?.modified().ok()
 }
 
-/// `touch -r` rather than a syscall: it is what the rest of this repo uses and
-/// it needs no extra dependency for something done once per file.
-fn restore_mtime(path: &Path, _t: std::time::SystemTime) {
-    let _ = _t;
-    let _ = Command::new("touch").arg("-r").arg(path).arg(path).status();
+/// Best effort: a write that lands but leaves a fresh mtime is still a
+/// good write, so this never fails the write. It used to shell out to
+/// `touch -r path path`, which sets a file's mtime from itself and so did
+/// nothing at all; every write bumped the mtime for as long as that stood.
+fn restore_mtime(path: &Path, t: std::time::SystemTime) {
+    let _ = std::fs::File::options()
+        .write(true)
+        .open(path)
+        .and_then(|f| f.set_modified(t));
 }
 
 /// Run ffmpeg with `-progress` on stdout, calling `tick` with the position in

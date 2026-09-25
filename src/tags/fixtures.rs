@@ -210,6 +210,67 @@ fn xmp_written_to_a_file_without_any_is_not_dropped() {
     );
 }
 
+/// The in-place writer is the one path that edits the original directly, so
+/// its verification is the only thing standing between a declined XMP edit
+/// and a "written" report. Both keys already exist on the file, which is
+/// what routes the plan in place.
+#[test]
+fn an_in_place_write_verifies_its_xmp() {
+    let dir = workspace("in-place-xmp");
+    let f = tagged(&dir, "xmp.mp4");
+    exiftool(&["-XMP-dc:Subject=old", "--", &f.to_string_lossy()]);
+
+    let mut edits = BTreeMap::new();
+    edits.insert(
+        "tags".to_string(),
+        Value::List(vec!["new".into(), "newer".into()]),
+    );
+    let (writer, r) = write_it(&f, &edits, false);
+    r.expect("the write must succeed");
+    assert_eq!(
+        writer,
+        Writer::Exiftool,
+        "the fixture was meant to stay in place"
+    );
+
+    let got = probe::probe(&f).unwrap();
+    assert_eq!(text(&got, "keywords"), Some("new, newer".into()));
+    assert_eq!(
+        got.xmp.get("XMP-dc:Subject"),
+        Some(&Value::List(vec!["new".into(), "newer".into()])),
+        "the XMP half of an in-place write was not written"
+    );
+}
+
+/// A tag edit is not a modification of the footage, and a library sorted by
+/// date-modified should not see one. Every writer promises this; for a long
+/// while none delivered it, because `restore_mtime` set the file's mtime
+/// from itself.
+#[test]
+fn the_mtime_survives_every_writer() {
+    use std::time::{Duration, UNIX_EPOCH};
+    let dir = workspace("mtime");
+    let then = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+
+    // In place: a key the file already has. Native: a key it does not.
+    for (name, edits) in [
+        ("in-place.mp4", staged(&[("title", "Updated")])),
+        ("native.mp4", staged(&[("origin", "Camera")])),
+    ] {
+        let f = tagged(&dir, name);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(then)
+            .unwrap();
+        let (writer, r) = write_it(&f, &edits, false);
+        r.expect("the write must succeed");
+        let after = std::fs::metadata(&f).unwrap().modified().unwrap();
+        assert_eq!(after, then, "{writer:?} bumped the mtime");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // round-trips
 // ---------------------------------------------------------------------------
