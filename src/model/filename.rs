@@ -28,6 +28,10 @@
 //! returns, so the app stages both through one path. A field the name does
 //! not carry is not in the list; what the caller does about a field that is
 //! already filled is the caller's rule (the import never overwrites).
+//!
+//! One field cannot be read from a name on its own: a clip's Track number is
+//! only a number until you see the names beside it. `track_sequence` takes the
+//! whole batch for that reason, and is the one function here that does.
 
 use std::path::Path;
 
@@ -188,6 +192,138 @@ fn split_people(p: &str) -> (Vec<String>, Option<String>) {
     (actors, channel)
 }
 
+
+/// A digit run longer than this is not a clip number. Four digits is where the
+/// numbers that are *never* a track live -- `2019`, `1080`, `2160` -- and
+/// excluding them by shape is what keeps a year that happens to climb across a
+/// batch from being read as the sequence.
+const MAX_TRACK_DIGITS: usize = 3;
+
+/// The number each name in a batch carries as its place in a sequence, one per
+/// stem in the order given, or `None` if the batch does not spell one out.
+///
+/// The shape this recognises is a directory of cuts from one work:
+///
+/// ```text
+/// birds 2019 avary in the wind 01.mp4
+/// birds 2019 cherry big 02.mp4
+/// birds 2019 03.mp4
+/// ```
+///
+/// Every name holds two numbers; only one of them climbs. So the candidates
+/// are the digit runs at one *slot* -- counted from the front of the name's
+/// runs, and from the back, since the count of runs per name varies -- and a
+/// slot qualifies when every name has a run there and the values strictly
+/// increase through the batch. `2019` is excluded before that by
+/// `MAX_TRACK_DIGITS`.
+///
+/// "Through the batch" is the order given -- the order the batch is listed in,
+/// where the climb is the thing you can see -- or, failing that, natural
+/// filename order, which is what rescues an unpadded `clip 9`, `clip 10` that
+/// a shell glob handed over as 10 before 9. Either will do: each name's number
+/// is read from that name, so the order only ever decides *which* number is
+/// the sequence, never which file gets what.
+///
+/// Two slots that both climb, to different sequences, is an ambiguous batch
+/// and yields nothing. The number is the caller's to compare against what the
+/// files already hold -- this says only what the names say.
+pub fn track_sequence(stems: &[&str]) -> Option<Vec<u32>> {
+    // One name is not a sequence: there is nothing for it to increase against.
+    if stems.len() < 2 {
+        return None;
+    }
+    let runs: Vec<Vec<u32>> = stems.iter().map(|s| numbers(s)).collect();
+    let given: Vec<usize> = (0..stems.len()).collect();
+    let mut natural = given.clone();
+    natural.sort_by(|a, b| natural_cmp(stems[*a], stems[*b]));
+    let climbs = |vals: &[u32], order: &[usize]| order.windows(2).all(|w| vals[w[0]] < vals[w[1]]);
+
+    let mut found: Vec<Vec<u32>> = Vec::new();
+    for slot in 0..runs.iter().map(Vec::len).max()? {
+        for from_end in [false, true] {
+            let Some(vals) = at_slot(&runs, slot, from_end) else { continue };
+            if !climbs(&vals, &given) && !climbs(&vals, &natural) {
+                continue;
+            }
+            if !found.contains(&vals) {
+                found.push(vals);
+            }
+        }
+    }
+    match found.len() {
+        1 => found.pop(),
+        _ => None,
+    }
+}
+
+/// The value every name holds at one slot, counted from the front of its runs
+/// or from the back. `None` if any name is short of that slot -- a sequence
+/// one file is not part of is not a sequence over this batch.
+fn at_slot(runs: &[Vec<u32>], slot: usize, from_end: bool) -> Option<Vec<u32>> {
+    runs.iter()
+        .map(|r| {
+            let at = if from_end { r.len().checked_sub(slot + 1)? } else { slot };
+            r.get(at).copied()
+        })
+        .collect()
+}
+
+/// The maximal runs of digits in a stem, in order, dropping the ones too long
+/// to be a track number. Maximal first and filtered after, so `2019` is gone
+/// rather than read as a `201` and a `9`.
+fn numbers(stem: &str) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut rest = stem;
+    while let Some(start) = rest.find(|c: char| c.is_ascii_digit()) {
+        let run = &rest[start..];
+        let end = run.find(|c: char| !c.is_ascii_digit()).unwrap_or(run.len());
+        if end <= MAX_TRACK_DIGITS {
+            if let Ok(n) = run[..end].parse::<u32>() {
+                out.push(n);
+            }
+        }
+        rest = &run[end..];
+    }
+    out
+}
+
+/// Order two stems the way a file browser lists them: digit runs compare as
+/// numbers and everything else byte by byte, so `clip 9` comes before
+/// `clip 10`. Plain lexicographic order puts `10` first, which would read an
+/// unpadded sequence as decreasing and refuse it.
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (mut x, mut y) = (a.as_bytes(), b.as_bytes());
+    loop {
+        match (x.first(), y.first()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(p), Some(q)) if p.is_ascii_digit() && q.is_ascii_digit() => {
+                let (nx, rx) = take_number(x);
+                let (ny, ry) = take_number(y);
+                if nx != ny {
+                    return nx.cmp(&ny);
+                }
+                (x, y) = (rx, ry);
+            }
+            (Some(p), Some(q)) if p != q => return p.cmp(q),
+            _ => (x, y) = (&x[1..], &y[1..]),
+        }
+    }
+}
+
+/// The leading digit run as a number, and what follows it. Saturating: a run
+/// of forty digits is not a number anyone is sequencing by, and only its
+/// relative order matters here.
+fn take_number(s: &[u8]) -> (u128, &[u8]) {
+    let end = s.iter().position(|b| !b.is_ascii_digit()).unwrap_or(s.len());
+    let n = s[..end].iter().fold(0u128, |acc, b| {
+        acc.saturating_mul(10).saturating_add(u128::from(b - b'0'))
+    });
+    (n, &s[end..])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,6 +457,64 @@ mod tests {
         let out = parse_path(Path::new("/x/Ann (Ch) - T #a ★★★★★.mp4"));
         assert_eq!(text(&out, "title").as_deref(), Some("T"));
         assert_eq!(text(&out, "rating").as_deref(), Some("5"));
+    }
+
+    /// The batch the feature exists for: one number climbs through the names,
+    /// and the other -- a year, in every name and never moving -- does not.
+    #[test]
+    fn a_climbing_number_in_a_batch_of_names_is_the_track() {
+        let stems = [
+            "birds 2019 avary in the wind 01",
+            "birds 2019 cherry big 02",
+            "birds 2019 03",
+        ];
+        assert_eq!(track_sequence(&stems), Some(vec![1, 2, 3]));
+    }
+
+    /// Counted from the back of each name's numbers as well as the front, so
+    /// a name with an extra number in front of the sequence still lines up.
+    #[test]
+    fn the_slot_is_found_from_either_end() {
+        assert_eq!(track_sequence(&["s01 clip 1", "clip 2", "s01 clip 3"]), Some(vec![1, 2, 3]));
+    }
+
+    /// Natural order, not byte order: unpadded numbers run 9, 10, 11 rather
+    /// than 10, 11, 9, and byte order would read that as decreasing.
+    #[test]
+    fn an_unpadded_sequence_is_read_in_natural_order() {
+        assert_eq!(track_sequence(&["clip 9", "clip 10", "clip 11"]), Some(vec![9, 10, 11]));
+        // Whatever order the caller passes them in: each name still gives its
+        // own number, and only which slot is the sequence was in question.
+        assert_eq!(track_sequence(&["clip 11", "clip 9", "clip 10"]), Some(vec![11, 9, 10]));
+        assert_eq!(track_sequence(&["clip 03", "clip 02", "clip 01"]), Some(vec![3, 2, 1]));
+    }
+
+    /// What must not become a track: a number that never moves, a number
+    /// missing from one of the names, a repeat, and a batch of one.
+    #[test]
+    fn a_batch_without_one_climbing_number_yields_nothing() {
+        assert_eq!(track_sequence(&["birds 2019 a", "birds 2019 b"]), None);
+        assert_eq!(track_sequence(&["clip 01", "clip 02", "clip"]), None);
+        assert_eq!(track_sequence(&["clip 01", "clip 01"]), None);
+        assert_eq!(track_sequence(&["clip 01"]), None);
+        assert_eq!(track_sequence(&[]), None);
+    }
+
+    /// Two slots that both climb cannot both be the track number, and picking
+    /// one of them would be a guess. The names have to be unambiguous.
+    #[test]
+    fn an_ambiguous_batch_yields_nothing() {
+        assert_eq!(track_sequence(&["a 1 5", "a 2 6", "a 3 7"]), None);
+    }
+
+    /// A four-digit run is a year or a resolution, never a clip number -- and
+    /// it is dropped whole, not read as the three digits it opens with.
+    #[test]
+    fn long_digit_runs_are_not_track_numbers() {
+        assert_eq!(numbers("birds 2019 03"), vec![3]);
+        assert_eq!(numbers("1080p 720p"), vec![720]);
+        // A year that climbs is still not a track number.
+        assert_eq!(track_sequence(&["a 2019", "a 2020"]), None);
     }
 
     #[test]

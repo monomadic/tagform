@@ -468,6 +468,11 @@ pub struct App {
     /// The place lookup in progress, if one is (§5.5). Owns every key while
     /// it is up, like the import menu it is reached from.
     pub locate: Option<Locate>,
+    /// The pages already fetched this session, so a batch that shares a URL --
+    /// forty cuts of one work, downloaded together -- asks it once, and so
+    /// does a second `i u` over the same file. Cloned into the fetch thread,
+    /// which is what fills it.
+    fetch_cache: fetch::Cache,
     /// Live position of the running write. The write happens on its own thread
     /// precisely so this can be painted while it runs -- done inline, the event
     /// loop cannot redraw and a multi-gigabyte remux looks like a hang.
@@ -543,6 +548,7 @@ impl App {
             conflicts: BTreeMap::new(),
             fetching: false,
             locate: None,
+            fetch_cache: fetch::Cache::default(),
             progress: None,
             editor: None,
             mode: Mode::Select,
@@ -1466,11 +1472,14 @@ impl App {
         };
         self.fetching = true;
         let tx = self.tx.clone();
+        let cache = self.fetch_cache.clone();
         std::thread::spawn(move || {
             let out = jobs
                 .iter()
                 // One page down must not cost the rest of the batch its tags.
-                .map(|(i, url)| (*i, fetch::fetch(url).map_err(|e| format!("{e:#}"))))
+                // Through the cache, so the second file to name a page gets
+                // the first one's answer: sequential for exactly that reason.
+                .map(|(i, url)| (*i, cache.fetch(url).map_err(|e| format!("{e:#}"))))
                 .collect();
             let _ = tx.send(Msg::Fetched(out));
         });
@@ -1491,14 +1500,20 @@ impl App {
     /// the fetch: a page is an authority worth taking the word of, but a name
     /// was composed *from* tags, so where the container disagrees with it the
     /// container is the newer of the two. Per file in scope, each from its
-    /// own name. Synchronous -- there is nothing to wait on.
+    /// own name -- plus the one field that is read from the batch rather than
+    /// from a name, `filename_tracks` below. Synchronous -- there is nothing
+    /// to wait on.
     fn import_filename(&mut self) {
         self.commit_editor();
+        let tracks = self.filename_tracks();
         let out = self
             .scope()
             .into_iter()
             .map(|i| {
-                let fields = filename::parse_path(&self.files[i].path);
+                let mut fields = filename::parse_path(&self.files[i].path);
+                if let Some(n) = tracks.get(&i) {
+                    fields.push(("track", Value::Text(n.to_string())));
+                }
                 let r = if fields.is_empty() {
                     Err(format!("nothing recognised in {}", file_name(&self.files[i].path)))
                 } else {
@@ -1560,6 +1575,41 @@ impl App {
         };
     }
 
+    /// The Track number each file's name gives it, when the batch in scope is
+    /// a set of clips numbered through their names (§9.4).
+    ///
+    /// Three conditions, all of them narrow on purpose. More than one file:
+    /// a sequence needs something to climb against, and a single file in view
+    /// has no batch to read. Every file in scope agreeing that its Variant is
+    /// a Clip: that is the one Variant whose number means "cut N of a work",
+    /// and the only one the form offers a Track row for unprompted. And a set
+    /// of names that spells out exactly one climbing number -- ambiguity is
+    /// `filename::track_sequence`'s to refuse, and it does.
+    ///
+    /// What comes back is only what the names say. The import stages it like
+    /// every other field a name carries, which is to say into the empty ones
+    /// only: a Track already on a file outranks a guess made from a filename.
+    fn filename_tracks(&self) -> BTreeMap<usize, u32> {
+        let scope = self.scope();
+        if scope.len() < 2 {
+            return BTreeMap::new();
+        }
+        let clip = agreed_field(&self.files, &scope, &self.staged, "variant")
+            .is_some_and(|v| v.eq_ignore_ascii_case(CLIP));
+        if !clip {
+            return BTreeMap::new();
+        }
+        let stems: Vec<String> = scope
+            .iter()
+            .map(|i| self.files[*i].path.file_stem().unwrap_or_default().to_string_lossy().into_owned())
+            .collect();
+        let stems: Vec<&str> = stems.iter().map(String::as_str).collect();
+        match filename::track_sequence(&stems) {
+            Some(ns) => scope.into_iter().zip(ns).collect(),
+            None => BTreeMap::new(),
+        }
+    }
+
     /// What the import menu shows beside each source, for the file in view
     /// (the first in scope, in the aggregate). Computed here rather than in
     /// the painter so the preview and the import cannot disagree about what
@@ -1576,9 +1626,13 @@ impl App {
         });
         let path = self.files.get(idx).map(|f| f.path.clone()).unwrap_or_default();
         let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let mut fields = filename::parse_path(&path);
+        if let Some(n) = self.filename_tracks().get(&idx) {
+            fields.push(("track", Value::Text(n.to_string())));
+        }
         let mut fills = Vec::new();
         let mut keeps = Vec::new();
-        for (id, value) in filename::parse_path(&path) {
+        for (id, value) in fields {
             let label = key_label(id);
             let disk = self.files.get(idx).and_then(|f| disk_value(f, id));
             let now = overlay(disk, self.staged.get(&idx).and_then(|m| m.get(id)));
@@ -3948,6 +4002,67 @@ mod tests {
         press(&mut app, KeyCode::Char('i'));
         press(&mut app, KeyCode::Char('f'));
         assert_eq!(app.status, "nothing new: every field the name carries is already set");
+    }
+
+    /// Clips, in a batch, with one number climbing through their names: the
+    /// number is the Track, and the file that already has one keeps it.
+    #[test]
+    fn a_bulk_filename_import_numbers_a_batch_of_clips() {
+        let mut app = clips(&[
+            ("birds 2019 avary in the wind 01", None),
+            ("birds 2019 cherry big 02", None),
+            ("birds 2019 03", Some("7")),
+        ]);
+        // The menu previews what the import will do, for the file in view.
+        let p = app.import_preview();
+        assert!(p.fills.contains(&("Track".to_string(), Value::text("1"))), "{:?}", p.fills);
+
+        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('f'));
+        assert_eq!(app.staged[&0].get("track"), Some(&Value::text("1")));
+        assert_eq!(app.staged[&1].get("track"), Some(&Value::text("2")));
+        assert_eq!(app.staged[&2].get("track"), None, "a Track already on the file is not overwritten");
+        // And the whole of it is one undo step, like every other import.
+        press(&mut app, KeyCode::Char('u'));
+        assert!(app.staged.is_empty(), "{:?}", app.staged);
+    }
+
+    /// The three ways a batch is not a numbered set of clips. Each leaves the
+    /// Track field exactly as it found it.
+    #[test]
+    fn track_numbers_come_only_from_a_batch_of_clips_that_spells_them_out() {
+        // A Variant the whole batch does not agree on.
+        let mut app = clips(&[("clip 01", None), ("clip 02", None)]);
+        app.set_staged(1, "variant", Value::text("Original"));
+        assert!(app.filename_tracks().is_empty());
+
+        // Names with no sequence in them.
+        assert!(clips(&[("one clip", None), ("another clip", None)]).filename_tracks().is_empty());
+
+        // A single file: in single-file view there is no batch to read, even
+        // though the files either side of it are numbered.
+        let mut app = clips(&[("clip 01", None), ("clip 02", None)]);
+        app.view = Some(0);
+        assert!(app.filename_tracks().is_empty());
+    }
+
+    /// A batch of adult clips at the given names, each with an optional Track
+    /// already on it.
+    fn clips(files: &[(&str, Option<&str>)]) -> App {
+        use crate::tags::probe::FileTags;
+        let files = files
+            .iter()
+            .map(|(name, track)| FileTags {
+                path: PathBuf::from(format!("/nonexistent/{name}.mp4")),
+                atoms: [("category", ADULT), ("variant", CLIP)]
+                    .into_iter()
+                    .chain(track.map(|t| ("track", t)))
+                    .map(|(k, v)| (k.to_string(), Value::text(v)))
+                    .collect(),
+                xmp: BTreeMap::new(),
+            })
+            .collect();
+        App::new(files, BTreeMap::new(), false)
     }
 
     /// A name with nothing to read says so and stages nothing.

@@ -1520,6 +1520,20 @@ below and what the library's media names actually carry; the `[Channel]`
 form described next is not recognised as a channel. Composing is still
 delegated, as the next note says.
 
+**The Track number is read from the batch, not from the name.** A clip's number
+is the one field a single filename cannot answer: `03` in a stem is a number,
+and only the names beside it say it is a sequence. So when the aggregate view
+holds more than one file and they agree their Variant is `Clip`,
+`filename::track_sequence` takes every stem at once and looks for a *slot* --
+the nth digit run from the front of a name's runs, or from the back, since the
+count per name varies -- whose values strictly increase through the batch, in
+the order given or in natural filename order. Runs of four digits or more are
+excluded by shape before that, which is what keeps the `2019` in
+`birds 2019 cherry big 02` out of the running; two slots that both climb is
+ambiguous and yields nothing at all. What it finds is staged through the same
+fill-only-the-empty rule as the rest of the name, so a Track already on a file
+outranks it.
+
 ⟨built, differs⟩ **Composing is delegated, for now.** `r` in Select mode hands
 the files in view to `rename-video` (`tags/rename.rs`), which composes both
 grammars below from the same atoms and XMP tags this program writes, and picks

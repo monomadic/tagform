@@ -175,6 +175,18 @@ runs it the other way, naming the place those numbers are at. In the
 filename, `rename-video` names a clip by its Location, and by its Place when
 no city was written.
 
+Over a batch of clips — every file in view agreeing its Variant is `Clip` —
+`f` reads one more field that no single name can give: the Track number.
+Where the names carry exactly one number that climbs through the batch
+(`birds 2019 avary in the wind 01`, `birds 2019 cherry big 02`,
+`birds 2019 03` — the year never moves, the tail does), that number is staged
+as each file's Track. A name that already has a Track keeps it, and a batch
+whose names spell out two climbing numbers, or none, is left alone.
+
+A page is asked once. Forty cuts of one work that share a URL cost one
+extraction, and so does pressing `i u` again after undoing it; only successes
+are remembered, so a fetch that failed on a dropped network can be retried.
+
 ### Help is one key away
 
 `?` opens the full key map, which is rendered from the same table as `--help`.
@@ -207,7 +219,7 @@ WCAG 3:1 contrast floor by a test, including the focused-row fill.
 | `w` | write staged edits (shows a plan first) |
 | `ctrl-s` / `cmd-s` | the same, from either mode — commits the open field first (`cmd` needs a terminal with the kitty keyboard protocol) |
 | `r` | rename the file — or every file in the selection — from its tags, by running `rename-video`. With edits pending, the rename is queued onto the write and runs after it; `r` again unqueues it. A name another file already holds is never taken: the file's page says so in red, and the file is listed in red |
-| `i` | import — `j`/`k` pick a source and `⏎` runs it, or name one outright: `u` fetches the page behind the URL field with `yt-dlp`, `f` reads the filename, `l` looks a place up with MapKit and fills the location block. A fetch or a lookup takes the source's word; a filename fills only the fields that are still empty. `u` takes any of them back in one step |
+| `i` | import — `j`/`k` pick a source and `⏎` runs it, or name one outright: `u` fetches the page behind the URL field with `yt-dlp`, `f` reads the filename, `l` looks a place up with MapKit and fills the location block. A fetch or a lookup takes the source's word; a filename fills only the fields that are still empty, and over a batch of clips also numbers the Track from the sequence in the names. `u` takes any of them back in one step |
 | `m` | merge a list field across every file in the selection |
 | `I` | inspector — per-file values for the focused field |
 | `]` / `[` (or `ctrl-n` / `ctrl-p`) / `a` | next file / previous file / all files |
