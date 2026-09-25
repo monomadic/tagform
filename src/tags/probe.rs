@@ -147,10 +147,22 @@ fn probe_xmp(path: &Path) -> Result<BTreeMap<String, Value>> {
         .arg(path)
         .output()
         .context("running exiftool (is it installed?)")?;
-    // exiftool exits non-zero for a file with no XMP at all; that is not an
-    // error, it is the common case for a plain download.
+    // Measured: a file with no XMP at all exits 0 with a `SourceFile`-only
+    // object. A missing, empty, unreadable or malformed file exits 1 -- and
+    // still prints that same object, so stdout alone cannot tell the two
+    // apart. Reading "no XMP" off a failure is how the planner would pick the
+    // remux that destroys XMP (invariant 2), so anything but a clean exit is
+    // an error here.
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        bail!(
+            "exiftool could not read {}: {}",
+            path.display(),
+            err.trim().lines().next().unwrap_or("(no output)")
+        );
+    }
     if out.stdout.is_empty() {
-        return Ok(BTreeMap::new());
+        bail!("exiftool printed nothing for {}", path.display());
     }
     let v: serde_json::Value =
         serde_json::from_slice(&out.stdout).context("parsing exiftool json")?;
@@ -286,6 +298,24 @@ fn split_tags(s: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// exiftool prints the same `SourceFile`-only object for a file it could
+    /// not read as for one with no XMP, differing only in exit status. The
+    /// old code read the first as the second and let the planner route a
+    /// file it knew nothing about to a bare remux.
+    #[test]
+    fn an_unreadable_file_is_an_error_not_an_absence_of_xmp() {
+        let dir = std::env::temp_dir().join(format!("tagform-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let empty = dir.join("empty.mp4");
+        std::fs::write(&empty, b"").unwrap();
+        assert!(
+            probe_xmp(&empty).is_err(),
+            "an empty file must not read as no XMP"
+        );
+        assert!(probe_xmp(&dir.join("missing.mp4")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn mdta_joined_actors_become_a_list() {
