@@ -603,6 +603,14 @@ fn verify_xmp(path: &Path, wanted: &[(String, Vec<String>)]) -> Result<()> {
     let got = probe::probe(path).context("re-probing XMP after write")?;
     for (tag, values) in wanted {
         let actual = got.xmp.get(tag);
+        // Nothing wanted is a deletion, and it has landed when the tag is
+        // gone -- the same reading `verify_atoms` gives an empty value.
+        if values.iter().all(|v| v.is_empty()) {
+            if actual.is_some_and(|a| !a.is_empty()) {
+                bail!("XMP {tag} should have been removed but still reads {actual:?}");
+            }
+            continue;
+        }
         let ok = match actual {
             Some(Value::List(l)) => l == values,
             Some(Value::Text(s)) => values.len() == 1 && &values[0] == s,

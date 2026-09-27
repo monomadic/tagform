@@ -3069,11 +3069,17 @@ impl App {
         };
         let (key, label) = (row.key.clone(), row.label.clone());
         let was = self.staged.clone();
-        self.stage(key, empty);
+        self.stage(key.clone(), empty);
+        let still_staged = self.scope().iter().any(|i| self.file_is_staged(*i, &key));
         self.status = if was == self.staged {
             format!("{label} is already empty")
-        } else {
+        } else if still_staged {
             format!("{label} cleared")
+        } else {
+            // The value was only ever staged -- seeded by the filename, or
+            // typed and not yet written. Removing it is an un-staging, and
+            // "cleared" would promise a deletion `w` has nothing to make.
+            format!("{label} is not in the file's tags · nothing to remove")
         };
     }
 
@@ -4733,6 +4739,28 @@ mod tests {
         assert_eq!(
             app.status,
             "Channel is not in the file's tags · nothing to remove"
+        );
+    }
+
+    /// The same deletion made with ⌫ from Select mode has to say the same
+    /// thing: it read "cleared", on a row that then showed no edit at all.
+    #[test]
+    fn clearing_a_seeded_value_says_the_file_never_had_it() {
+        use crate::tags::probe::FileTags;
+        let f = FileTags {
+            path: PathBuf::from("/nonexistent/(Studio) - A Title.mp4"),
+            atoms: BTreeMap::new(),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = App::new(vec![f], BTreeMap::new(), false);
+        app.seed_from_filenames();
+        assert_eq!(shown(&app, "title"), Some(Value::text("A Title")));
+        app.focus = app.rows.iter().position(|r| r.key == "title").unwrap();
+        press(&mut app, KeyCode::Backspace);
+        assert!(!app.file_is_staged(0, "title"));
+        assert_eq!(
+            app.status,
+            "Title is not in the file's tags · nothing to remove"
         );
     }
 

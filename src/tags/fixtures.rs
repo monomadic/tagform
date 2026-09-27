@@ -353,6 +353,48 @@ fn an_emptied_field_removes_the_key() {
     );
 }
 
+/// A clear is an edit like any other, and has to land on the XMP copy too:
+/// XMP wins on read, so a title removed from the atom alone comes straight
+/// back. The verify used to read the missing tag as one that "did not
+/// survive", which failed every deletion on a file carrying XMP.
+#[test]
+fn an_emptied_field_removes_its_xmp_too() {
+    let dir = workspace("delete-xmp");
+    for (name, edits) in [
+        ("text.mp4", staged(&[("title", "")])),
+        (
+            "list.mp4",
+            BTreeMap::from([("tags".to_string(), Value::List(Vec::new()))]),
+        ),
+    ] {
+        let f = tagged(&dir, name);
+        exiftool(&[
+            "-XMP-dc:Title=Original",
+            "-XMP-dc:Subject=a",
+            "-xmp:Rating=4",
+            "--",
+            &f.to_string_lossy(),
+        ]);
+
+        let (_, r) = write_it(&f, &edits, false);
+        r.expect("the write must succeed");
+
+        let got = probe::probe(&f).unwrap();
+        let (key, tag) = if name == "text.mp4" {
+            ("title", "XMP-dc:Title")
+        } else {
+            ("keywords", "XMP-dc:Subject")
+        };
+        assert_eq!(text(&got, key), None, "the key should be gone");
+        assert_eq!(got.xmp.get(tag), None, "the XMP copy should be gone");
+        assert_eq!(
+            got.xmp.get("XMP-xmp:Rating"),
+            Some(&Value::text("4")),
+            "a neighbour was lost"
+        );
+    }
+}
+
 /// Unrecognised keys are never dropped (invariant 4): a key no field claims
 /// has to survive a write aimed at a different field.
 #[test]

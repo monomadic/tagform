@@ -119,8 +119,11 @@ pub fn atom_text(v: &Value) -> String {
     }
 }
 
+/// A cleared field is no values at all, not one empty one: the empty list is
+/// how a deletion is spelled from here to the verify.
 fn xmp_values(v: &Value) -> Vec<String> {
     match v {
+        _ if v.is_empty() => Vec::new(),
         Value::Text(s) => vec![s.clone()],
         Value::List(l) => l.clone(),
     }
