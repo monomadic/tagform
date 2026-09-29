@@ -97,10 +97,24 @@ pub fn parse(stem: &str) -> Vec<(&'static str, Value)> {
         None => (None, rest.as_str()),
     };
 
-    // People and channel before the first ` - `, title after it.
+    // A dated name is a footage name, and that grammar closes with the
+    // places in parentheses -- `(Clip N)`, then `(Location)` -- whether or
+    // not a title came before them. Taken off first, so neither ends up as
+    // the tail of a title or read as a channel.
+    let (rest, location) = match date {
+        Some(_) => take_places(rest),
+        None => (rest.trim(), None),
+    };
+
+    // People and channel before the first ` - `, title after it. A dated
+    // name with no ` - ` has no title at all: `rename-video` writes the dash
+    // whenever it writes a title after a date, so what is left is the people.
+    // Reading `2023-12-11--23-21-58 Marjorie (Makati)` as a title staged one
+    // on a file that was already named exactly as its tags say.
     let (people, title) = match rest.split_once(" - ") {
         Some((l, r)) => (Some(l.trim()), r.trim()),
-        None => (None, rest.trim()),
+        None if date.is_some() => (Some(rest), ""),
+        None => (None, rest),
     };
     let (actors, channel) = match people {
         Some(p) if !p.is_empty() => split_people(p),
@@ -119,6 +133,9 @@ pub fn parse(stem: &str) -> Vec<(&'static str, Value)> {
     }
     if let Some(c) = channel {
         out.push(("channel", Value::Text(c)));
+    }
+    if let Some(l) = location {
+        out.push(("location", Value::Text(l)));
     }
     if let Some(n) = rating {
         out.push(("rating", Value::Text(n.to_string())));
@@ -195,6 +212,28 @@ fn take_date(s: &str) -> Option<(String, &str)> {
         Some(c) if c.is_whitespace() => Some((date.to_string(), s[10..].trim_start())),
         _ => None,
     }
+}
+
+/// The trailing parenthesised groups of a footage stem: what is left once
+/// they are gone, and the location among them. `(Clip N)` is the clip's
+/// number, which `track_sequence` reads from the batch, not a place.
+fn take_places(s: &str) -> (&str, Option<String>) {
+    let mut rest = s.trim();
+    let mut location = None;
+    while rest.ends_with(')') {
+        let Some(open) = rest.rfind('(') else { break };
+        let inner = rest[open + 1..rest.len() - 1].trim();
+        let clip = inner
+            .strip_prefix("Clip ")
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+        if !clip && !inner.is_empty() && location.is_none() {
+            location = Some(inner.to_string());
+        } else if !clip {
+            break;
+        }
+        rest = rest[..open].trim_end();
+    }
+    (rest, location)
 }
 
 /// `Actor A, Actor B (Channel)` → the actors and the channel. The channel is
@@ -443,6 +482,16 @@ mod tests {
         assert_eq!(text(&out, "date").as_deref(), Some("2024-05-01"));
         assert_eq!(list(&out, "actors"), ["Ann"]);
         // Not a date: the digits run straight into a word.
+        // The footage name with no title: people, then the place.
+        let out = parse("2023-12-11--23-21-58 Marjorie (Makati) [1080p]");
+        assert_eq!(text(&out, "title"), None);
+        assert_eq!(list(&out, "actors"), ["Marjorie"]);
+        assert_eq!(text(&out, "location").as_deref(), Some("Makati"));
+        assert_eq!(text(&out, "channel"), None);
+        let out = parse("2024-05-01--13-22-08 Ann, Bo - T (Clip 2) (Oslo) #a");
+        assert_eq!(text(&out, "title").as_deref(), Some("T"));
+        assert_eq!(list(&out, "actors"), ["Ann", "Bo"]);
+        assert_eq!(text(&out, "location").as_deref(), Some("Oslo"));
         let out = parse("2024-05-01x - T");
         assert!(get(&out, "date").is_none());
         assert_eq!(list(&out, "actors"), ["2024-05-01x"]);
