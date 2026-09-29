@@ -13,6 +13,7 @@ use std::process::{Command, Stdio};
 
 use crate::model::value::Value;
 use crate::tags::atoms;
+use crate::tags::mkv;
 use crate::tags::native;
 use crate::tags::plan::{exiftool_name, junk_clears, FilePlan, Writer};
 use crate::tags::probe;
@@ -212,7 +213,52 @@ pub fn execute(
         Writer::Native => native_write(plan, on),
         Writer::Ffmpeg => remux(plan, None, on),
         Writer::TwoPass => remux(plan, Some(xmp_snapshot), on),
+        Writer::Matroska => matroska(plan, on),
     }
+}
+
+// ---------------------------------------------------------------------------
+// matroska
+// ---------------------------------------------------------------------------
+
+/// The same sequence as every other writer -- sibling temp, verify, rename
+/// -- around a backend that shares nothing with them (DESIGN §9.6).
+fn matroska(plan: &FilePlan, on: OnStep<'_>) -> Result<(), WriteError> {
+    step(on, "preparing", 0.0);
+    let path = &plan.path;
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let need = size + HEADROOM;
+    if let Some(avail) = atoms::free_bytes(dir) {
+        if avail < need {
+            return Err(WriteError::NoSpace { need, avail });
+        }
+    }
+
+    let shapes = probe_streams(path);
+    let tmp = temp_beside(path);
+    let _guard = TempGuard(tmp.clone());
+
+    step(on, "writing tags", 0.10);
+    let done = mkv::write(path, &tmp, &plan.atoms, &plan.xmp, plan.faststart)
+        .map_err(WriteError::Failed)?;
+    if done.is_none() {
+        return Ok(());
+    }
+
+    step(on, "verifying", REMUX_SHARE);
+    verify_duration(path, &tmp).map_err(WriteError::Failed)?;
+    verify_streams(&shapes, &tmp).map_err(WriteError::Failed)?;
+    verify_atoms(&tmp, &plan.atoms).map_err(WriteError::Failed)?;
+    if !plan.xmp.is_empty() {
+        verify_xmp(&tmp, &plan.xmp).map_err(WriteError::Failed)?;
+    }
+    verify_with_ffprobe(&tmp, &plan.atoms).map_err(WriteError::Failed)?;
+
+    step(on, "replacing the original", 0.97);
+    swap(&tmp, path).map_err(WriteError::Failed)?;
+    std::mem::forget(_guard);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -572,6 +618,27 @@ impl Drop for TempGuard {
 // ---------------------------------------------------------------------------
 // verification
 // ---------------------------------------------------------------------------
+
+/// A Matroska file is read back by the library that wrote it, which proves
+/// the two agree with each other and nothing more. ffprobe shares no code
+/// with either, so it is asked as well.
+fn verify_with_ffprobe(path: &Path, wanted: &[(String, String)]) -> Result<()> {
+    let got = probe::probe_atoms(path).context("reading the result with ffprobe")?;
+    for (key, value) in wanted {
+        let actual = got.get(&key.to_ascii_lowercase()).map(|v| match v {
+            Value::Text(s) => s.clone(),
+            Value::List(l) => l.join(", "),
+        });
+        let agrees = match value.is_empty() {
+            true => actual.as_deref().is_none_or(str::is_empty),
+            false => actual.as_deref() == Some(value.as_str()),
+        };
+        if !agrees {
+            bail!("ffprobe reads {key} as {actual:?}, not {value:?}");
+        }
+    }
+    Ok(())
+}
 
 /// Read the result back and confirm it says what was asked for. This is what
 /// catches a key the writer silently dropped, and it is what turns the mapping

@@ -1153,6 +1153,31 @@ impl App {
         }
     }
 
+    /// What the one layout switch is called for the files that are loaded.
+    /// It asks for the same thing of both containers -- what a reader needs
+    /// first, at the front -- but an MP4 calls that faststart and a
+    /// Matroska file gets there by being padded (DESIGN §9.6).
+    pub fn layout_switch(&self) -> &'static str {
+        // By name: this is a label, painted every frame, and not worth
+        // opening each file for. The writer itself goes by contents.
+        let mkv = self
+            .files
+            .iter()
+            .filter(|f| {
+                f.path.extension().is_some_and(|e| {
+                    ["mkv", "mka", "webm"]
+                        .iter()
+                        .any(|m| e.eq_ignore_ascii_case(m))
+                })
+            })
+            .count();
+        match mkv {
+            0 => "faststart",
+            n if n == self.files.len() => "pad",
+            _ => "faststart/pad",
+        }
+    }
+
     /// Load the queue with jobs that write nothing, so a test can paint the
     /// queue panel without starting a writer thread. The plans are empty:
     /// nothing put here by a test ever reaches `write::execute`.
@@ -2290,7 +2315,11 @@ impl App {
             }
             (KeyCode::Char('F'), false) => {
                 self.faststart = !self.faststart;
-                self.status = format!("faststart {}", if self.faststart { "on" } else { "off" });
+                self.status = format!(
+                    "{} {}",
+                    self.layout_switch(),
+                    if self.faststart { "on" } else { "off" }
+                );
             }
             (KeyCode::Esc, _) if self.revert_focused_set() => {}
             (KeyCode::Char('q'), false) | (KeyCode::Esc, _) => self.escape(),

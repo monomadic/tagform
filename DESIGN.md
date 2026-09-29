@@ -66,8 +66,9 @@ container (with the filename as an optional secondary sink).
 - Not a container repair tool. Fragmentation and moov placement stay
   `mp4doctor`'s job; `tagform` only rides the faststart flag along on the remux
   it is already doing.
-- No Matroska, no audio-only formats. If it grows, `.mkv` goes through a
-  separate backend, not by pretending MKV tags are MP4 atoms.
+- No audio-only formats. Matroska was a non-goal and is now read and
+  written, through a separate backend and not by pretending MKV tags are MP4
+  atoms (§9.6).
 - Not a chapter or subtitle editor. Deferred indefinitely.
 
 ---
@@ -1681,6 +1682,74 @@ fragmented mp4 (`moof`), files above 4 GiB whose 32-bit `stco` offsets would
 overflow (the crate reports these rather than converting to `co64`), and any
 file whose tags live somewhere neither §8 layout covers. Declining is cheap and
 correct; guessing is neither.
+
+### 9.6 Matroska
+
+**Built** as `tags/mkv.rs`, over the `fastmkv` crate (`../fastmkv`, whose
+`docs/PROPOSAL-2.md` holds the container-level design and measurements).
+A file is Matroska by its EBML magic, not its extension.
+
+Every MP4 writer here would treat an `.mkv` as an MP4: the remux picked the
+mp4 muxer for it and failed only because the file carried an attachment. A
+file without one would have been replaced by an MP4 under the `.mkv` name.
+
+**Reading.** Through `fastmkv`, not ffprobe and not exiftool. From the full
+walk of the file whenever it allows one; the quick reader skips what lies
+past the clusters, and a field that looked empty for that reason would be
+filled in and the real value overwritten.
+
+| | Rule |
+|---|---|
+| Keys | tag names lower-cased; only global, string-valued tags in the undetermined language |
+| Repeated names, or names differing only in case | the last in the file is shown |
+| Title | `Info\Title`; a `TITLE` tag only when there is no other |
+| Muxer bookkeeping | hidden, as `JUNK_KEYS` are for MP4 |
+| XMP-only fields | the five tags named in `XMP_NAMES`, read back under their XMP names |
+| Everything else in the file | tags aimed at a track or chapter, other languages, nested and binary values: not shown, and kept |
+
+**Writing.** `Writer::Matroska`, the same sequence as the others: sibling
+temp, verify, rename.
+
+| | Rule |
+|---|---|
+| Key name | the spelling the file already has; upper case when new |
+| Other spellings of the key | removed |
+| Title | written to `Info\Title`, and every `TITLE` tag removed |
+| Empty value | removes the key |
+| Verified by | duration and streams unchanged; every key read back by `fastmkv` and, independently, by ffprobe |
+
+Both title and spelling rules are measurements, not taste: with the same
+title in both places mpv shows it twice, and with three spellings of one
+key ffprobe shows the last, mpv all three joined, mediainfo all three apart.
+
+**The layout switch.** `F` is one switch for both containers, and asks the
+same thing of each: what a reader needs first, at the front of the file.
+
+| Switch | File | What a write does |
+|---|---|---|
+| on | tags at the front with room after them | updates in place |
+| on | anything else | re-seats: a copy with the metadata at the front and padding after it |
+| off | room where the tags are | updates in place |
+| off | no room | sends the tags to the end of the file |
+| either | a title that does not fit at the front | re-seats; `Info` also holds the duration, and never goes to the end |
+
+A re-seat is a copy, not a remux: every cluster is carried byte for byte.
+It costs one pass over the file, once, after which edits cost kilobytes.
+
+**Files from other tools.** Tested on what ffmpeg, mkvmerge and mkvpropedit
+write. mkvmerge puts the tags after the clusters, so with the switch on its
+files are re-seated on their first write. mkvpropedit, out of room, leaves a
+file with its index split in two; an edit that has to move anything in such
+a file re-seats it, whatever the switch says, and the result has one index.
+
+**Refused.** A file `fastmkv` will not edit (no sizes recorded, data after
+the end, a wrong index) is still shown. A write to it fails with the reason
+and leaves it untouched; `ffmpeg -c copy` makes it editable.
+
+⟨designed⟩ Writing a new `.mkv` from an MP4 source: ffmpeg converts with
+`-c copy -f matroska`, and the result is re-seated before it is handed over.
+
+---
 
 ## 10. CLI surface
 

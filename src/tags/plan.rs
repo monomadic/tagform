@@ -76,6 +76,9 @@ pub enum Writer {
     Ffmpeg,
     /// Remux, then put the XMP back from the snapshot taken at read time.
     TwoPass,
+    /// A Matroska file, which none of the others can touch (DESIGN §9.6).
+    /// Edits the tags where they are, or copies the file to make room.
+    Matroska,
 }
 
 impl Writer {
@@ -85,6 +88,7 @@ impl Writer {
             Writer::Native => "rewrite container",
             Writer::Ffmpeg => "remux",
             Writer::TwoPass => "remux + restore XMP",
+            Writer::Matroska => "matroska",
         }
     }
 }
@@ -99,6 +103,8 @@ pub struct FilePlan {
     /// because XMP wins on read: updating only the atom would leave the form
     /// showing the old value and look like the edit did nothing.
     pub xmp: Vec<(String, Vec<String>)>,
+    /// The one layout switch. For MP4 it asks for the moov at the front;
+    /// for Matroska, for the tags at the front with room after them.
     pub faststart: bool,
     pub layout: Layout,
     pub why: &'static str,
@@ -165,6 +171,21 @@ pub fn build(file: &FileTags, staged: &BTreeMap<String, Value>, want_faststart: 
     }
     atoms.sort();
     atoms.dedup();
+
+    if crate::tags::mkv::is_matroska(&file.path) {
+        let route = crate::tags::mkv::route(&file.path, &atoms, &xmp, want_faststart);
+        return FilePlan {
+            path: file.path.clone(),
+            writer: Writer::Matroska,
+            atoms,
+            xmp,
+            faststart: want_faststart,
+            // An MP4 notion. Said to be the usual one so the confirmation
+            // screen has nothing to remark on.
+            layout: Layout::FastStart,
+            why: route.why(),
+        };
+    }
 
     let layout = crate::tags::atoms::layout(&file.path);
     // Probed names are lower-cased; a reverse-DNS key is planned in its own

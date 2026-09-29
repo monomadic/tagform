@@ -693,3 +693,337 @@ fn a_cameras_creation_time_is_the_date_and_survives_a_remux() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// matroska -- §9.6
+// ---------------------------------------------------------------------------
+
+/// The original error, turned around: an `.mkv` with an attachment, which
+/// the MP4 muxer cannot carry and the remux therefore choked on. Written
+/// by the Matroska backend it keeps the attachment, the streams and the
+/// tags no field claims.
+fn matroska(dir: &Path, name: &str) -> PathBuf {
+    let attachment = dir.join(format!("{name}.json"));
+    std::fs::write(&attachment, br#"{"id": "fixture"}"#).unwrap();
+    let a = attachment.to_string_lossy().into_owned();
+    generate(
+        dir,
+        name,
+        &[
+            "-attach",
+            &a,
+            "-metadata:s:t",
+            "mimetype=application/json",
+            "-metadata",
+            "title=Original",
+            "-metadata",
+            "category=Footage",
+            "-metadata",
+            "purl=https://example.com/a",
+            "-metadata",
+            "yt_dlp_id=12345",
+        ],
+    )
+}
+
+fn stream_kinds(path: &Path) -> Vec<String> {
+    write::probe_streams(path)
+        .iter()
+        .map(|s| s.kind.clone())
+        .collect()
+}
+
+fn ffprobe_tags(path: &Path) -> BTreeMap<String, Value> {
+    probe::probe_atoms(path).expect("ffprobe on the fixture")
+}
+
+#[test]
+fn a_matroska_file_is_read_and_written() {
+    let dir = workspace("mkv");
+    let f = matroska(&dir, "a.mkv");
+    let kinds = stream_kinds(&f);
+    assert!(kinds.contains(&"attachment".to_string()), "{kinds:?}");
+
+    let before = probe::probe(&f).unwrap();
+    assert_eq!(text(&before, "title").as_deref(), Some("Original"));
+    assert_eq!(text(&before, "yt_dlp_id").as_deref(), Some("12345"));
+    assert!(
+        text(&before, "encoder").is_none(),
+        "muxer bookkeeping is not shown"
+    );
+    let url = field_by_id("url").unwrap();
+    assert_eq!(
+        before.lookup(url),
+        Some(Value::text("https://example.com/a"))
+    );
+
+    let edits = staged(&[
+        ("title", "A new title, longer than the old one"),
+        ("url", "https://example.com/b"),
+        ("genre", "Test"),
+        ("location", "Lisbon"),
+        ("custom:yt_dlp_id", "67890"),
+    ]);
+    let (writer, r) = write_it(&f, &edits, true);
+    assert_eq!(writer, Writer::Matroska);
+    r.expect("the write");
+
+    let after = probe::probe(&f).unwrap();
+    assert_eq!(
+        text(&after, "title").as_deref(),
+        Some("A new title, longer than the old one")
+    );
+    assert_eq!(
+        after.lookup(url),
+        Some(Value::text("https://example.com/b"))
+    );
+    assert_eq!(text(&after, "genre").as_deref(), Some("Test"));
+    assert_eq!(text(&after, "yt_dlp_id").as_deref(), Some("67890"));
+    assert_eq!(
+        text(&after, "category").as_deref(),
+        Some("Footage"),
+        "untouched"
+    );
+    let city = field_by_id("location").unwrap();
+    assert_eq!(after.lookup(city), Some(Value::text("Lisbon")));
+    assert_eq!(stream_kinds(&f), kinds, "the attachment is still there");
+
+    // Every key the URL field fans out to, as an independent reader sees them.
+    let seen = ffprobe_tags(&f);
+    for key in url.mdta {
+        assert_eq!(
+            seen.get(*key),
+            Some(&Value::text("https://example.com/b")),
+            "{key}"
+        );
+    }
+    assert_eq!(
+        seen.get("title"),
+        Some(&Value::text("A new title, longer than the old one"))
+    );
+
+    // Padded by the first write, so the second costs nothing and moves nothing.
+    let mkv = fastmkv::open(&f).unwrap();
+    assert!(mkv.seating().front);
+    assert!(mkv.seating().tags_padding > 1024);
+    let size = std::fs::metadata(&f).unwrap().len();
+    let (_, r) = write_it(&f, &staged(&[("synopsis", "Something added later")]), true);
+    r.expect("the second write");
+    assert_eq!(std::fs::metadata(&f).unwrap().len(), size);
+    assert_eq!(
+        text(&probe::probe(&f).unwrap(), "synopsis").as_deref(),
+        Some("Something added later")
+    );
+}
+
+/// One title, in one place: a file that arrives with a `TITLE` tag as well
+/// leaves without it, because mpv shows both.
+#[test]
+fn a_matroska_title_is_written_once() {
+    let dir = workspace("mkv-title");
+    let f = matroska(&dir, "t.mkv");
+    let mut mkv = fastmkv::open(&f).unwrap();
+    mkv.set("Title", "a tag, and a stale one").unwrap();
+    mkv.plan().unwrap().apply().unwrap();
+
+    // Info wins while both are there.
+    let both = probe::probe(&f).unwrap();
+    assert_eq!(text(&both, "title").as_deref(), Some("Original"));
+
+    let (_, r) = write_it(&f, &staged(&[("title", "The one title")]), false);
+    r.expect("the write");
+    let mkv = fastmkv::open(&f).unwrap();
+    assert_eq!(mkv.title().as_deref(), Some("The one title"));
+    assert!(mkv.global().all(|(n, _)| !n.eq_ignore_ascii_case("title")));
+
+    // Cleared, it is gone from both.
+    let (_, r) = write_it(&f, &staged(&[("title", "")]), false);
+    r.expect("clearing");
+    assert!(text(&probe::probe(&f).unwrap(), "title").is_none());
+}
+
+/// Spellings that differ only in case are one key: the last is shown, and
+/// a write leaves one.
+#[test]
+fn matroska_spellings_of_one_key_are_collapsed() {
+    let dir = workspace("mkv-case");
+    let f = matroska(&dir, "c.mkv");
+    let mut mkv = fastmkv::open(&f).unwrap();
+    mkv.set("Genre", "first").unwrap();
+    mkv.set("genre", "last").unwrap();
+    mkv.plan().unwrap().apply().unwrap();
+    assert_eq!(
+        text(&probe::probe(&f).unwrap(), "genre").as_deref(),
+        Some("last")
+    );
+
+    let (_, r) = write_it(&f, &staged(&[("genre", "only")]), false);
+    r.expect("the write");
+    let mkv = fastmkv::open(&f).unwrap();
+    let genres: Vec<_> = mkv
+        .global()
+        .filter(|(n, _)| n.eq_ignore_ascii_case("genre"))
+        .collect();
+    assert_eq!(genres, vec![("genre", "only")], "under the spelling it had");
+}
+
+/// With the switch off a write is an update: the file is not copied, and
+/// tags that outgrow their place go to the end.
+#[test]
+fn matroska_without_padding_updates_in_place() {
+    let dir = workspace("mkv-nopad");
+    let f = matroska(&dir, "n.mkv");
+    let (_, r) = write_it(&f, &staged(&[("synopsis", &"grown ".repeat(50))]), false);
+    r.expect("the write");
+    let mkv = fastmkv::open(&f).unwrap();
+    assert!(!mkv.seating().front, "sent to the end, not re-seated");
+    assert_eq!(mkv.seating().tags_padding, 0);
+}
+
+/// A stream capture has no sizes. It is shown, and a write to it fails
+/// with the reason and leaves it alone.
+#[test]
+fn a_matroska_file_that_cannot_be_edited_is_left_alone() {
+    let dir = workspace("mkv-live");
+    let f = matroska(&dir, "l.mkv");
+    let live = dir.join("live.mkv");
+    let out = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i"])
+        .arg(&f)
+        .args([
+            "-map", "0:v", "-map", "0:a", "-c", "copy", "-live", "1", "-f", "matroska", "--",
+        ])
+        .arg(&live)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = std::fs::read(&live).unwrap();
+
+    let tags = probe::probe(&live).expect("it is still read");
+    assert_eq!(text(&tags, "category").as_deref(), Some("Footage"));
+    let (_, r) = write_it(&live, &staged(&[("genre", "Test")]), true);
+    let e = r.expect_err("it cannot be written");
+    assert!(e.contains("unknown size"), "{e}");
+    assert_eq!(std::fs::read(&live).unwrap(), bytes);
+}
+
+/// mkvmerge lays a file out differently from ffmpeg -- tags after the
+/// clusters, no checksums, statistics aimed at each track -- and
+/// mkvpropedit leaves an index split in two. Skipped without MKVToolNix.
+fn mkvtoolnix(dir: &Path, name: &str) -> Option<PathBuf> {
+    let src = tagged(dir, &format!("{name}.mp4"));
+    let out = dir.join(name);
+    let made = Command::new("mkvmerge")
+        .args(["-q", "-o"])
+        .arg(&out)
+        .args(["--title", "Original"])
+        .arg(&src)
+        .status();
+    match made {
+        Ok(s) if s.success() => Some(out),
+        _ => {
+            eprintln!("mkvmerge not available; skipped");
+            None
+        }
+    }
+}
+
+#[test]
+fn a_file_from_mkvmerge_is_written() {
+    let dir = workspace("mkvmerge");
+    let Some(f) = mkvtoolnix(&dir, "m.mkv") else {
+        return;
+    };
+    let kinds = stream_kinds(&f);
+
+    let before = probe::probe(&f).unwrap();
+    assert_eq!(text(&before, "title").as_deref(), Some("Original"));
+    assert!(
+        text(&before, "bps").is_none(),
+        "a track's statistics are not the file's"
+    );
+
+    let (writer, r) = write_it(
+        &f,
+        &staged(&[("title", "Changed"), ("genre", "Test")]),
+        true,
+    );
+    assert_eq!(writer, Writer::Matroska);
+    r.expect("the write");
+    let after = probe::probe(&f).unwrap();
+    assert_eq!(text(&after, "title").as_deref(), Some("Changed"));
+    assert_eq!(text(&after, "genre").as_deref(), Some("Test"));
+    assert_eq!(stream_kinds(&f), kinds);
+
+    let mkv = fastmkv::open(&f).unwrap();
+    assert!(
+        mkv.seating().front,
+        "re-seated: mkvmerge had them at the end"
+    );
+    let of_tracks = mkv
+        .tags
+        .iter()
+        .flat_map(|t| t.tags.tags())
+        .filter(|t| !t.is_global())
+        .count();
+    assert_eq!(of_tracks, 2, "the statistics came through");
+    let seen = Command::new("mkvmerge").arg("-J").arg(&f).output().unwrap();
+    let seen: String = String::from_utf8_lossy(&seen.stdout)
+        .split_whitespace()
+        .collect();
+    assert!(
+        seen.contains("\"errors\":[]") && seen.contains("\"warnings\":[]"),
+        "{seen}"
+    );
+    assert!(seen.contains("\"title\":\"Changed\""), "{seen}");
+}
+
+/// mkvpropedit rearranges a file as it edits: it moves the tags to the
+/// end and `Info` into whatever padding it finds. Whatever shape it leaves,
+/// the next write here reads the same values and puts the file back in
+/// order. (The case where it splits the index in two depends on how much
+/// room it finds, and is pinned down in fastmkv's own suite.)
+#[test]
+fn a_file_mkvpropedit_has_edited_is_written() {
+    let dir = workspace("propedit");
+    let Some(f) = mkvtoolnix(&dir, "p.mkv") else {
+        return;
+    };
+    let (_, r) = write_it(&f, &staged(&[("genre", "Test")]), true);
+    r.expect("seating it");
+    let edit = |args: &[&str]| {
+        let s = Command::new("mkvpropedit")
+            .arg("-q")
+            .arg(&f)
+            .args(args)
+            .status();
+        assert!(s.is_ok_and(|s| s.success()));
+    };
+    let long = format!("title={}", "longer ".repeat(120));
+    edit(&["--edit", "info", "--set", &long]);
+    edit(&["--add-track-statistics-tags"]);
+    assert!(
+        !fastmkv::open(&f).unwrap().seating().front,
+        "mkvpropedit is expected to have moved the tags"
+    );
+
+    let tags = probe::probe(&f).unwrap();
+    assert_eq!(text(&tags, "genre").as_deref(), Some("Test"));
+    assert!(text(&tags, "title").is_some_and(|t| t.starts_with("longer longer")));
+    let kinds = stream_kinds(&f);
+
+    let (_, r) = write_it(&f, &staged(&[("synopsis", &"grown ".repeat(80))]), true);
+    r.expect("the write");
+    let mkv = fastmkv::open(&f).unwrap();
+    assert_eq!(mkv.survey.seek_heads, 1);
+    assert!(mkv.seating().front);
+    let after = probe::probe(&f).unwrap();
+    assert_eq!(text(&after, "genre").as_deref(), Some("Test"));
+    assert!(text(&after, "title").is_some_and(|t| t.starts_with("longer longer")));
+    assert_eq!(text(&after, "synopsis").map(|s| s.len()), Some(6 * 80));
+    assert_eq!(stream_kinds(&f), kinds);
+}

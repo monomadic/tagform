@@ -4,7 +4,8 @@ Guidance for coding agents working on `tagform`. `CLAUDE.md` is a symlink to
 this file.
 
 `tagform` is a Rust TUI that edits metadata on MP4/MOV files by shelling out to
-`ffmpeg`/`ffprobe` and `exiftool`. ~4,700 lines across 16 source files.
+`ffmpeg`/`ffprobe` and `exiftool`, and on Matroska files through the `fastmkv`
+crate, a path dependency at `../fastmkv`. ~4,700 lines across 16 source files.
 
 ## Read this before reading anything else
 
@@ -75,6 +76,8 @@ src/tags/
   atoms.rs          atom-chain parse, faststart/Layout detection
   plan.rs           what to write and which backend writes it.
   native.rs         the native container rewrite: mdta keys/ilst, no ffmpeg
+  mkv.rs            Matroska, over fastmkv: key names, the title rule, and
+                    the choice between updating in place and re-seating
   fixtures.rs       test-only: the write-path suite, on containers ffmpeg
                     generates at test time (§14). Needs ffmpeg + exiftool.
   write.rs          executes a plan. The remux, the verify, the rename.
@@ -142,6 +145,11 @@ debugging. Changing code that violates one is a regression, not a refactor.
 7. **Colours are guarded by a test.** `theme.rs` fails below 3:1 WCAG contrast
    and requires custom-key labels to differ in *hue*, not brightness. Both
    guards exist because both mistakes were already made.
+8. **A Matroska file is never given to an MP4 writer.** It is recognised by
+   its EBML magic and goes to `Writer::Matroska`. Its title is `Info\Title`
+   and nothing else; its key spellings are collapsed to one on write. Both
+   rules were measured against four readers (DESIGN §9.6) — do not "restore"
+   a `TITLE` tag.
 
 ## Conventions
 

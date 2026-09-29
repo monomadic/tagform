@@ -3,6 +3,7 @@ pub mod atoms;
 /// ffmpeg to build the containers it runs on.
 #[cfg(test)]
 mod fixtures;
+pub mod mkv;
 pub mod native;
 pub mod plan;
 pub mod probe;

@@ -1446,7 +1446,11 @@ fn draw_mode_bar(f: &mut Frame, area: Rect, app: &App) {
     // Faststart is a standing setting of the writer, not a fact about the
     // selection, so it lives with the other standing state -- the mode --
     // rather than in the title.
-    let fast = format!("faststart {}  ", if app.faststart { "on" } else { "off" });
+    let fast = format!(
+        "{} {}  ",
+        app.layout_switch(),
+        if app.faststart { "on" } else { "off" }
+    );
     let pairs: Vec<(&str, &str)> = shortcut_pairs(app)
         .iter()
         .copied()
@@ -2088,7 +2092,8 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         format!(
-            "  faststart {} · originals replaced only after the result is verified",
+            "  {} {} · originals replaced only after the result is verified",
+            app.layout_switch(),
             if app.faststart { "on" } else { "off" }
         ),
         Style::default().fg(t::muted()),

@@ -637,6 +637,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastmkv"
+version = "0.1.0"
+
+[[package]]
 name = "fax"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2462,6 +2466,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "crossterm",
+ "fastmkv",
  "image",
  "mp4box",
  "ratatui",
