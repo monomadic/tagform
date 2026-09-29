@@ -151,6 +151,7 @@ impl MediaInfo {
         parts
     }
 
+    #[cfg(test)]
     pub fn summary(&self) -> String {
         let parts: Vec<String> = self.facts().into_iter().map(|(_, t)| t).collect();
         parts.join(" · ")
