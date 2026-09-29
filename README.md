@@ -1,7 +1,7 @@
 <h1 align="center">tagform</h1>
 
 <p align="center">
-  A form-based metadata tagger for MP4 and MOV, in the terminal.<br>
+  A form-based metadata tagger for MP4, MOV and Matroska, in the terminal.<br>
   Labelled fields, typed editors, star ratings and tag chips — not a list of key/value strings.
 </p>
 
@@ -20,7 +20,7 @@
 control, and writes the result back **without destroying anything it did not
 touch**. It reads atoms and XMP together, picks a safe write backend from the
 file's own contents, and never replaces an original until the new file has
-been read back and verified.
+been read back and verified. `.mkv` files go through a backend of their own.
 
 ## Why
 
@@ -35,6 +35,10 @@ wrong:
   them away. `tagform` detects XMP and chooses a writer that keeps it.
 - **iPhone clips carry timed-metadata tracks** for orientation and Live
   Photos. A remux cannot carry them. `tagform`'s native container rewrite can.
+- **An `.mkv` is not an MP4 with another name.** Its tags are named elements,
+  its title is not a tag at all, and readers disagree about duplicates.
+  `tagform` edits them through [fastmkv](https://github.com/monomadic/fastmkv),
+  which changes the tags and leaves every byte of the media where it was.
 - **Batch tagging is what you actually do.** Open twenty clips from one show
   and `tagform` behaves like an mp3 tagger: agreed values show once, differing
   values say so, and one key fills, merges or overwrites a field across the lot.
@@ -44,22 +48,26 @@ wrong:
 You need `ffmpeg`, `ffprobe` and `exiftool` on your `PATH`, and a Rust
 toolchain.
 
-```bash
-cargo install --git https://github.com/monomadic/tagform
-```
-
-Or build from a checkout:
+`tagform` depends on [fastmkv](https://github.com/monomadic/fastmkv) by path
+while that crate settles, so the two are checked out side by side:
 
 ```bash
+git clone https://github.com/monomadic/fastmkv
+git clone https://github.com/monomadic/tagform
+cd tagform
 cargo build --release   # binary at target/release/tagform
 ```
+
+`cargo install --git` does not work for now, for the same reason.
 
 `assets/tagform.exiftool.cfg` is a required runtime asset: without it exiftool
 refuses to write this library's custom `Keys:` tags. Keep it next to the binary
 or where the source tree left it.
 
 Optional: `yt-dlp` backs the `i u` import, and `rename-video` backs the `r`
-rename. Nothing else needs them.
+rename. Nothing else needs them. With MKVToolNix installed, `cargo test` also
+runs against files from `mkvmerge` and `mkvpropedit`; the tool itself never
+calls them.
 
 ## Quick start
 
@@ -238,7 +246,7 @@ WCAG 3:1 contrast floor by a test, including the focused-row fill.
 | `~` | step those same four cases in place, without the menu |
 | `t` | cycle the colour scheme |
 | `?` | the key map — every binding in the form, on a screen of its own |
-| `F` | toggle MOV faststart on the write (on by default) |
+| `F` | toggle faststart (MP4/MOV) and padding (MKV) on the write (on by default) |
 | `q` / `esc` | quit (asks if edits are staged) |
 
 **Edit**
@@ -316,11 +324,52 @@ the container that adds keys while keeping both. ffmpeg remains the fallback
 for the layouts the native writer declines. There is deliberately **no flag
 to override the choice** — every such flag is a flag that lets you destroy XMP.
 
+## Matroska
+
+`.mkv` files are recognised by their contents, not their extension, and are
+read and written through [fastmkv](https://github.com/monomadic/fastmkv).
+The form is the same; four things differ underneath. Each was measured
+against ffprobe, mpv, mediainfo and VLC ([DESIGN.md](DESIGN.md) §9.6).
+
+**One title.** It is written to the file's `Info` element, and any `TITLE`
+tag is removed. With both present, mpv shows the title twice.
+
+**One spelling per key.** `Artist`, `ARTIST` and `artist` are one key. The
+last in the file is shown, as ffprobe shows it, and a write leaves one. A key
+keeps the spelling the file already uses; a new key is written in upper case.
+
+**What the form does not show, it keeps.** Tags aimed at a single track or
+chapter, tags in a named language, nested tags, binary values and
+attachments are not editable here and come through a write unchanged.
+
+**`F` means padding.** A muxer leaves no room after the tags, so the first
+edit that grows them would have to put them at the end of the file, where a
+reader on a slow link needs a second request to find them. With `F` on, the
+first write to such a file re-seats it instead: a copy with the metadata at
+the front and a few kilobytes of room after it. Every cluster is copied byte
+for byte, so this is a copy, not a remux. After that an edit costs kilobytes
+and the file does not change size.
+
+| `F` | File | A write |
+|---|---|---|
+| on | tags at the front, with room | updates in place |
+| on | anything else | re-seats |
+| off | room where the tags are | updates in place |
+| off | no room | puts the tags at the end |
+
+A file fastmkv will not edit — a stream capture with no sizes recorded, say —
+is still shown. A write to it fails with the reason and leaves it untouched;
+`ffmpeg -i in.mkv -c copy out.mkv` makes it editable.
+
 ## Status
 
 **Milestones 0–5 done; 6 mostly done.** Probe → model → aggregate → typed
 controls → verified write, across a whole selection, with XMP read, written
 and preserved.
+
+Matroska is read and written, and has been tested on files from ffmpeg,
+mkvmerge and mkvpropedit. It is the newest part of the write path and has
+seen the least real use.
 
 Not built yet: composing the two filename grammars in-process (parsing them is
 `i f`), the rest of seeding, headless `--set`/`--apply`, and a config file.
@@ -351,4 +400,4 @@ binary through a pseudo-terminal.
 
 ## License
 
-MIT.
+MIT. See [LICENSE](LICENSE).
