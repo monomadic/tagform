@@ -293,7 +293,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
         .parent()
         .map(|d| d.to_string_lossy().to_string())
         .unwrap_or_default();
-    let summary = app.media.get(idx).map(|m| m.summary()).unwrap_or_default();
+    let facts = app.media.get(idx).map(|m| m.facts()).unwrap_or_default();
     // The indent is a block padding, not a prefix on the string: a long
     // filename wraps, and a wrapped line has to keep the indent the first one
     // had or the header loses its left edge.
@@ -316,14 +316,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
-        Line::from(Span::styled(
-            if summary.is_empty() {
-                "probing…".into()
-            } else {
-                summary
-            },
-            Style::default().fg(t::muted()),
-        )),
+        facts_line(&facts),
         Line::from(Span::styled(dir, Style::default().fg(t::path()))),
     ];
     // What is wrong with this file, on its own page, in the error colour:
@@ -2309,6 +2302,30 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
         }
     }
     out
+}
+
+/// The tech line under the filename: one colour per kind of fact, taken
+/// from the palette's existing accents so the contrast guard still covers it.
+fn facts_line(facts: &[(crate::thumb::Fact, String)]) -> Line<'static> {
+    use crate::thumb::Fact;
+    if facts.is_empty() {
+        return Line::from(Span::styled("probing…", Style::default().fg(t::muted())));
+    }
+    let mut spans = Vec::new();
+    for (i, (kind, text)) in facts.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", Style::default().fg(t::muted())));
+        }
+        let fg = match kind {
+            Fact::Container => t::accent(),
+            Fact::Resolution => t::path(),
+            Fact::Duration => t::staged(),
+            Fact::Codecs => t::warn(),
+            Fact::Size => t::label_custom(),
+        };
+        spans.push(Span::styled(text.clone(), Style::default().fg(fg)));
+    }
+    Line::from(spans)
 }
 
 fn file_label(p: &std::path::Path) -> String {

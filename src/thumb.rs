@@ -121,30 +121,50 @@ impl MediaInfo {
         (self.width > 0 && self.height > 0).then(|| self.width as f32 / self.height as f32)
     }
 
-    pub fn summary(&self) -> String {
+    /// The header facts in display order, each tagged so the renderer can
+    /// give every kind its own colour.
+    pub fn facts(&self) -> Vec<(Fact, String)> {
         let mut parts = Vec::new();
         if !self.container.is_empty() {
-            parts.push(self.container.to_string());
+            parts.push((Fact::Container, self.container.to_string()));
         }
         if self.width > 0 {
-            parts.push(format!("{}×{}", self.width, self.height));
+            parts.push((Fact::Resolution, format!("{}×{}", self.width, self.height)));
         }
         if self.duration > 0.0 {
             let s = self.duration as u64;
-            parts.push(format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60));
+            parts.push((
+                Fact::Duration,
+                format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60),
+            ));
         }
         let codecs: Vec<&str> = [self.vcodec.as_str(), self.acodec.as_str()]
             .into_iter()
             .filter(|c| !c.is_empty())
             .collect();
         if !codecs.is_empty() {
-            parts.push(codecs.join("/"));
+            parts.push((Fact::Codecs, codecs.join("/")));
         }
         if self.size > 0 {
-            parts.push(human_size(self.size));
+            parts.push((Fact::Size, human_size(self.size)));
         }
+        parts
+    }
+
+    pub fn summary(&self) -> String {
+        let parts: Vec<String> = self.facts().into_iter().map(|(_, t)| t).collect();
         parts.join(" · ")
     }
+}
+
+/// Which header fact a piece of the summary line is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fact {
+    Container,
+    Resolution,
+    Duration,
+    Codecs,
+    Size,
 }
 
 fn human_size(n: u64) -> String {
