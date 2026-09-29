@@ -132,7 +132,12 @@ fn xmp_values(v: &Value) -> Vec<String> {
     }
 }
 
-pub fn build(file: &FileTags, staged: &BTreeMap<String, Value>, want_faststart: bool) -> FilePlan {
+/// Container key -> value, and XMP tag -> values.
+pub type Keys = (Vec<(String, String)>, Vec<(String, Vec<String>)>);
+
+/// The container keys and XMP tags a set of staged rows comes to: each
+/// field fanned out to every key it writes.
+pub fn keys(file: &FileTags, staged: &BTreeMap<String, Value>) -> Keys {
     let mut atoms: Vec<(String, String)> = Vec::new();
     let mut xmp: Vec<(String, Vec<String>)> = Vec::new();
 
@@ -171,6 +176,11 @@ pub fn build(file: &FileTags, staged: &BTreeMap<String, Value>, want_faststart: 
     }
     atoms.sort();
     atoms.dedup();
+    (atoms, xmp)
+}
+
+pub fn build(file: &FileTags, staged: &BTreeMap<String, Value>, want_faststart: bool) -> FilePlan {
+    let (atoms, xmp) = keys(file, staged);
 
     if crate::tags::mkv::is_matroska(&file.path) {
         let route = crate::tags::mkv::route(&file.path, &atoms, &xmp, want_faststart);

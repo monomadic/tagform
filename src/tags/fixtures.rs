@@ -1027,3 +1027,135 @@ fn a_file_mkvpropedit_has_edited_is_written() {
     assert_eq!(text(&after, "synopsis").map(|s| s.len()), Some(6 * 80));
     assert_eq!(stream_kinds(&f), kinds);
 }
+
+// ---------------------------------------------------------------------------
+// to matroska -- §9.7
+// ---------------------------------------------------------------------------
+
+fn codecs(path: &Path) -> Vec<(String, Option<String>)> {
+    let mut v: Vec<_> = write::probe_streams(path)
+        .into_iter()
+        .map(|s| (s.kind, s.codec))
+        .collect();
+    v.sort();
+    v
+}
+
+/// The values arrive whichever place the source kept them in -- an atom,
+/// or XMP that ffmpeg cannot even see -- and the file that results is one
+/// the Matroska backend would have left the same way.
+#[test]
+fn an_mp4_becomes_a_matroska_file() {
+    let dir = workspace("convert");
+    let f = generate(
+        &dir,
+        "c.mp4",
+        &[
+            "-movflags",
+            "+use_metadata_tags",
+            "-metadata",
+            "title=Original",
+            "-metadata",
+            "category=Footage",
+            "-metadata",
+            "purl=https://example.com/a",
+            "-metadata",
+            "yt_dlp_id=12345",
+        ],
+    );
+    let p = f.to_string_lossy().into_owned();
+    exiftool(&[
+        "-XMP-iptcExt:PersonInImage=Person One",
+        "-XMP-iptcExt:PersonInImage=Person Two",
+        "-xmp:Rating=4",
+        "-XMP-iptcExt:LocationCreatedCity=Lisbon",
+        &p,
+    ]);
+    let source = std::fs::read(&f).unwrap();
+
+    let o = crate::convert::convert(&f, false, false).expect("the conversion");
+    assert_eq!(o.dest, dir.join("c.mkv"));
+    assert!(o.lost.is_empty(), "{:?}", o.lost);
+    assert_eq!(
+        std::fs::read(&f).unwrap(),
+        source,
+        "the source is only read"
+    );
+
+    assert!(crate::tags::mkv::is_matroska(&o.dest));
+    assert_eq!(codecs(&o.dest), codecs(&f));
+    let got = probe::probe(&o.dest).unwrap();
+    let value = |id: &str| got.lookup(field_by_id(id).unwrap());
+    assert_eq!(value("title"), Some(Value::text("Original")));
+    assert_eq!(value("category"), Some(Value::text("Footage")));
+    assert_eq!(value("url"), Some(Value::text("https://example.com/a")));
+    assert_eq!(value("rating"), Some(Value::text("4")));
+    assert_eq!(value("location"), Some(Value::text("Lisbon")));
+    assert_eq!(
+        value("actors"),
+        Some(Value::List(vec!["Person One".into(), "Person Two".into()]))
+    );
+    assert_eq!(text(&got, "yt_dlp_id").as_deref(), Some("12345"));
+
+    let mkv = fastmkv::open(&o.dest).unwrap();
+    assert_eq!(mkv.title().as_deref(), Some("Original"));
+    assert!(
+        mkv.global().all(|(n, _)| !n.eq_ignore_ascii_case("title")),
+        "one title"
+    );
+    assert!(
+        mkv.global()
+            .all(|(n, _)| !n.eq_ignore_ascii_case("major_brand")),
+        "none of the muxer's bookkeeping"
+    );
+    assert!(mkv.seating().front);
+    assert!(mkv.seating().tags_padding > 1024, "room to edit");
+
+    // Nothing is left beside it, and it is not made twice.
+    let strays: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with('.'))
+        .collect();
+    assert!(strays.is_empty(), "{strays:?}");
+    let again = crate::convert::convert(&f, false, false)
+        .unwrap_err()
+        .to_string();
+    assert!(again.contains("already exists"), "{again}");
+}
+
+/// What a Matroska file cannot hold is said, and is a refusal until the
+/// loss is accepted.
+#[test]
+fn a_conversion_that_would_lose_something_is_refused() {
+    let dir = workspace("convert-lossy");
+    let f = tagged(&dir, "l.mp4");
+    let p = f.to_string_lossy().into_owned();
+    exiftool(&["-XMP-dc:Rights=All of them", &p]);
+
+    let e = crate::convert::convert(&f, false, false)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("XMP-dc:Rights"), "{e}");
+    assert!(!dir.join("l.mkv").exists());
+
+    let dry = crate::convert::convert(&f, true, true).expect("a dry run");
+    assert_eq!(dry.lost, vec!["XMP tag XMP-dc:Rights".to_string()]);
+    assert!(!dir.join("l.mkv").exists(), "a dry run writes nothing");
+
+    let o = crate::convert::convert(&f, true, false).expect("with the loss accepted");
+    assert_eq!(o.lost.len(), 1);
+    let got = probe::probe(&o.dest).unwrap();
+    assert_eq!(text(&got, "title").as_deref(), Some("Original"));
+}
+
+#[test]
+fn a_matroska_file_is_not_converted_to_itself() {
+    let dir = workspace("convert-mkv");
+    let f = matroska(&dir, "m.mkv");
+    let e = crate::convert::convert(&f, true, false)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("already a Matroska file"), "{e}");
+}

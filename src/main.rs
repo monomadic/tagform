@@ -7,6 +7,7 @@
 
 mod clone;
 mod config;
+mod convert;
 mod fetch;
 mod geocode;
 mod model;
@@ -79,6 +80,11 @@ fn run() -> Result<()> {
     if args.peek().map(String::as_str) == Some("clone") {
         args.next();
         let code = clone::run(args)?;
+        std::process::exit(code);
+    }
+    if args.peek().map(String::as_str) == Some("convert") {
+        args.next();
+        let code = convert::run(args)?;
         std::process::exit(code);
     }
 
@@ -229,6 +235,7 @@ pub(crate) fn custom_keys(files: &[FileTags]) -> BTreeMap<String, Agg> {
 const USAGE_HEAD: &str = "\
 Usage: tagform [OPTIONS] FILE...
        tagform clone [--only=FIELDS] SOURCE TARGET...   (clone --help for more)
+       tagform convert [--lossy] FILE...                (convert --help for more)
 
   --print-json     dump the aggregated tag model and exit
   --print-schema   dump the field schema as JSON and exit (takes no files)

@@ -27,6 +27,8 @@ pub struct StreamShape {
     pub index: usize,
     pub kind: String,
     pub tag: String,
+    /// Cover art: a video stream that is one picture.
+    pub attached_pic: bool,
     /// ffmpeg reports a timecode track's codec as `none`, which is also what
     /// makes it unmappable.
     pub codec: Option<String>,
@@ -77,6 +79,11 @@ pub fn probe_streams(path: &Path) -> Vec<StreamShape> {
                         .and_then(|x| x.as_str())
                         .unwrap_or("")
                         .into(),
+                    attached_pic: s
+                        .get("disposition")
+                        .and_then(|d| d.get("attached_pic"))
+                        .and_then(|x| x.as_u64())
+                        == Some(1),
                     codec: s
                         .get("codec_name")
                         .and_then(|x| x.as_str())
@@ -215,6 +222,140 @@ pub fn execute(
         Writer::TwoPass => remux(plan, Some(xmp_snapshot), on),
         Writer::Matroska => matroska(plan, on),
     }
+}
+
+// ---------------------------------------------------------------------------
+// to matroska
+// ---------------------------------------------------------------------------
+
+/// What of a source's streams a Matroska file made from it will hold, and
+/// what it will not (DESIGN §9.7).
+pub struct Carried {
+    pub kept: Vec<StreamShape>,
+    /// One line each, for the person deciding whether the loss is acceptable.
+    pub lost: Vec<String>,
+}
+
+pub fn carried(src: &Path) -> Carried {
+    let (mut kept, mut lost) = (Vec::new(), Vec::new());
+    for s in probe_streams(src) {
+        let codec = s.codec.clone().unwrap_or_else(|| "no codec".into());
+        match s.kind.as_str() {
+            "audio" => kept.push(s),
+            // Cover art is a video stream to ffprobe and an attachment to
+            // Matroska; it is left behind rather than turned into a
+            // one-frame video track.
+            "video" if s.attached_pic => lost.push(format!("stream {}: cover art", s.index)),
+            "video" => kept.push(s),
+            // The chapter text track. The chapters themselves are carried,
+            // as Matroska chapters.
+            "data" if s.tag == "text" => {}
+            "data" if s.tag == "tmcd" => lost.push(format!("stream {}: timecode track", s.index)),
+            "data" => lost.push(format!("stream {}: timed metadata ({})", s.index, s.tag)),
+            // mov_text cannot be copied into Matroska, only converted, and
+            // this tool converts nothing.
+            "subtitle" => lost.push(format!("stream {}: subtitles ({codec})", s.index)),
+            other => lost.push(format!("stream {}: {other} ({codec})", s.index)),
+        }
+    }
+    Carried { kept, lost }
+}
+
+/// Make `dest`, a Matroska file holding `src`'s video and audio and the
+/// tags in `plan`, with its metadata at the front and room after it.
+///
+/// `src` is only read. `dest` must not exist, and appears only once it has
+/// been verified against the source. ffmpeg moves the streams, with
+/// `-c copy`; the tags are written by the Matroska backend, under its own
+/// rules, and not by ffmpeg, which would bring the muxer's bookkeeping
+/// along and put the title in both places.
+pub fn to_matroska(
+    src: &Path,
+    dest: &Path,
+    kept: &[StreamShape],
+    atoms: &[(String, String)],
+    xmp: &[(String, Vec<String>)],
+    on: OnStep<'_>,
+) -> Result<(), WriteError> {
+    step(on, "preparing", 0.0);
+    if dest.exists() {
+        return Err(WriteError::Failed(anyhow!(
+            "{} already exists",
+            dest.display()
+        )));
+    }
+    let dir = dest.parent().unwrap_or(Path::new("."));
+    let size = std::fs::metadata(src).map(|m| m.len()).unwrap_or(0);
+    // Two copies exist for a moment: what ffmpeg made, and the seated one.
+    let need = 2 * size + HEADROOM;
+    if let Some(avail) = atoms::free_bytes(dir) {
+        if avail < need {
+            return Err(WriteError::NoSpace { need, avail });
+        }
+    }
+
+    let seated = temp_beside(dest);
+    let muxed = seated.with_extension("mux.mkv");
+    let _muxed = TempGuard(muxed.clone());
+    let _seated = TempGuard(seated.clone());
+
+    let mut args: Vec<String> = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i"]
+        .map(String::from)
+        .to_vec();
+    args.push(src.to_string_lossy().into_owned());
+    for s in kept {
+        args.push("-map".into());
+        args.push(format!("0:{}", s.index));
+    }
+    // Global tags are left behind for the backend to write. What describes
+    // a stream -- its language -- stays with the stream.
+    args.extend(
+        [
+            "-c",
+            "copy",
+            "-map_metadata:g",
+            "-1",
+            "-map_chapters",
+            "0",
+            "-f",
+            "matroska",
+            "--",
+        ]
+        .map(String::from),
+    );
+    args.push(muxed.to_string_lossy().into_owned());
+    let total = duration(src);
+    run_ffmpeg(&args, |secs| {
+        let f = match total {
+            Some(d) if d > 0.0 => (secs / d).clamp(0.0, 1.0),
+            _ => 0.0,
+        };
+        step(on, "copying the streams", f * 0.6);
+    })
+    .map_err(WriteError::Failed)?;
+
+    step(on, "writing tags", 0.65);
+    mkv::seat(&muxed, &seated, atoms, xmp).map_err(WriteError::Failed)?;
+
+    step(on, "verifying", REMUX_SHARE);
+    verify_duration(src, &seated).map_err(WriteError::Failed)?;
+    verify_kept(kept, &seated).map_err(WriteError::Failed)?;
+    verify_atoms(&seated, atoms).map_err(WriteError::Failed)?;
+    if !xmp.is_empty() {
+        verify_xmp(&seated, xmp).map_err(WriteError::Failed)?;
+    }
+    verify_with_ffprobe(&seated, atoms).map_err(WriteError::Failed)?;
+
+    step(on, "finishing", 0.97);
+    if let Some(t) = mtime(src) {
+        restore_mtime(&seated, t);
+    }
+    // A hard link fails if `dest` has appeared since it was looked for,
+    // where a rename would replace it.
+    std::fs::hard_link(&seated, dest)
+        .with_context(|| format!("creating {}", dest.display()))
+        .map_err(WriteError::Failed)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -700,6 +841,27 @@ fn verify_streams(before: &[StreamShape], after: &Path) -> Result<()> {
 /// `kind/tag` -> how many tracks carry it. Counted rather than listed, because
 /// what a mismatch needs to say is *which* track went missing, not the whole
 /// roster twice over.
+/// Across containers a stream keeps its kind and its codec and nothing
+/// else: the four-character tag an MP4 gives it has no Matroska meaning.
+fn verify_kept(kept: &[StreamShape], after: &Path) -> Result<()> {
+    let by_codec = |v: &[StreamShape]| {
+        let mut m: BTreeMap<String, usize> = BTreeMap::new();
+        for s in v {
+            let codec = s.codec.as_deref().unwrap_or("none");
+            *m.entry(format!("{}/{codec}", s.kind)).or_insert(0) += 1;
+        }
+        m
+    };
+    let (a, b) = (by_codec(kept), by_codec(&probe_streams(after)));
+    if a != b {
+        bail!(
+            "the new file does not hold the streams it was given\n{}",
+            diff_lines(&a, &b).join("\n")
+        );
+    }
+    Ok(())
+}
+
 fn tally(v: &[StreamShape]) -> BTreeMap<String, usize> {
     let mut m = BTreeMap::new();
     for s in v {

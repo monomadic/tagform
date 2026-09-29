@@ -243,6 +243,26 @@ pub fn write(
     Ok(Some(route))
 }
 
+/// Stage the plan and write a re-seated copy to `tmp`, whatever room the
+/// file has. For a file that has just been made, where the copy is the
+/// point: it leaves with its tags at the front and padding after them.
+pub fn seat(
+    path: &Path,
+    tmp: &Path,
+    atoms: &[(String, String)],
+    xmp: &[(String, Vec<String>)],
+) -> Result<()> {
+    let mut mkv = fastmkv::open(path).map_err(|e| anyhow!("{e}"))?;
+    stage(&mut mkv, atoms, xmp).map_err(|e| anyhow!("{e}"))?;
+    mkv.reseat(tmp, Padding::default())
+        .map_err(|e| anyhow!("{e}"))
+}
+
+/// Whether a plan's XMP tag has a name in this container.
+pub fn carries_xmp(tag: &str) -> bool {
+    XMP_NAMES.iter().any(|(t, _)| *t == tag)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

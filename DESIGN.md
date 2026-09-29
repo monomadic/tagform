@@ -1746,8 +1746,45 @@ a file re-seats it, whatever the switch says, and the result has one index.
 the end, a wrong index) is still shown. A write to it fails with the reason
 and leaves it untouched; `ffmpeg -c copy` makes it editable.
 
-⟨designed⟩ Writing a new `.mkv` from an MP4 source: ffmpeg converts with
-`-c copy -f matroska`, and the result is re-seated before it is handed over.
+### 9.7 Converting to Matroska
+
+**Built** as `convert.rs` and `write::to_matroska`: `tagform convert FILE...`
+makes a `.mkv` beside each MP4 or MOV. Headless, like `clone`.
+
+Two tools, each doing the half it is good at:
+
+| Step | By | Why |
+|---|---|---|
+| Streams and chapters | ffmpeg, `-c copy -f matroska` | it is a remux, and this tool re-encodes nothing |
+| Global tags | the Matroska backend (§9.6) | ffmpeg would bring the muxer's bookkeeping, and write the title as it pleases |
+| Layout | a re-seat | the file starts with its metadata at the front and room after it |
+
+Global metadata is withheld from ffmpeg (`-map_metadata:g -1`); what
+describes a stream, such as its language, stays with the stream. The tags
+are taken from the source as *field values*, the way `clone` takes them, so
+a value kept in XMP, which ffmpeg cannot see, arrives like any other.
+
+**What cannot be carried is a refusal, not a footnote.** `--lossy` accepts
+the loss, and the list is printed either way.
+
+| Left behind | Why |
+|---|---|
+| Subtitle streams | an MP4's `mov_text` can be converted into Matroska but not copied |
+| Timecode and timed-metadata tracks | Matroska has no place for them |
+| Cover art | a video stream there, an attachment here |
+| XMP tags no field claims | no XMP in Matroska |
+| Reverse-DNS keys, except the coordinates | ffprobe does not read them faithfully (§10, under `clone`) |
+
+**Safety.** The source is only read and is never removed. The destination
+must not exist, appears only after it has been verified against the source
+(duration, the kind and codec of every stream, every tag, by two readers),
+and is put in place by a hard link, which fails where a rename would
+overwrite.
+
+⟨designed⟩ The other directions. Matroska to MP4 is the lossier one: an MP4
+cannot hold attachments, most subtitle formats, or tags aimed at a track,
+and it is the direction the bug that started §9.6 went in. MP4 to MOV and
+back is a change of muxer and little else. Neither is built.
 
 ---
 
@@ -1764,7 +1801,10 @@ tagform [OPTIONS] FILE...
   -h, --help       show this message
 
 tagform clone [--only=FIELDS] [--dry-run] [--no-faststart] SOURCE TARGET...
+tagform convert [--lossy] [--dry-run] FILE...
 ```
+
+`convert` makes a Matroska copy of an MP4 or MOV (§9.7).
 
 `clone` is the first headless write, for scripts that derive one file from
 another — an interpolated or re-encoded copy leaves ffmpeg without the

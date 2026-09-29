@@ -78,6 +78,7 @@ tagform --print-json clip.mp4    # what tagform sees, as JSON
 tagform --print-schema           # every field and the keys it reads/writes
 tagform clone orig.mp4 copy.mp4  # copy one file's tags onto others, headless
 tagform clone --only="title, tags" orig.mp4 *.interp.mp4
+tagform convert clip.mp4         # a Matroska copy beside it, tags and all
 ```
 
 `clone` is for scripts that make a new file from an old one: an interpolated
@@ -356,6 +357,12 @@ and the file does not change size.
 | on | anything else | re-seats |
 | off | room where the tags are | updates in place |
 | off | no room | puts the tags at the end |
+
+**Making one.** `tagform convert clip.mp4` writes `clip.mkv` beside the
+source and leaves the source alone. Streams are copied, not re-encoded; tags
+are carried over, including the ones an MP4 keeps in XMP. What Matroska
+cannot hold — an MP4's subtitles, timecode and timed-metadata tracks, cover
+art — is listed and refused unless `--lossy` accepts it.
 
 A file fastmkv will not edit — a stream capture with no sizes recorded, say —
 is still shown. A write to it fails with the reason and leaves it untouched;
