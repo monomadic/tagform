@@ -1554,15 +1554,18 @@ it is not shown in the plan, and it does not make the filename readable as a
 source. Parsing (§3.6) is still the unbuilt half, and it is the half that needs
 a grammar in this codebase.
 
-⟨built, differs⟩ **Matroska is composed here.** `rename-video` reads atoms
-and XMP and refuses anything but MP4/MOV, so a Matroska file is named by
-`model/namer.rs` from the tags `tags/mkv.rs` reads, with the spec probed by
-ffprobe. The grammar is the script's, held as two template strings
-(`namer::ADULT`, `namer::FOOTAGE`: `{var}`, and `<...>` groups kept only when
-every variable in them has a value) so a config file can supply its own once
-one exists. Only the templates are meant to be configurable; the composed
-variables (`{headline}`, `{meta}`) keep the punctuation rules and the
-on-disk spec order.
+⟨built, differs⟩ **Composing is built, for every container.** `r` names MP4,
+MOV and Matroska files with `model/namer.rs`, from the tags `probe` reads
+plus a fresh ffprobe for the spec block. `rename-video` is no longer called;
+its grammar is held as two template strings (`namer::ADULT`,
+`namer::FOOTAGE`: `{var}`, and `<...>` groups kept only when every variable
+in them has a value) so a config file can supply its own once one exists.
+Only the templates are meant to be configurable; the composed variables
+(`{headline}`, `{meta}`) keep the punctuation rules and the on-disk spec
+order. Two small differences from the script: the capture device is read from
+the `com.apple.quicktime.model` tag only, and the capture date from the
+Apple creation-date tag, then `date`, then the file's birth time, without
+asking exiftool for `DateTimeOriginal`.
 
 ⟨built, differs⟩ **A rename never overwrites.** A target another file already
 answers to — the exact entry, or on a case-insensitive volume a different file
