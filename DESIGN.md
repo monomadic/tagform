@@ -1554,6 +1554,16 @@ it is not shown in the plan, and it does not make the filename readable as a
 source. Parsing (§3.6) is still the unbuilt half, and it is the half that needs
 a grammar in this codebase.
 
+⟨built, differs⟩ **Matroska is composed here.** `rename-video` reads atoms
+and XMP and refuses anything but MP4/MOV, so a Matroska file is named by
+`model/namer.rs` from the tags `tags/mkv.rs` reads, with the spec probed by
+ffprobe. The grammar is the script's, held as two template strings
+(`namer::ADULT`, `namer::FOOTAGE`: `{var}`, and `<...>` groups kept only when
+every variable in them has a value) so a config file can supply its own once
+one exists. Only the templates are meant to be configurable; the composed
+variables (`{headline}`, `{meta}`) keep the punctuation rules and the
+on-disk spec order.
+
 ⟨built, differs⟩ **A rename never overwrites.** A target another file already
 answers to — the exact entry, or on a case-insensitive volume a different file
 the name resolves to — is refused (`Taken`), and `rename-video` itself moves
