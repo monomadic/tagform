@@ -16,6 +16,7 @@ is the main way to waste a context window here. Budget them like this:
 |---|---|---|
 | `README.md` | ~300 lines | **Read in full, once.** Tour, keymap, and the three container facts the design rests on. Skip the screenshots. |
 | `DESIGN.md` | ~1500 lines | **Never read whole.** One section at a time — see below. |
+| `CHANGELOG.md` | short | User-facing changes. **Update it** with any change a user could notice — see Changelog below. |
 | `docs/CONTAINER.md` | ~250 lines | Read §1 only, and only when touching the write path. Measured ffmpeg/exiftool behaviour. |
 
 Pull one section without reading the file, by its heading — no line numbers,
@@ -166,6 +167,25 @@ debugging. Changing code that violates one is a regression, not a refactor.
 - `anyhow` throughout; errors print as `tagform: {e:#}` and exit 2.
 - External tools are invoked via `std::process::Command` with `--` before
   paths. No shell interpolation anywhere.
+
+## Changelog
+
+`CHANGELOG.md` records what changed for someone *using* the tool. Update it in
+the same commit as the change, under `## [Unreleased]`, newest entry first
+within its group (`Added`, `Changed`, `Fixed`, `Removed`).
+
+- **Log it** if a user could notice: a new field, key, subcommand or flag; a
+  changed keybinding or layout; a container or format newly read or written; a
+  fix to something that wrote or showed the wrong thing.
+- **Don't log** refactors, tests, doc edits, dependency bumps, or a fix to
+  something that never shipped in a commit of its own.
+- One line per entry, written as what the user can now do, not what the code
+  does — "`⌘U` loads every video beside the current file", not "add
+  `load_siblings` to `app.rs`". No commit hashes.
+- A change that alters what gets written to a file says so plainly; that is
+  the entry someone will come looking for.
+- On a release, rename `[Unreleased]` to `[x.y.z] - YYYY-MM-DD` and open a
+  fresh `[Unreleased]` above it.
 
 ## Working economically here
 

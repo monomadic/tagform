@@ -247,6 +247,7 @@ WCAG 3:1 contrast floor by a test, including the focused-row fill.
 | `~` | step those same four cases in place, without the menu |
 | `t` | cycle the colour scheme |
 | `?` | the key map — every binding in the form, on a screen of its own |
+| `M` | make a Matroska copy beside the file, in the background; the source is kept |
 | `F` | toggle faststart (MP4/MOV) and padding (MKV) on the write (on by default) |
 | `q` / `esc` | quit (asks if edits are staged) |
 

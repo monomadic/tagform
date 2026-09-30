@@ -212,7 +212,9 @@ fn draw_view_line(f: &mut Frame, area: Rect, app: &App) {
 /// full width, so the header reads as a title rather than as one more row of
 /// text competing with the form. At its right, the one key that finds every
 /// other key: `?`, kept apart from the mode's list so it is never the hint a
-/// narrow terminal drops.
+/// narrow terminal drops. Beside it, the faststart switch: a standing setting
+/// of the writer rather than a fact about the selection or the mode, so it
+/// sits with the other thing that is always there.
 ///
 /// `view` puts the view line here too, for a terminal too short to have the
 /// band that normally carries it.
@@ -227,17 +229,23 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App, view: bool) {
         Vec::new()
     };
     let help = shortcut_pairs(app).contains(&HELP);
+    if !right.is_empty() {
+        right.push(Span::raw("   "));
+    }
+    let fast = format!(
+        "{} {}",
+        app.layout_switch(),
+        if app.faststart { "on" } else { "off" }
+    );
+    right.extend(hint_spans(&[("F", &fast)], usize::MAX).0);
     if help {
-        if !right.is_empty() {
-            right.push(Span::raw("   "));
-        }
         right.extend(hint_spans(&[HELP], usize::MAX).0);
     }
     let right_w: usize = right.iter().map(|s| s.content.width()).sum();
     let badge = format!(" {} ", iconed(LOGO_ICON, "tagform"));
     // The hint carries two trailing spaces of its own, which is the margin
     // everything else on the right keeps; without it, the plain two.
-    let tail = if help { "" } else { "  " };
+    let tail = "";
     let gap = (area.width as usize).saturating_sub(badge.width() + right_w + tail.width());
 
     let mut spans = vec![
@@ -1436,22 +1444,13 @@ fn display_row(app: &App, row: &Row) -> Option<String> {
 fn draw_mode_bar(f: &mut Frame, area: Rect, app: &App) {
     let (mode_name, mode_fg, bar_bg) = mode_of(app);
     let badge = format!(" {mode_name} ");
-    // Faststart is a standing setting of the writer, not a fact about the
-    // selection, so it lives with the other standing state -- the mode --
-    // rather than in the title.
-    let fast = format!(
-        "{} {}  ",
-        app.layout_switch(),
-        if app.faststart { "on" } else { "off" }
-    );
     let pairs: Vec<(&str, &str)> = shortcut_pairs(app)
         .iter()
         .copied()
         .filter(|p| *p != HELP)
         .collect();
-    let room = (area.width as usize).saturating_sub(badge.width() + 1 + fast.width() + 1);
-    let (hints, hints_w) = hint_spans(&pairs, room);
-    let gap = (area.width as usize).saturating_sub(badge.width() + 1 + hints_w + fast.width());
+    let room = (area.width as usize).saturating_sub(badge.width() + 1);
+    let (hints, _) = hint_spans(&pairs, room);
     let mut spans = vec![
         Span::styled(
             badge,
@@ -1463,8 +1462,6 @@ fn draw_mode_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::raw(" "),
     ];
     spans.extend(hints);
-    spans.push(Span::raw(" ".repeat(gap)));
-    spans.push(Span::styled(fast, Style::default().fg(t::muted())));
     f.render_widget(
         Paragraph::new(Line::from(spans)).style(Style::default().bg(bar_bg)),
         area,
@@ -1567,7 +1564,7 @@ fn shortcut_pairs(app: &App) -> &'static [(&'static str, &'static str)] {
             ("y", "yank"),
             ("p", "paste"),
             ("t", "theme"),
-            ("F", "fast"),
+            ("M", "to mkv"),
             ("q", "quit"),
         ]
     }
@@ -2928,7 +2925,6 @@ mod tests {
         let app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
         // Wide enough for the whole vocabulary including the help key, which
         // leads the strip and so is never the hint that gets dropped.
-        // Faststart shares the mode bar, so the vocabulary needs its width too.
         let w = 280;
         let mut term = Terminal::new(TestBackend::new(w, 2)).unwrap();
         term.draw(|fr| {
@@ -2963,17 +2959,19 @@ mod tests {
         // The keys follow the mode, and help is not among them.
         assert!(mode.starts_with(" NORMAL   hjkl  move "), "{mode:?}");
         assert!(!mode.contains("help"), "{mode:?}");
-        for key in ["o", "b", "f ~", "F", "t"] {
+        for key in ["o", "b", "f ~", "M", "t"] {
             assert!(
                 mode.contains(&format!(" {key}  ")),
                 "{key} crowded: {mode:?}"
             );
         }
-        assert!(mode.trim_end().ends_with("faststart on"), "{mode:?}");
-        // Help sits alone at the right of the badge bar.
-        assert!(strip.trim_end().ends_with("?  help"), "{strip:?}");
+        assert!(!mode.contains("faststart"), "{mode:?}");
+        // Faststart and help sit together at the right of the badge bar.
+        assert!(
+            strip.trim_end().ends_with("F  faststart on   ?  help"),
+            "{strip:?}"
+        );
         assert!(!strip.contains("hjkl"), "{strip:?}");
-        assert!(!strip.contains("faststart"), "{strip:?}");
     }
 
     /// The import band names both sources and previews the filename's

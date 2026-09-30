@@ -361,6 +361,9 @@ pub enum Msg {
     ),
     /// The queue ran dry: the whole run's outcome.
     Wrote(Box<WriteResults>),
+    /// One outcome per file `M` was given: the source, and the Matroska
+    /// copy made of it or why there is none.
+    Converted(Vec<(PathBuf, Result<PathBuf, String>)>),
     /// One outcome per file a `rename-video` run was given, by file index.
     Renamed(Vec<(usize, Result<Outcome, String>)>),
     /// Whether `r` would collide on one file: its index, the path that was
@@ -503,6 +506,9 @@ pub struct App {
     /// and while it does, the paths in `files` are the ones about to change,
     /// which is why `w` and a second `r` are held off until it lands.
     pub renaming: bool,
+    /// An `M` conversion is in flight. One at a time: two stream copies on
+    /// one volume are slower than one after the other.
+    pub converting: bool,
     /// Files whose rename would land on a name another file already holds,
     /// with that file's path. Asked of `rename-video` in the background on
     /// open and whenever a file's tags or name change, so the collision is
@@ -593,6 +599,7 @@ impl App {
             results: None,
             writing: false,
             renaming: false,
+            converting: false,
             conflicts: BTreeMap::new(),
             fetching: false,
             locate: None,
@@ -767,6 +774,7 @@ impl App {
                 }
                 Msg::Wrote(r) => self.finish_write(*r),
                 Msg::Renamed(r) => self.finish_rename(r),
+                Msg::Converted(r) => self.finish_convert(r),
                 Msg::Conflict(i, asked, taken) => {
                     if self.files.get(i).is_some_and(|f| f.path == asked) {
                         match taken {
@@ -1482,6 +1490,82 @@ impl App {
                 .collect();
             let _ = tx.send(Msg::Renamed(out));
         });
+    }
+
+    /// `M`: a Matroska copy of each file in scope, beside it (DESIGN §9.7).
+    /// The same conversion as `tagform convert`, without `--lossy`: a file
+    /// holding something Matroska cannot carry is refused and the dialog
+    /// says what. It reads the file, not the form, so staged edits are
+    /// written first or not carried -- and it refuses rather than guess.
+    fn convert_files(&mut self) {
+        if self.converting {
+            self.status = "conversion in progress".into();
+            return;
+        }
+        if self.writing {
+            self.status = "write in progress · convert once it has landed".into();
+            return;
+        }
+        if self.staged_count() > 0 {
+            self.status = "staged edits — write or discard them before converting".into();
+            return;
+        }
+        let jobs: Vec<PathBuf> = self
+            .scope()
+            .into_iter()
+            .filter_map(|i| self.files.get(i).map(|f| f.path.clone()))
+            .collect();
+        let Some(first) = jobs.first() else {
+            return;
+        };
+        self.status = match jobs.len() {
+            1 => format!("converting {} to Matroska", file_name(first)),
+            n => format!("converting {n} files to Matroska"),
+        };
+        self.converting = true;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let out = jobs
+                .into_iter()
+                .map(|p| {
+                    let r = crate::convert::convert(&p, false, false)
+                        .map(|o| o.dest)
+                        .map_err(|e| e.to_string());
+                    (p, r)
+                })
+                .collect();
+            let _ = tx.send(Msg::Converted(out));
+        });
+    }
+
+    /// The copies are new files beside the sources, which stay open: the
+    /// form is still true of what it holds.
+    fn finish_convert(&mut self, out: Vec<(PathBuf, Result<PathBuf, String>)>) {
+        self.converting = false;
+        let total = out.len();
+        let mut ok: Vec<PathBuf> = Vec::new();
+        let mut failed: Vec<(PathBuf, String)> = Vec::new();
+        for (src, r) in out {
+            match r {
+                Ok(dest) => ok.push(dest),
+                Err(e) => failed.push((src, e)),
+            }
+        }
+        self.status_error = !failed.is_empty();
+        self.status = match (ok.len(), total) {
+            (0, 1) => format!("not converted: {}", failed[0].1.lines().next().unwrap_or("")),
+            (1, 1) => format!("made {}", file_name(&ok[0])),
+            (n, t) if n == t => format!("made {n} Matroska files"),
+            (n, t) => format!("converted {n} of {t}"),
+        };
+        if !failed.is_empty() {
+            self.results = Some(WriteResults {
+                verb: "Converted",
+                ok,
+                failed,
+                not_renamed: vec![],
+            });
+        }
     }
 
     /// Take the new paths and nothing else. `rename-video` writes no tags, so
@@ -2313,6 +2397,7 @@ impl App {
                 self.help_scroll = 0;
                 self.status.clear();
             }
+            (KeyCode::Char('M'), false) => self.convert_files(),
             (KeyCode::Char('F'), false) => {
                 self.faststart = !self.faststart;
                 self.status = format!(

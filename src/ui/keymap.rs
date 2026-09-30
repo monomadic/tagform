@@ -55,6 +55,7 @@ pub const KEYMAP: &[Section] = &[
             b("~", "step the same four cases in place, no menu"),
             b("t", "cycle the colour scheme"),
             b("F", "toggle faststart (MP4/MOV) and padding (MKV) on the write"),
+            b("M", "make a Matroska copy beside the file; the source is kept"),
             b("?", "this key map, inside the form"),
             b("esc", "on a staged set, put its files back as they were"),
             b("q esc", "quit (asks if edits are staged)"),
