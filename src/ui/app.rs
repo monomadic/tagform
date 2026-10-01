@@ -4693,13 +4693,14 @@ mod tests {
         for hidden in FOOTAGE_HIDDEN {
             assert!(!k.contains(hidden), "{hidden} should be hidden: {k:?}");
         }
-        let head: Vec<&str> = k.iter().take(9).copied().collect();
+        let head: Vec<&str> = k.iter().take(10).copied().collect();
         assert_eq!(
             head,
             [
                 "category",
                 "variant",
                 "date",
+                "date_added",
                 "actors",
                 "rating",
                 "tags",
@@ -4710,7 +4711,7 @@ mod tests {
         );
         // The fields the profile does not name keep their schema order behind
         // the ones it does.
-        assert_eq!(k[9..], ["genre", "kind", "origin"]);
+        assert_eq!(k[10..], ["genre", "kind", "origin"]);
         assert_eq!(row(&app, "actors").label, "People");
     }
 
@@ -4738,7 +4739,7 @@ mod tests {
         assert!(!k.contains(&"artist"), "{k:?}");
         assert!(!k.contains(&"track"), "not a clip: {k:?}");
         assert_eq!(
-            k[..14],
+            k[..15],
             [
                 "category",
                 "variant",
@@ -4750,13 +4751,14 @@ mod tests {
                 "url",
                 "tags",
                 "date",
+                "date_added",
                 "description",
                 "genre",
                 "synopsis",
                 "origin"
             ]
         );
-        assert_eq!(k[14..], ["kind"]);
+        assert_eq!(k[15..], ["kind"]);
         let opts: Vec<String> = app
             .options_for(row(&app, "orientation"))
             .into_iter()
@@ -4784,6 +4786,18 @@ mod tests {
         }
         let app = one(&[("category", "Footage"), ("orientation", "Gay")]);
         assert!(keys(&app).contains(&"orientation"), "{:?}", keys(&app));
+    }
+
+    /// Date Added is not a profile's field: every category offers it.
+    #[test]
+    fn date_added_is_offered_to_every_category() {
+        for app in [
+            one(&[]),
+            one(&[("category", "Footage")]),
+            one(&[("category", "Adult")]),
+        ] {
+            assert!(keys(&app).contains(&"date_added"), "{:?}", keys(&app));
+        }
     }
 
     /// Choosing Clip in the form, not just on disk, brings Track in -- and

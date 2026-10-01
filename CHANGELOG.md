@@ -8,6 +8,9 @@ in `AGENTS.md`.
 
 ### Added
 
+- **Date Added**, a field for when the file joined the library, beside Date
+  (when it was published or shot). `⏎` on the empty row fills in now.
+  Written as the `date_added` key.
 - `M` makes a Matroska copy of the file in view (or every open file) beside
   it, in the background. The source is kept; a file holding something
   Matroska cannot carry is refused, with the list.

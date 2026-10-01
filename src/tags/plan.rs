@@ -51,6 +51,7 @@ pub const EXIFTOOL_KEY_NAMES: &[(&str, &str)] = &[
     // `K` suffix like the others: exiftool already has an EXIF `Orientation`,
     // and a bare name would be ambiguous in its messages even under `Keys:`.
     ("orientation", "OrientationK"),
+    ("date_added", "DateAdded"),
 ];
 
 /// Keys a plan sends through a rewrite even when the file already has them:

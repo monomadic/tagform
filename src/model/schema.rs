@@ -198,6 +198,14 @@ pub static FIELDS: &[FieldDef] = &[
         mdta: ["date"],
         read: ["date", "com.apple.quicktime.creationdate", "creation_time"],
         xmp: ["XMP-xmp:CreateDate"], ilst: Some("\u{a9}day")),
+    // When the file joined the library, as opposed to Date, which is when the
+    // work was published or shot. A Date control, so ⏎ on the empty row fills
+    // in now -- which, on a file just downloaded, is the value. Its own mdta
+    // key and no `read` alias: nothing in this library ever carried a download
+    // date under another name. Not `creation_time` either -- that is the
+    // container's, and a remux is entitled to keep it.
+    field!("date_added", "Date Added", Control::Date,
+        mdta: ["date_added"], read: ["date_added"], xmp: [], ilst: None),
     field!("synopsis", "Synopsis", Control::TextArea,
         mdta: ["synopsis"], read: ["synopsis"], xmp: [], ilst: Some("ldes")),
     field!("origin", "Origin", Control::Text,
@@ -331,6 +339,7 @@ pub static FOOTAGE_ORDER: &[&str] = &[
     "category",
     "variant",
     "date",
+    "date_added",
     "actors",
     "rating",
     "tags",
@@ -365,7 +374,8 @@ pub static ADULT_HIDDEN: &[&str] = &["artist", "location_place"];
 
 /// The order an adult file is filled in. Orientation sits with the other two
 /// closed sets, because it is one; Track sits with Title because it
-/// qualifies it -- "this work, cut N". Kind and the footage fields are not
+/// qualifies it -- "this work, cut N"; Date Added sits under Date, the two
+/// dates read together. Kind and the footage fields are not
 /// named and keep schema order behind these.
 pub static ADULT_ORDER: &[&str] = &[
     "category",
@@ -379,6 +389,7 @@ pub static ADULT_ORDER: &[&str] = &[
     "url",
     "tags",
     "date",
+    "date_added",
     "description",
     "genre",
     "synopsis",
@@ -487,6 +498,13 @@ mod tests {
         let orientation = field_by_id("orientation").unwrap();
         assert!(orientation.adult_only && !orientation.clip_only);
         assert_eq!(orientation.control, Control::Enum);
+        let added = field_by_id("date_added").unwrap();
+        assert!(!added.adult_only, "every category has it");
+        assert_eq!(added.control, Control::Date);
+        assert_eq!(
+            profile_rank(ADULT_ORDER, "date_added"),
+            profile_rank(ADULT_ORDER, "date") + 1
+        );
         assert!(profile_rank(ADULT_ORDER, "kind") > profile_rank(ADULT_ORDER, "origin"));
     }
 
