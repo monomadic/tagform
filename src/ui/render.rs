@@ -103,7 +103,7 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
     // A dialog takes everything below the header: it is the whole message.
     // A running write is not one: the form stays live while the queue drains,
     // with its bar on the status line and the queue in the band.
-    if app.help || app.pending.is_some() || app.results.is_some() {
+    if app.help || app.pending.is_some() || app.results.is_some() || app.convert_ask.is_some() {
         let top = chunks[2].y;
         // The last row is not the dialog's: a write already draining keeps
         // its bar there. `w` over a running queue raises the confirmation
@@ -124,6 +124,8 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
             draw_confirm(f, body, app, plans);
         } else if let Some(r) = &app.results {
             draw_results(f, body, r);
+        } else if let Some(ask) = &app.convert_ask {
+            draw_convert_ask(f, body, ask);
         }
         write_line(f, chunks[6], app);
         return;
@@ -2250,6 +2252,65 @@ fn draw_results(f: &mut Frame, area: Rect, r: &WriteResults) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(if ok { t::staged() } else { t::error() })),
+        ),
+        area,
+    );
+}
+
+/// The question `M` stops on: what a Matroska copy of each file would leave
+/// behind, and whether to make it anyway. The source is kept either way, so
+/// nothing is destroyed by a yes -- but the copy is not the whole file, and
+/// that is said before it is made rather than after.
+fn draw_convert_ask(f: &mut Frame, area: Rect, ask: &[(std::path::PathBuf, Vec<String>)]) {
+    // One timecode track is the common case, and gets the plain question.
+    let only_timecode = ask
+        .iter()
+        .all(|(_, lost)| lost.iter().all(|l| l.ends_with("timecode track")));
+    let title = if only_timecode {
+        " Discard the incompatible timecode track? "
+    } else {
+        " Convert without what Matroska cannot hold? "
+    };
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            title,
+            Style::default()
+                .bg(t::warn())
+                .fg(t::badge_fg())
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    let text_width = (area.width as usize).saturating_sub(10).max(20);
+    for (p, lost) in ask {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", file_label(p)),
+            Style::default().fg(t::value()).add_modifier(Modifier::BOLD),
+        )));
+        for item in lost {
+            for l in wrap(item, text_width) {
+                lines.push(Line::from(Span::styled(
+                    format!("      {l}"),
+                    Style::default().fg(t::muted()),
+                )));
+            }
+        }
+        lines.push(Line::from(""));
+    }
+    lines.push(Line::from(Span::styled(
+        "  The Matroska copy is made without these. The original keeps them.",
+        Style::default().fg(t::muted()),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  y or ⏎ to convert · any other key to cancel",
+        Style::default().fg(t::value()).add_modifier(Modifier::BOLD),
+    )));
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(t::warn())),
         ),
         area,
     );

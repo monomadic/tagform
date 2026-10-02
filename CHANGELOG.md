@@ -13,7 +13,8 @@ in `AGENTS.md`.
   Written as the `date_added` key.
 - `M` makes a Matroska copy of the file in view (or every open file) beside
   it, in the background. The source is kept; a file holding something
-  Matroska cannot carry is refused, with the list.
+  Matroska cannot carry (a timecode track, say) asks before converting
+  without it, with the list.
 - **Matroska support.** `.mkv` files are read and written through `fastmkv`,
   recognised by their contents rather than their extension.
 - `tagform convert FILE...` — rewrite an MP4 or MOV as a Matroska file,
