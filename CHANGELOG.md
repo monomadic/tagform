@@ -8,6 +8,8 @@ in `AGENTS.md`.
 
 ### Added
 
+- The **Open...** menu can open the file's coordinates as a pin in Apple
+  Maps or Google Maps.
 - `o` now brings up an **Open...** menu (`j`/`k` or arrows, `⏎`) instead of
   opening the file at once: the default application, the parent directory,
   the URL in the browser, or the file revealed in Finder. `o ⏎` is the old

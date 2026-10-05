@@ -20,8 +20,7 @@ use crate::model::value::{Agg, Value};
 use crate::tags::atoms::Layout as Container;
 use crate::tags::plan::FilePlan;
 use crate::ui::app::{
-    App, FileEdit, ImportSource, Locate, Mode, OpenTarget, QueuePlace, QueueRow, Row,
-    WriteResults,
+    App, FileEdit, ImportSource, Locate, Mode, OpenTarget, QueuePlace, QueueRow, Row, WriteResults,
 };
 use crate::ui::edit::{stars_glyphs, Opt, Validation};
 use crate::ui::keymap::{key_width, KEYMAP};
@@ -796,6 +795,7 @@ fn draw_locate(f: &mut Frame, area: Rect, app: &App, locate: &Locate) {
 /// previews nothing -- four short lines do not earn a region of their own.
 fn draw_open_menu(f: &mut Frame, area: Rect, app: &App, at: OpenTarget) {
     let has_url = app.url_of(app.current_file()).is_some();
+    let has_coords = app.coords_of(app.current_file()).is_some();
     let inner = OpenTarget::ALL
         .iter()
         .map(|o| o.label().width())
@@ -821,7 +821,7 @@ fn draw_open_menu(f: &mut Frame, area: Rect, app: &App, at: OpenTarget) {
                     .bg(t::input_bg_focus())
                     .fg(t::value())
                     .add_modifier(Modifier::BOLD)
-            } else if *o == OpenTarget::Url && !has_url {
+            } else if (*o == OpenTarget::Url && !has_url) || (o.needs_coords() && !has_coords) {
                 // Still reachable -- choosing it says why it does nothing.
                 Style::default().fg(t::muted())
             } else {
@@ -838,7 +838,9 @@ fn draw_open_menu(f: &mut Frame, area: Rect, app: &App, at: OpenTarget) {
                 .border_style(Style::default().fg(t::accent()))
                 .title(Span::styled(
                     " Open... ",
-                    Style::default().fg(t::accent()).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(t::accent())
+                        .add_modifier(Modifier::BOLD),
                 )),
         ),
         rect,
@@ -3098,13 +3100,12 @@ mod tests {
     }
 
     #[test]
-    fn the_open_menu_floats_over_the_form_with_its_four_choices() {
+    fn the_open_menu_floats_over_the_form_with_its_six_choices() {
         let mut app = two_files(&[("title", "A")], &[("title", "B")]);
         next(&mut app);
         app.open_menu = Some(OpenTarget::Parent);
         let (w, h) = (100, 30);
-        let mut term =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
         term.draw(|fr| draw(fr, &app, None)).unwrap();
         let buf = term.backend().buffer().clone();
         let text = (0..h)

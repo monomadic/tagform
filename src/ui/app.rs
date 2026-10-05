@@ -418,15 +418,26 @@ pub enum OpenTarget {
     Url,
     /// The file, selected in a Finder window.
     Reveal,
+    /// The Coordinates field, as a pin in Apple Maps.
+    AppleMaps,
+    /// The Coordinates field, as a pin in Google Maps.
+    GoogleMaps,
 }
 
 impl OpenTarget {
-    pub const ALL: [OpenTarget; 4] = [
+    pub const ALL: [OpenTarget; 6] = [
         OpenTarget::Default,
         OpenTarget::Parent,
         OpenTarget::Url,
         OpenTarget::Reveal,
+        OpenTarget::AppleMaps,
+        OpenTarget::GoogleMaps,
     ];
+
+    /// Whether the choice needs the file's coordinates to do anything.
+    pub fn needs_coords(self) -> bool {
+        matches!(self, OpenTarget::AppleMaps | OpenTarget::GoogleMaps)
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -434,6 +445,8 @@ impl OpenTarget {
             OpenTarget::Parent => "Open parent directory.",
             OpenTarget::Url => "Open URL in the default browser.",
             OpenTarget::Reveal => "Reveal the file in Finder.",
+            OpenTarget::AppleMaps => "Open coordinates in Apple Maps.",
+            OpenTarget::GoogleMaps => "Open coordinates in Google Maps.",
         }
     }
 }
@@ -1654,7 +1667,10 @@ impl App {
         }
         self.status_error = !failed.is_empty();
         self.status = match (ok.len(), total) {
-            (0, 1) => format!("not converted: {}", failed[0].1.lines().next().unwrap_or("")),
+            (0, 1) => format!(
+                "not converted: {}",
+                failed[0].1.lines().next().unwrap_or("")
+            ),
             (1, 1) => format!("made {}", file_name(&ok[0])),
             (n, t) if n == t => format!("made {n} Matroska files"),
             (n, t) => format!("converted {n} of {t}"),
@@ -2078,7 +2094,7 @@ impl App {
     }
 
     /// The coordinates the form shows for one file, if they parse.
-    fn coords_of(&self, idx: usize) -> Option<(f64, f64)> {
+    pub fn coords_of(&self, idx: usize) -> Option<(f64, f64)> {
         let disk = self
             .files
             .get(idx)
@@ -2909,6 +2925,29 @@ impl App {
             OpenTarget::Reveal => {
                 cmd.arg("--").arg(&parent);
                 format!("opened {}", parent.display())
+            }
+            // The coordinates as a pin. Both URLs are the services' own
+            // documented forms; on macOS the launcher hands maps.apple.com
+            // to Maps itself, and the browser gets the other.
+            OpenTarget::AppleMaps | OpenTarget::GoogleMaps => {
+                let Some((lat, lon)) = self.coords_of(idx) else {
+                    self.status = "no coordinates on this file".into();
+                    return;
+                };
+                let url = if target == OpenTarget::AppleMaps {
+                    format!("https://maps.apple.com/?ll={lat},{lon}&q={lat},{lon}")
+                } else {
+                    format!("https://www.google.com/maps/search/?api=1&query={lat},{lon}")
+                };
+                cmd.arg("--").arg(&url);
+                format!(
+                    "opened {lat},{lon} in {}",
+                    if target == OpenTarget::AppleMaps {
+                        "Apple Maps"
+                    } else {
+                        "Google Maps"
+                    }
+                )
             }
         };
         let spawned = cmd
@@ -4478,8 +4517,12 @@ mod tests {
         press(&mut app, KeyCode::Char('w'));
         assert!(app.open_menu.is_some() && app.pending.is_none());
         press(&mut app, KeyCode::Up);
-        assert_eq!(app.open_menu, Some(OpenTarget::Reveal));
-        press(&mut app, KeyCode::Down);
+        assert_eq!(app.open_menu, Some(OpenTarget::GoogleMaps));
+        // Nothing is launched for a file with no coordinates either.
+        press(&mut app, KeyCode::Enter);
+        assert!(app.open_menu.is_none());
+        assert_eq!(app.status, "no coordinates on this file");
+        press(&mut app, KeyCode::Char('o'));
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Down);
         assert_eq!(app.open_menu, Some(OpenTarget::Url));
@@ -4503,7 +4546,11 @@ mod tests {
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Enter);
-        assert!(app.status.starts_with("not a web address"), "{}", app.status);
+        assert!(
+            app.status.starts_with("not a web address"),
+            "{}",
+            app.status
+        );
     }
 
     /// The aggregate view has no one file to open, so the menu does not
