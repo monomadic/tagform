@@ -92,6 +92,25 @@ fn scan(path: &Path) -> std::io::Result<Layout> {
     Ok(Layout::Inconclusive)
 }
 
+/// Whether the file opens with an ISO/QuickTime atom at all. Asked of the
+/// bytes rather than the extension, because the answer decides whether the
+/// write path may touch the file: every writer here emits mp4 or mov, so a
+/// Matroska file given on the command line was remuxed *into an mp4 named
+/// `.mkv`* whenever its codecs happened to fit, and failed with a muxer error
+/// when they did not (DESIGN §1, non-goals).
+///
+/// `ftyp` opens anything modern; the rest are what a pre-`ftyp` QuickTime
+/// file may lead with.
+pub fn is_iso_container(path: &Path) -> bool {
+    let mut hdr = [0u8; 8];
+    let read = File::open(path).and_then(|mut f| f.read_exact(&mut hdr));
+    read.is_ok()
+        && matches!(
+            &hdr[4..8],
+            b"ftyp" | b"moov" | b"mdat" | b"wide" | b"free" | b"skip" | b"pnot"
+        )
+}
+
 /// The `mvhd` creation and modification times, in the container's own unit:
 /// seconds since 1904-01-01 UTC. Zero is "never set", which is what a plain
 /// ffmpeg mux leaves and what ffprobe then omits.
@@ -289,6 +308,17 @@ mod tests {
         let p = std::env::temp_dir().join("tagform-atoms-garbage.bin");
         std::fs::write(&p, b"this is not an mp4 at all, not even close").unwrap();
         assert_eq!(layout(&p), Layout::Inconclusive);
+        std::fs::remove_file(&p).ok();
+    }
+
+    /// The EBML magic a Matroska file opens with, against an `ftyp`.
+    #[test]
+    fn matroska_is_not_an_iso_container() {
+        let p = std::env::temp_dir().join("tagform-atoms-ebml.mkv");
+        std::fs::write(&p, b"\x1a\x45\xdf\xa3\xa3\x42\x86\x81\x01\x42\xf7\x81").unwrap();
+        assert!(!is_iso_container(&p));
+        std::fs::write(&p, chain(&[(b"ftyp", 8), (b"moov", 16)])).unwrap();
+        assert!(is_iso_container(&p));
         std::fs::remove_file(&p).ok();
     }
 
