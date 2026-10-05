@@ -30,6 +30,10 @@
 /// order worth keeping, and a sorted one reads the same on every file. Both
 /// sides of the form's "did this change" comparison come through here, so a
 /// set stored out of order on disk is not an edit until something else is.
+///
+/// A tag written twice is kept once. The comparison ignores case, as the
+/// filename parser's does: `#Tag` and `#tag` are one hashtag to everything
+/// that reads them, and the spelling written first is the one that stays.
 pub fn split(line: &str) -> Vec<String> {
     let parts: Vec<&str> = if line.contains(',') {
         line.split(',').collect()
@@ -41,7 +45,10 @@ pub fn split(line: &str) -> Vec<String> {
         .map(|p| repair(p))
         .filter(|p| !p.is_empty())
         .collect();
+    // The sort is stable, so among spellings of one tag the first written
+    // leads its run and is the one `dedup_by_key` keeps.
     tags.sort_by_cached_key(|t| t.to_lowercase());
+    tags.dedup_by_key(|t| t.to_lowercase());
     tags
 }
 
@@ -127,6 +134,31 @@ mod tests {
             v("zebra, Apple, mango, banana"),
             ["Apple", "banana", "mango", "zebra"]
         );
+    }
+
+    /// Duplicates are judged after repair, so two spellings of one tag are one
+    /// tag; a multi-word tag is not a duplicate of its own first word.
+    #[test]
+    fn duplicates_are_kept_once() {
+        assert_eq!(v("frog, frog"), ["frog"]);
+        assert_eq!(v("frog frog #frog"), ["frog"]);
+        assert_eq!(v("frog dog, big dog, frog"), ["big-dog", "frog", "frog-dog"]);
+        assert_eq!(v("big dog, big_dog, big-dog"), ["big-dog"]);
+        assert_eq!(v("Frog, frog, FROG, ant"), ["ant", "Frog"]);
+    }
+
+    /// The separator rule, on the lines it was specified with.
+    #[test]
+    fn commas_decide_whether_a_space_is_inside_a_tag() {
+        assert_eq!(
+            v("frog, bulldog, camel toe, burger"),
+            ["bulldog", "burger", "camel-toe", "frog"]
+        );
+        assert_eq!(
+            v("frog bulldog camel toe burger"),
+            ["bulldog", "burger", "camel", "frog", "toe"]
+        );
+        assert_eq!(v("frog, big bull dog"), ["big-bull-dog", "frog"]);
     }
 
     /// Repair has to be a fixed point, or seeding a control from its own value
