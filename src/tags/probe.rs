@@ -89,14 +89,6 @@ pub fn probe(path: &Path) -> Result<FileTags> {
     if !path.is_file() {
         bail!("not a file: {}", path.display());
     }
-    // Refused at the read, which every entry point shares, so no plan is ever
-    // built for a container the writers would convert rather than rewrite.
-    if !crate::tags::atoms::is_iso_container(path) {
-        bail!(
-            "not an MP4 or MOV container: {} (tagform edits .mp4, .m4v and .mov only)",
-            path.display()
-        );
-    }
     Ok(FileTags {
         path: path.to_path_buf(),
         atoms: probe_atoms(path)?,
