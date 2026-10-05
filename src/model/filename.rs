@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn tags_are_repaired_and_deduplicated() {
         let out = parse("Ann - T #this-is-a-tag #example_tag #Tag #tag #");
-        assert_eq!(list(&out, "tags"), ["this-is-a-tag", "example-tag", "Tag"]);
+        assert_eq!(list(&out, "tags"), ["this-is-a-tag", "example-tag", "tag"]);
     }
 
     /// The orientation mark is a token beside the tags, one per marked

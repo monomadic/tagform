@@ -44,8 +44,9 @@ in `AGENTS.md`.
 
 ### Changed
 
-- A tag entered twice in **Tags** is kept once, ignoring case (`frog, Frog`
-  is `frog`; the first spelling stays), so a repeat is no longer written.
+- **Tags** are lowercased, and a tag entered twice is kept once (`Frog, frog`
+  is `frog`), so neither capitals nor repeats are written. A `#Tag` read from
+  a filename is lowercased the same way.
 - The faststart switch is shown at the top right, beside `?  help`, rather than at the end of the mode bar.
 - Tags sort alphabetically, ignoring case.
 - A mixed set counts its answers instead of only saying "mixed".

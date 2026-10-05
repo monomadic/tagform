@@ -26,14 +26,14 @@
 /// line the spaces inside a tag are the user's, and repairing them is what
 /// they meant.
 ///
-/// The tags come back sorted alphabetically, ignoring case: a tag set has no
+/// The tags come back sorted alphabetically: a tag set has no
 /// order worth keeping, and a sorted one reads the same on every file. Both
 /// sides of the form's "did this change" comparison come through here, so a
 /// set stored out of order on disk is not an edit until something else is.
 ///
-/// A tag written twice is kept once. The comparison ignores case, as the
-/// filename parser's does: `#Tag` and `#tag` are one hashtag to everything
-/// that reads them, and the spelling written first is the one that stays.
+/// A tag written twice is kept once. Repair has already lowercased both, so
+/// `#Tag` and `#tag` are the same tag here, as they are to everything that
+/// reads a hashtag.
 pub fn split(line: &str) -> Vec<String> {
     let parts: Vec<&str> = if line.contains(',') {
         line.split(',').collect()
@@ -45,16 +45,16 @@ pub fn split(line: &str) -> Vec<String> {
         .map(|p| repair(p))
         .filter(|p| !p.is_empty())
         .collect();
-    // The sort is stable, so among spellings of one tag the first written
-    // leads its run and is the one `dedup_by_key` keeps.
-    tags.sort_by_cached_key(|t| t.to_lowercase());
-    tags.dedup_by_key(|t| t.to_lowercase());
+    tags.sort();
+    tags.dedup();
     tags
 }
 
 /// One tag, made into a single filename token: the leading `#` is presentation
 /// and never stored, and every run of whitespace, `_` or `-` between two
-/// characters becomes exactly one `-`. Idempotent, which is what lets a
+/// characters becomes exactly one `-`. Lowercased, because a hashtag's case
+/// carries nothing and two spellings of one tag are two tags to a filename
+/// search. Idempotent, which is what lets a
 /// control be seeded from its own value without staging a phantom edit.
 pub fn repair(raw: &str) -> String {
     let mut out = String::new();
@@ -69,7 +69,7 @@ pub fn repair(raw: &str) -> String {
                 out.push('-');
                 gap = false;
             }
-            out.push(c);
+            out.extend(c.to_lowercase());
         }
     }
     out
@@ -126,13 +126,13 @@ mod tests {
         assert_eq!(v("tag__two, a - b, -c-"), ["a-b", "c", "tag-two"]);
     }
 
-    /// Alphabetical, not ASCII: a capitalised tag sorts among its neighbours
-    /// rather than ahead of every lowercase one.
+    /// Lowercased before the sort, so a capitalised tag lands among its
+    /// neighbours rather than ahead of every lowercase one.
     #[test]
-    fn tags_come_back_sorted_ignoring_case() {
+    fn tags_come_back_lowercased_and_sorted() {
         assert_eq!(
-            v("zebra, Apple, mango, banana"),
-            ["Apple", "banana", "mango", "zebra"]
+            v("zebra, Apple, mango, Big Dog, #POV"),
+            ["apple", "big-dog", "mango", "pov", "zebra"]
         );
     }
 
@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(v("frog frog #frog"), ["frog"]);
         assert_eq!(v("frog dog, big dog, frog"), ["big-dog", "frog", "frog-dog"]);
         assert_eq!(v("big dog, big_dog, big-dog"), ["big-dog"]);
-        assert_eq!(v("Frog, frog, FROG, ant"), ["ant", "Frog"]);
+        assert_eq!(v("Frog, frog, FROG, ant"), ["ant", "frog"]);
     }
 
     /// The separator rule, on the lines it was specified with.
@@ -165,7 +165,7 @@ mod tests {
     /// would stage an edit nobody made.
     #[test]
     fn repair_is_idempotent() {
-        for s in ["tag two", "a__b", "#x", " - ", "", "a-b"] {
+        for s in ["tag two", "a__b", "#x", " - ", "", "a-b", "Tag Two", "İ"] {
             let once = repair(s);
             assert_eq!(repair(&once), once, "{s}");
         }
