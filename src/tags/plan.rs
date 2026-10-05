@@ -51,6 +51,7 @@ pub const EXIFTOOL_KEY_NAMES: &[(&str, &str)] = &[
     // `K` suffix like the others: exiftool already has an EXIF `Orientation`,
     // and a bare name would be ambiguous in its messages even under `Keys:`.
     ("orientation", "OrientationK"),
+    ("date_added", "DateAdded"),
 ];
 
 /// Keys a plan sends through a rewrite even when the file already has them:
@@ -76,6 +77,9 @@ pub enum Writer {
     Ffmpeg,
     /// Remux, then put the XMP back from the snapshot taken at read time.
     TwoPass,
+    /// A Matroska file, which none of the others can touch (DESIGN §9.6).
+    /// Edits the tags where they are, or copies the file to make room.
+    Matroska,
 }
 
 impl Writer {
@@ -85,6 +89,7 @@ impl Writer {
             Writer::Native => "rewrite container",
             Writer::Ffmpeg => "remux",
             Writer::TwoPass => "remux + restore XMP",
+            Writer::Matroska => "matroska",
         }
     }
 }
@@ -99,6 +104,8 @@ pub struct FilePlan {
     /// because XMP wins on read: updating only the atom would leave the form
     /// showing the old value and look like the edit did nothing.
     pub xmp: Vec<(String, Vec<String>)>,
+    /// The one layout switch. For MP4 it asks for the moov at the front;
+    /// for Matroska, for the tags at the front with room after them.
     pub faststart: bool,
     pub layout: Layout,
     pub why: &'static str,
@@ -129,7 +136,12 @@ fn xmp_values(v: &Value) -> Vec<String> {
     }
 }
 
-pub fn build(file: &FileTags, staged: &BTreeMap<String, Value>, want_faststart: bool) -> FilePlan {
+/// Container key -> value, and XMP tag -> values.
+pub type Keys = (Vec<(String, String)>, Vec<(String, Vec<String>)>);
+
+/// The container keys and XMP tags a set of staged rows comes to: each
+/// field fanned out to every key it writes.
+pub fn keys(file: &FileTags, staged: &BTreeMap<String, Value>) -> Keys {
     let mut atoms: Vec<(String, String)> = Vec::new();
     let mut xmp: Vec<(String, Vec<String>)> = Vec::new();
 
@@ -168,6 +180,26 @@ pub fn build(file: &FileTags, staged: &BTreeMap<String, Value>, want_faststart: 
     }
     atoms.sort();
     atoms.dedup();
+    (atoms, xmp)
+}
+
+pub fn build(file: &FileTags, staged: &BTreeMap<String, Value>, want_faststart: bool) -> FilePlan {
+    let (atoms, xmp) = keys(file, staged);
+
+    if crate::tags::mkv::is_matroska(&file.path) {
+        let route = crate::tags::mkv::route(&file.path, &atoms, &xmp, want_faststart);
+        return FilePlan {
+            path: file.path.clone(),
+            writer: Writer::Matroska,
+            atoms,
+            xmp,
+            faststart: want_faststart,
+            // An MP4 notion. Said to be the usual one so the confirmation
+            // screen has nothing to remark on.
+            layout: Layout::FastStart,
+            why: route.why(),
+        };
+    }
 
     let layout = crate::tags::atoms::layout(&file.path);
     // Probed names are lower-cased; a reverse-DNS key is planned in its own

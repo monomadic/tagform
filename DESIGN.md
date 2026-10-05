@@ -66,8 +66,9 @@ container (with the filename as an optional secondary sink).
 - Not a container repair tool. Fragmentation and moov placement stay
   `mp4doctor`'s job; `tagform` only rides the faststart flag along on the remux
   it is already doing.
-- No Matroska, no audio-only formats. If it grows, `.mkv` goes through a
-  separate backend, not by pretending MKV tags are MP4 atoms.
+- No audio-only formats. Matroska was a non-goal and is now read and
+  written, through a separate backend and not by pretending MKV tags are MP4
+  atoms (§9.6).
 - Not a chapter or subtitle editor. Deferred indefinitely.
 
 ---
@@ -1553,6 +1554,19 @@ it is not shown in the plan, and it does not make the filename readable as a
 source. Parsing (§3.6) is still the unbuilt half, and it is the half that needs
 a grammar in this codebase.
 
+⟨built, differs⟩ **Composing is built, for every container.** `r` names MP4,
+MOV and Matroska files with `model/namer.rs`, from the tags `probe` reads
+plus a fresh ffprobe for the spec block. `rename-video` is no longer called;
+its grammar is held as two template strings (`namer::ADULT`,
+`namer::FOOTAGE`: `{var}`, and `<...>` groups kept only when every variable
+in them has a value) so a config file can supply its own once one exists.
+Only the templates are meant to be configurable; the composed variables
+(`{headline}`, `{meta}`) keep the punctuation rules and the on-disk spec
+order. Two small differences from the script: the capture device is read from
+the `com.apple.quicktime.model` tag only, and the capture date from the
+Apple creation-date tag, then `date`, then the file's birth time, without
+asking exiftool for `DateTimeOriginal`.
+
 ⟨built, differs⟩ **A rename never overwrites.** A target another file already
 answers to — the exact entry, or on a case-insensitive volume a different file
 the name resolves to — is refused (`Taken`), and `rename-video` itself moves
@@ -1682,6 +1696,111 @@ overflow (the crate reports these rather than converting to `co64`), and any
 file whose tags live somewhere neither §8 layout covers. Declining is cheap and
 correct; guessing is neither.
 
+### 9.6 Matroska
+
+**Built** as `tags/mkv.rs`, over the `fastmkv` crate (`../fastmkv`, whose
+`docs/PROPOSAL-2.md` holds the container-level design and measurements).
+A file is Matroska by its EBML magic, not its extension.
+
+Every MP4 writer here would treat an `.mkv` as an MP4: the remux picked the
+mp4 muxer for it and failed only because the file carried an attachment. A
+file without one would have been replaced by an MP4 under the `.mkv` name.
+
+**Reading.** Through `fastmkv`, not ffprobe and not exiftool. From the full
+walk of the file whenever it allows one; the quick reader skips what lies
+past the clusters, and a field that looked empty for that reason would be
+filled in and the real value overwritten.
+
+| | Rule |
+|---|---|
+| Keys | tag names lower-cased; only global, string-valued tags in the undetermined language |
+| Repeated names, or names differing only in case | the last in the file is shown |
+| Title | `Info\Title`; a `TITLE` tag only when there is no other |
+| Muxer bookkeeping | hidden, as `JUNK_KEYS` are for MP4 |
+| XMP-only fields | the five tags named in `XMP_NAMES`, read back under their XMP names |
+| Everything else in the file | tags aimed at a track or chapter, other languages, nested and binary values: not shown, and kept |
+
+**Writing.** `Writer::Matroska`, the same sequence as the others: sibling
+temp, verify, rename.
+
+| | Rule |
+|---|---|
+| Key name | the spelling the file already has; upper case when new |
+| Other spellings of the key | removed |
+| Title | written to `Info\Title`, and every `TITLE` tag removed |
+| Empty value | removes the key |
+| Verified by | duration and streams unchanged; every key read back by `fastmkv` and, independently, by ffprobe |
+
+Both title and spelling rules are measurements, not taste: with the same
+title in both places mpv shows it twice, and with three spellings of one
+key ffprobe shows the last, mpv all three joined, mediainfo all three apart.
+
+**The layout switch.** `F` is one switch for both containers, and asks the
+same thing of each: what a reader needs first, at the front of the file.
+
+| Switch | File | What a write does |
+|---|---|---|
+| on | tags at the front with room after them | updates in place |
+| on | anything else | re-seats: a copy with the metadata at the front and padding after it |
+| off | room where the tags are | updates in place |
+| off | no room | sends the tags to the end of the file |
+| either | a title that does not fit at the front | re-seats; `Info` also holds the duration, and never goes to the end |
+
+A re-seat is a copy, not a remux: every cluster is carried byte for byte.
+It costs one pass over the file, once, after which edits cost kilobytes.
+
+**Files from other tools.** Tested on what ffmpeg, mkvmerge and mkvpropedit
+write. mkvmerge puts the tags after the clusters, so with the switch on its
+files are re-seated on their first write. mkvpropedit, out of room, leaves a
+file with its index split in two; an edit that has to move anything in such
+a file re-seats it, whatever the switch says, and the result has one index.
+
+**Refused.** A file `fastmkv` will not edit (no sizes recorded, data after
+the end, a wrong index) is still shown. A write to it fails with the reason
+and leaves it untouched; `ffmpeg -c copy` makes it editable.
+
+### 9.7 Converting to Matroska
+
+**Built** as `convert.rs` and `write::to_matroska`: `tagform convert FILE...`
+makes a `.mkv` beside each MP4 or MOV. Headless, like `clone`.
+
+Two tools, each doing the half it is good at:
+
+| Step | By | Why |
+|---|---|---|
+| Streams and chapters | ffmpeg, `-c copy -f matroska` | it is a remux, and this tool re-encodes nothing |
+| Global tags | the Matroska backend (§9.6) | ffmpeg would bring the muxer's bookkeeping, and write the title as it pleases |
+| Layout | a re-seat | the file starts with its metadata at the front and room after it |
+
+Global metadata is withheld from ffmpeg (`-map_metadata:g -1`); what
+describes a stream, such as its language, stays with the stream. The tags
+are taken from the source as *field values*, the way `clone` takes them, so
+a value kept in XMP, which ffmpeg cannot see, arrives like any other.
+
+**What cannot be carried is a refusal, not a footnote.** `--lossy` accepts
+the loss, and the list is printed either way.
+
+| Left behind | Why |
+|---|---|
+| Subtitle streams | an MP4's `mov_text` can be converted into Matroska but not copied |
+| Timecode and timed-metadata tracks | Matroska has no place for them |
+| Cover art | a video stream there, an attachment here |
+| XMP tags no field claims | no XMP in Matroska |
+| Reverse-DNS keys, except the coordinates | ffprobe does not read them faithfully (§10, under `clone`) |
+
+**Safety.** The source is only read and is never removed. The destination
+must not exist, appears only after it has been verified against the source
+(duration, the kind and codec of every stream, every tag, by two readers),
+and is put in place by a hard link, which fails where a rename would
+overwrite.
+
+⟨designed⟩ The other directions. Matroska to MP4 is the lossier one: an MP4
+cannot hold attachments, most subtitle formats, or tags aimed at a track,
+and it is the direction the bug that started §9.6 went in. MP4 to MOV and
+back is a change of muxer and little else. Neither is built.
+
+---
+
 ## 10. CLI surface
 
 **Built.** The whole of it:
@@ -1695,7 +1814,10 @@ tagform [OPTIONS] FILE...
   -h, --help       show this message
 
 tagform clone [--only=FIELDS] [--dry-run] [--no-faststart] SOURCE TARGET...
+tagform convert [--lossy] [--dry-run] FILE...
 ```
+
+`convert` makes a Matroska copy of an MP4 or MOV (§9.7).
 
 `clone` is the first headless write, for scripts that derive one file from
 another — an interpolated or re-encoded copy leaves ffmpeg without the

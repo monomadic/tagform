@@ -361,6 +361,14 @@ pub enum Msg {
     ),
     /// The queue ran dry: the whole run's outcome.
     Wrote(Box<WriteResults>),
+    /// One outcome per file `M` was given: the source, and the Matroska
+    /// copy made of it or why there is none.
+    /// The second list is the files not converted yet because something in
+    /// them cannot be carried, each with what would be left behind.
+    Converted(
+        Vec<(PathBuf, Result<PathBuf, String>)>,
+        Vec<(PathBuf, Vec<String>)>,
+    ),
     /// One outcome per file a `rename-video` run was given, by file index.
     Renamed(Vec<(usize, Result<Outcome, String>)>),
     /// Whether `r` would collide on one file: its index, the path that was
@@ -503,6 +511,16 @@ pub struct App {
     /// and while it does, the paths in `files` are the ones about to change,
     /// which is why `w` and a second `r` are held off until it lands.
     pub renaming: bool,
+    /// An `M` conversion is in flight. One at a time: two stream copies on
+    /// one volume are slower than one after the other.
+    pub converting: bool,
+    /// Files `M` has not converted because a Matroska file cannot hold all
+    /// of them, each with what would be left behind. A dialog while it is
+    /// set: y or ⏎ converts without those things, anything else does not.
+    pub convert_ask: Option<Vec<(PathBuf, Vec<String>)>>,
+    /// What `M` already converted, or failed to, before it stopped to ask:
+    /// held so the run's outcome is reported once, after the answer.
+    convert_done: Vec<(PathBuf, Result<PathBuf, String>)>,
     /// Files whose rename would land on a name another file already holds,
     /// with that file's path. Asked of `rename-video` in the background on
     /// open and whenever a file's tags or name change, so the collision is
@@ -593,6 +611,9 @@ impl App {
             results: None,
             writing: false,
             renaming: false,
+            converting: false,
+            convert_ask: None,
+            convert_done: Vec::new(),
             conflicts: BTreeMap::new(),
             fetching: false,
             locate: None,
@@ -767,6 +788,7 @@ impl App {
                 }
                 Msg::Wrote(r) => self.finish_write(*r),
                 Msg::Renamed(r) => self.finish_rename(r),
+                Msg::Converted(r, ask) => self.finish_convert(r, ask),
                 Msg::Conflict(i, asked, taken) => {
                     if self.files.get(i).is_some_and(|f| f.path == asked) {
                         match taken {
@@ -1153,6 +1175,31 @@ impl App {
         }
     }
 
+    /// What the one layout switch is called for the files that are loaded.
+    /// It asks for the same thing of both containers -- what a reader needs
+    /// first, at the front -- but an MP4 calls that faststart and a
+    /// Matroska file gets there by being padded (DESIGN §9.6).
+    pub fn layout_switch(&self) -> &'static str {
+        // By name: this is a label, painted every frame, and not worth
+        // opening each file for. The writer itself goes by contents.
+        let mkv = self
+            .files
+            .iter()
+            .filter(|f| {
+                f.path.extension().is_some_and(|e| {
+                    ["mkv", "mka", "webm"]
+                        .iter()
+                        .any(|m| e.eq_ignore_ascii_case(m))
+                })
+            })
+            .count();
+        match mkv {
+            0 => "faststart",
+            n if n == self.files.len() => "pad",
+            _ => "faststart/pad",
+        }
+    }
+
     /// Load the queue with jobs that write nothing, so a test can paint the
     /// queue panel without starting a writer thread. The plans are empty:
     /// nothing put here by a test ever reaches `write::execute`.
@@ -1457,6 +1504,132 @@ impl App {
                 .collect();
             let _ = tx.send(Msg::Renamed(out));
         });
+    }
+
+    /// `M`: a Matroska copy of each file in scope, beside it (DESIGN §9.7).
+    /// The same conversion as `tagform convert`. A file holding something
+    /// Matroska cannot carry -- a timecode track, say -- is not converted
+    /// until the dialog listing the loss is answered: nothing is left
+    /// behind silently. It reads the file, not the form, so staged edits
+    /// are written first or not carried -- and it refuses rather than guess.
+    fn convert_files(&mut self) {
+        if self.converting {
+            self.status = "conversion in progress".into();
+            return;
+        }
+        if self.writing {
+            self.status = "write in progress · convert once it has landed".into();
+            return;
+        }
+        if self.staged_count() > 0 {
+            self.status = "staged edits — write or discard them before converting".into();
+            return;
+        }
+        let jobs: Vec<PathBuf> = self
+            .scope()
+            .into_iter()
+            .filter_map(|i| self.files.get(i).map(|f| f.path.clone()))
+            .collect();
+        let Some(first) = jobs.first() else {
+            return;
+        };
+        self.status = match jobs.len() {
+            1 => format!("converting {} to Matroska", file_name(first)),
+            n => format!("converting {n} files to Matroska"),
+        };
+        self.convert_done.clear();
+        self.spawn_convert(jobs, false);
+    }
+
+    /// Convert `jobs` off the UI thread. Without `lossy`, a file that would
+    /// leave something behind is sent back with the list instead.
+    fn spawn_convert(&mut self, jobs: Vec<PathBuf>, lossy: bool) {
+        use crate::convert::convert;
+        self.converting = true;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let (mut out, mut ask) = (Vec::new(), Vec::new());
+            for p in jobs {
+                // A dry run first: it is the one that knows what is lost,
+                // and it refuses everything the real one would.
+                let lost = match convert(&p, true, true) {
+                    Ok(o) => o.lost,
+                    Err(e) => {
+                        out.push((p, Err(e.to_string())));
+                        continue;
+                    }
+                };
+                if !lost.is_empty() && !lossy {
+                    ask.push((p, lost));
+                    continue;
+                }
+                let r = convert(&p, true, false)
+                    .map(|o| o.dest)
+                    .map_err(|e| e.to_string());
+                out.push((p, r));
+            }
+            let _ = tx.send(Msg::Converted(out, ask));
+        });
+    }
+
+    /// The answer to the dialog: convert without what cannot be carried, or
+    /// leave those files unconverted.
+    fn answer_convert(&mut self, proceed: bool) {
+        let Some(ask) = self.convert_ask.take() else {
+            return;
+        };
+        if proceed {
+            self.status = match ask.len() {
+                1 => format!("converting {} to Matroska", file_name(&ask[0].0)),
+                n => format!("converting {n} files to Matroska"),
+            };
+            self.spawn_convert(ask.into_iter().map(|(p, _)| p).collect(), true);
+        } else if self.convert_done.is_empty() {
+            self.status = "conversion cancelled".into();
+        } else {
+            self.finish_convert(Vec::new(), Vec::new());
+        }
+    }
+
+    /// The copies are new files beside the sources, which stay open: the
+    /// form is still true of what it holds.
+    fn finish_convert(
+        &mut self,
+        out: Vec<(PathBuf, Result<PathBuf, String>)>,
+        ask: Vec<(PathBuf, Vec<String>)>,
+    ) {
+        self.converting = false;
+        self.convert_done.extend(out);
+        if !ask.is_empty() {
+            self.status.clear();
+            self.convert_ask = Some(ask);
+            return;
+        }
+        let out = std::mem::take(&mut self.convert_done);
+        let total = out.len();
+        let mut ok: Vec<PathBuf> = Vec::new();
+        let mut failed: Vec<(PathBuf, String)> = Vec::new();
+        for (src, r) in out {
+            match r {
+                Ok(dest) => ok.push(dest),
+                Err(e) => failed.push((src, e)),
+            }
+        }
+        self.status_error = !failed.is_empty();
+        self.status = match (ok.len(), total) {
+            (0, 1) => format!("not converted: {}", failed[0].1.lines().next().unwrap_or("")),
+            (1, 1) => format!("made {}", file_name(&ok[0])),
+            (n, t) if n == t => format!("made {n} Matroska files"),
+            (n, t) => format!("converted {n} of {t}"),
+        };
+        if !failed.is_empty() {
+            self.results = Some(WriteResults {
+                verb: "Converted",
+                ok,
+                failed,
+                not_renamed: vec![],
+            });
+        }
     }
 
     /// Take the new paths and nothing else. `rename-video` writes no tags, so
@@ -2029,6 +2202,11 @@ impl App {
             self.results = None;
             return;
         }
+        if self.convert_ask.is_some() {
+            let yes = matches!(key.code, KeyCode::Char('y' | 'Y') | KeyCode::Enter);
+            self.answer_convert(yes);
+            return;
+        }
         // Any key after a failure is the acknowledgement; the message stays,
         // the colour goes.
         self.status_error = false;
@@ -2288,9 +2466,14 @@ impl App {
                 self.help_scroll = 0;
                 self.status.clear();
             }
+            (KeyCode::Char('M'), false) => self.convert_files(),
             (KeyCode::Char('F'), false) => {
                 self.faststart = !self.faststart;
-                self.status = format!("faststart {}", if self.faststart { "on" } else { "off" });
+                self.status = format!(
+                    "{} {}",
+                    self.layout_switch(),
+                    if self.faststart { "on" } else { "off" }
+                );
             }
             (KeyCode::Esc, _) if self.revert_focused_set() => {}
             (KeyCode::Char('q'), false) | (KeyCode::Esc, _) => self.escape(),
@@ -4585,13 +4768,14 @@ mod tests {
         for hidden in FOOTAGE_HIDDEN {
             assert!(!k.contains(hidden), "{hidden} should be hidden: {k:?}");
         }
-        let head: Vec<&str> = k.iter().take(9).copied().collect();
+        let head: Vec<&str> = k.iter().take(10).copied().collect();
         assert_eq!(
             head,
             [
                 "category",
                 "variant",
                 "date",
+                "date_added",
                 "actors",
                 "rating",
                 "tags",
@@ -4602,7 +4786,7 @@ mod tests {
         );
         // The fields the profile does not name keep their schema order behind
         // the ones it does.
-        assert_eq!(k[9..], ["genre", "kind", "origin"]);
+        assert_eq!(k[10..], ["genre", "kind", "origin"]);
         assert_eq!(row(&app, "actors").label, "People");
     }
 
@@ -4630,7 +4814,7 @@ mod tests {
         assert!(!k.contains(&"artist"), "{k:?}");
         assert!(!k.contains(&"track"), "not a clip: {k:?}");
         assert_eq!(
-            k[..14],
+            k[..15],
             [
                 "category",
                 "variant",
@@ -4642,13 +4826,14 @@ mod tests {
                 "url",
                 "tags",
                 "date",
+                "date_added",
                 "description",
                 "genre",
                 "synopsis",
                 "origin"
             ]
         );
-        assert_eq!(k[14..], ["kind"]);
+        assert_eq!(k[15..], ["kind"]);
         let opts: Vec<String> = app
             .options_for(row(&app, "orientation"))
             .into_iter()
@@ -4676,6 +4861,18 @@ mod tests {
         }
         let app = one(&[("category", "Footage"), ("orientation", "Gay")]);
         assert!(keys(&app).contains(&"orientation"), "{:?}", keys(&app));
+    }
+
+    /// Date Added is not a profile's field: every category offers it.
+    #[test]
+    fn date_added_is_offered_to_every_category() {
+        for app in [
+            one(&[]),
+            one(&[("category", "Footage")]),
+            one(&[("category", "Adult")]),
+        ] {
+            assert!(keys(&app).contains(&"date_added"), "{:?}", keys(&app));
+        }
     }
 
     /// Choosing Clip in the form, not just on disk, brings Track in -- and

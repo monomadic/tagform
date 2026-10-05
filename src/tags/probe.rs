@@ -89,6 +89,19 @@ pub fn probe(path: &Path) -> Result<FileTags> {
     if !path.is_file() {
         bail!("not a file: {}", path.display());
     }
+    // Matroska has no atoms and no XMP, and its tags are read where they
+    // will be written (DESIGN §9.6). ffprobe would do for display, but it
+    // folds the title and the tags into one list and says nothing of which
+    // spelling a name had.
+    if crate::tags::mkv::is_matroska(path) {
+        let read =
+            crate::tags::mkv::read(path).with_context(|| format!("reading {}", path.display()))?;
+        return Ok(FileTags {
+            path: path.to_path_buf(),
+            atoms: read.atoms,
+            xmp: read.xmp,
+        });
+    }
     Ok(FileTags {
         path: path.to_path_buf(),
         atoms: probe_atoms(path)?,
@@ -96,7 +109,7 @@ pub fn probe(path: &Path) -> Result<FileTags> {
     })
 }
 
-fn probe_atoms(path: &Path) -> Result<BTreeMap<String, Value>> {
+pub(crate) fn probe_atoms(path: &Path) -> Result<BTreeMap<String, Value>> {
     let out = Command::new("ffprobe")
         .args(["-v", "error", "-show_entries", "format_tags", "-of", "json"])
         .arg("--")

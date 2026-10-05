@@ -4,7 +4,8 @@ Guidance for coding agents working on `tagform`. `CLAUDE.md` is a symlink to
 this file.
 
 `tagform` is a Rust TUI that edits metadata on MP4/MOV files by shelling out to
-`ffmpeg`/`ffprobe` and `exiftool`. ~4,700 lines across 16 source files.
+`ffmpeg`/`ffprobe` and `exiftool`, and on Matroska files through the `fastmkv`
+crate, a path dependency at `../fastmkv`. ~4,700 lines across 16 source files.
 
 ## Read this before reading anything else
 
@@ -15,6 +16,7 @@ is the main way to waste a context window here. Budget them like this:
 |---|---|---|
 | `README.md` | ~300 lines | **Read in full, once.** Tour, keymap, and the three container facts the design rests on. Skip the screenshots. |
 | `DESIGN.md` | ~1500 lines | **Never read whole.** One section at a time — see below. |
+| `CHANGELOG.md` | short | User-facing changes. **Update it** with any change a user could notice — see Changelog below. |
 | `docs/CONTAINER.md` | ~250 lines | Read §1 only, and only when touching the write path. Measured ffmpeg/exiftool behaviour. |
 
 Pull one section without reading the file, by its heading — no line numbers,
@@ -60,6 +62,8 @@ Use the map below instead of searching the tree.
 src/main.rs         CLI, --print-json / --print-schema, exit codes
 src/clone.rs        `tagform clone SRC DST...`: headless, stages the source's
                     values on each target and runs the ordinary plan/write
+src/convert.rs      `tagform convert FILE...`: headless, an MP4 or MOV as a
+                    Matroska file; refuses what it cannot carry
 src/config.rs       the yt-dlp --alias parse (Category/Variant sets)
 src/fetch.rs        `i u`: yt-dlp -J on the URL field → field values (no download)
 src/geocode.rs      MapKit place lookup via assets/geocode.swift: committing
@@ -75,6 +79,8 @@ src/tags/
   atoms.rs          atom-chain parse, faststart/Layout detection
   plan.rs           what to write and which backend writes it.
   native.rs         the native container rewrite: mdta keys/ilst, no ffmpeg
+  mkv.rs            Matroska, over fastmkv: key names, the title rule, and
+                    the choice between updating in place and re-seating
   fixtures.rs       test-only: the write-path suite, on containers ffmpeg
                     generates at test time (§14). Needs ffmpeg + exiftool.
   write.rs          executes a plan. The remux, the verify, the rename.
@@ -125,7 +131,8 @@ debugging. Changing code that violates one is a regression, not a refactor.
    preference — never from a flag. (DESIGN's `--writer ffmpeg` / `--force`
    escape hatch is designed but not implemented; `main.rs` accepts only
    `--print-json`, `--print-schema`, `--theme`, `--no-thumbnail`, `--help`,
-   and the `clone` subcommand, which has no backend flag either.)
+   and the `clone` and `convert` subcommands, which have no backend flag
+   either.)
 3. **The original is never modified until a verified replacement exists.**
    `write.rs` remuxes to a sibling temp, proves duration, tags and layout, and
    only then renames over the original. Any failure leaves the original
@@ -142,6 +149,11 @@ debugging. Changing code that violates one is a regression, not a refactor.
 7. **Colours are guarded by a test.** `theme.rs` fails below 3:1 WCAG contrast
    and requires custom-key labels to differ in *hue*, not brightness. Both
    guards exist because both mistakes were already made.
+8. **A Matroska file is never given to an MP4 writer.** It is recognised by
+   its EBML magic and goes to `Writer::Matroska`. Its title is `Info\Title`
+   and nothing else; its key spellings are collapsed to one on write. Both
+   rules were measured against four readers (DESIGN §9.6) — do not "restore"
+   a `TITLE` tag.
 
 ## Conventions
 
@@ -155,6 +167,25 @@ debugging. Changing code that violates one is a regression, not a refactor.
 - `anyhow` throughout; errors print as `tagform: {e:#}` and exit 2.
 - External tools are invoked via `std::process::Command` with `--` before
   paths. No shell interpolation anywhere.
+
+## Changelog
+
+`CHANGELOG.md` records what changed for someone *using* the tool. Update it in
+the same commit as the change, under `## [Unreleased]`, newest entry first
+within its group (`Added`, `Changed`, `Fixed`, `Removed`).
+
+- **Log it** if a user could notice: a new field, key, subcommand or flag; a
+  changed keybinding or layout; a container or format newly read or written; a
+  fix to something that wrote or showed the wrong thing.
+- **Don't log** refactors, tests, doc edits, dependency bumps, or a fix to
+  something that never shipped in a commit of its own.
+- One line per entry, written as what the user can now do, not what the code
+  does — "`⌘U` loads every video beside the current file", not "add
+  `load_siblings` to `app.rs`". No commit hashes.
+- A change that alters what gets written to a file says so plainly; that is
+  the entry someone will come looking for.
+- On a release, rename `[Unreleased]` to `[x.y.z] - YYYY-MM-DD` and open a
+  fresh `[Unreleased]` above it.
 
 ## Working economically here
 

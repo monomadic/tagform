@@ -103,7 +103,7 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
     // A dialog takes everything below the header: it is the whole message.
     // A running write is not one: the form stays live while the queue drains,
     // with its bar on the status line and the queue in the band.
-    if app.help || app.pending.is_some() || app.results.is_some() {
+    if app.help || app.pending.is_some() || app.results.is_some() || app.convert_ask.is_some() {
         let top = chunks[2].y;
         // The last row is not the dialog's: a write already draining keeps
         // its bar there. `w` over a running queue raises the confirmation
@@ -124,6 +124,8 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
             draw_confirm(f, body, app, plans);
         } else if let Some(r) = &app.results {
             draw_results(f, body, r);
+        } else if let Some(ask) = &app.convert_ask {
+            draw_convert_ask(f, body, ask);
         }
         write_line(f, chunks[6], app);
         return;
@@ -212,7 +214,9 @@ fn draw_view_line(f: &mut Frame, area: Rect, app: &App) {
 /// full width, so the header reads as a title rather than as one more row of
 /// text competing with the form. At its right, the one key that finds every
 /// other key: `?`, kept apart from the mode's list so it is never the hint a
-/// narrow terminal drops.
+/// narrow terminal drops. Beside it, the faststart switch: a standing setting
+/// of the writer rather than a fact about the selection or the mode, so it
+/// sits with the other thing that is always there.
 ///
 /// `view` puts the view line here too, for a terminal too short to have the
 /// band that normally carries it.
@@ -227,17 +231,23 @@ fn draw_badge_bar(f: &mut Frame, area: Rect, app: &App, view: bool) {
         Vec::new()
     };
     let help = shortcut_pairs(app).contains(&HELP);
+    if !right.is_empty() {
+        right.push(Span::raw("   "));
+    }
+    let fast = format!(
+        "{} {}",
+        app.layout_switch(),
+        if app.faststart { "on" } else { "off" }
+    );
+    right.extend(hint_spans(&[("F", &fast)], usize::MAX).0);
     if help {
-        if !right.is_empty() {
-            right.push(Span::raw("   "));
-        }
         right.extend(hint_spans(&[HELP], usize::MAX).0);
     }
     let right_w: usize = right.iter().map(|s| s.content.width()).sum();
     let badge = format!(" {} ", iconed(LOGO_ICON, "tagform"));
     // The hint carries two trailing spaces of its own, which is the margin
     // everything else on the right keeps; without it, the plain two.
-    let tail = if help { "" } else { "  " };
+    let tail = "";
     let gap = (area.width as usize).saturating_sub(badge.width() + right_w + tail.width());
 
     let mut spans = vec![
@@ -293,7 +303,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
         .parent()
         .map(|d| d.to_string_lossy().to_string())
         .unwrap_or_default();
-    let summary = app.media.get(idx).map(|m| m.summary()).unwrap_or_default();
+    let facts = app.media.get(idx).map(|m| m.facts()).unwrap_or_default();
     // The indent is a block padding, not a prefix on the string: a long
     // filename wraps, and a wrapped line has to keep the indent the first one
     // had or the header loses its left edge.
@@ -316,14 +326,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App, proto: Option<&mut Stateful
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
-        Line::from(Span::styled(
-            if summary.is_empty() {
-                "probing…".into()
-            } else {
-                summary
-            },
-            Style::default().fg(t::muted()),
-        )),
+        facts_line(&facts),
         Line::from(Span::styled(dir, Style::default().fg(t::path()))),
     ];
     // What is wrong with this file, on its own page, in the error colour:
@@ -1443,18 +1446,13 @@ fn display_row(app: &App, row: &Row) -> Option<String> {
 fn draw_mode_bar(f: &mut Frame, area: Rect, app: &App) {
     let (mode_name, mode_fg, bar_bg) = mode_of(app);
     let badge = format!(" {mode_name} ");
-    // Faststart is a standing setting of the writer, not a fact about the
-    // selection, so it lives with the other standing state -- the mode --
-    // rather than in the title.
-    let fast = format!("faststart {}  ", if app.faststart { "on" } else { "off" });
     let pairs: Vec<(&str, &str)> = shortcut_pairs(app)
         .iter()
         .copied()
         .filter(|p| *p != HELP)
         .collect();
-    let room = (area.width as usize).saturating_sub(badge.width() + 1 + fast.width() + 1);
-    let (hints, hints_w) = hint_spans(&pairs, room);
-    let gap = (area.width as usize).saturating_sub(badge.width() + 1 + hints_w + fast.width());
+    let room = (area.width as usize).saturating_sub(badge.width() + 1);
+    let (hints, _) = hint_spans(&pairs, room);
     let mut spans = vec![
         Span::styled(
             badge,
@@ -1466,8 +1464,6 @@ fn draw_mode_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::raw(" "),
     ];
     spans.extend(hints);
-    spans.push(Span::raw(" ".repeat(gap)));
-    spans.push(Span::styled(fast, Style::default().fg(t::muted())));
     f.render_widget(
         Paragraph::new(Line::from(spans)).style(Style::default().bg(bar_bg)),
         area,
@@ -1570,7 +1566,7 @@ fn shortcut_pairs(app: &App) -> &'static [(&'static str, &'static str)] {
             ("y", "yank"),
             ("p", "paste"),
             ("t", "theme"),
-            ("F", "fast"),
+            ("M", "to mkv"),
             ("q", "quit"),
         ]
     }
@@ -2088,7 +2084,8 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App, plans: &[FilePlan]) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         format!(
-            "  faststart {} · originals replaced only after the result is verified",
+            "  {} {} · originals replaced only after the result is verified",
+            app.layout_switch(),
             if app.faststart { "on" } else { "off" }
         ),
         Style::default().fg(t::muted()),
@@ -2260,6 +2257,65 @@ fn draw_results(f: &mut Frame, area: Rect, r: &WriteResults) {
     );
 }
 
+/// The question `M` stops on: what a Matroska copy of each file would leave
+/// behind, and whether to make it anyway. The source is kept either way, so
+/// nothing is destroyed by a yes -- but the copy is not the whole file, and
+/// that is said before it is made rather than after.
+fn draw_convert_ask(f: &mut Frame, area: Rect, ask: &[(std::path::PathBuf, Vec<String>)]) {
+    // One timecode track is the common case, and gets the plain question.
+    let only_timecode = ask
+        .iter()
+        .all(|(_, lost)| lost.iter().all(|l| l.ends_with("timecode track")));
+    let title = if only_timecode {
+        " Discard the incompatible timecode track? "
+    } else {
+        " Convert without what Matroska cannot hold? "
+    };
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            title,
+            Style::default()
+                .bg(t::warn())
+                .fg(t::badge_fg())
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    let text_width = (area.width as usize).saturating_sub(10).max(20);
+    for (p, lost) in ask {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", file_label(p)),
+            Style::default().fg(t::value()).add_modifier(Modifier::BOLD),
+        )));
+        for item in lost {
+            for l in wrap(item, text_width) {
+                lines.push(Line::from(Span::styled(
+                    format!("      {l}"),
+                    Style::default().fg(t::muted()),
+                )));
+            }
+        }
+        lines.push(Line::from(""));
+    }
+    lines.push(Line::from(Span::styled(
+        "  The Matroska copy is made without these. The original keeps them.",
+        Style::default().fg(t::muted()),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  y or ⏎ to convert · any other key to cancel",
+        Style::default().fg(t::value()).add_modifier(Modifier::BOLD),
+    )));
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(t::warn())),
+        ),
+        area,
+    );
+}
+
 fn plural(n: usize) -> &'static str {
     if n == 1 {
         ""
@@ -2304,6 +2360,30 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
         }
     }
     out
+}
+
+/// The tech line under the filename: one colour per kind of fact, taken
+/// from the palette's existing accents so the contrast guard still covers it.
+fn facts_line(facts: &[(crate::thumb::Fact, String)]) -> Line<'static> {
+    use crate::thumb::Fact;
+    if facts.is_empty() {
+        return Line::from(Span::styled("probing…", Style::default().fg(t::muted())));
+    }
+    let mut spans = Vec::new();
+    for (i, (kind, text)) in facts.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", Style::default().fg(t::muted())));
+        }
+        let fg = match kind {
+            Fact::Container => t::accent(),
+            Fact::Resolution => t::path(),
+            Fact::Duration => t::staged(),
+            Fact::Codecs => t::warn(),
+            Fact::Size => t::label_custom(),
+        };
+        spans.push(Span::styled(text.clone(), Style::default().fg(fg)));
+    }
+    Line::from(spans)
 }
 
 fn file_label(p: &std::path::Path) -> String {
@@ -2906,7 +2986,6 @@ mod tests {
         let app = crate::ui::app::App::new(vec![f], BTreeMap::new(), false);
         // Wide enough for the whole vocabulary including the help key, which
         // leads the strip and so is never the hint that gets dropped.
-        // Faststart shares the mode bar, so the vocabulary needs its width too.
         let w = 280;
         let mut term = Terminal::new(TestBackend::new(w, 2)).unwrap();
         term.draw(|fr| {
@@ -2941,17 +3020,19 @@ mod tests {
         // The keys follow the mode, and help is not among them.
         assert!(mode.starts_with(" NORMAL   hjkl  move "), "{mode:?}");
         assert!(!mode.contains("help"), "{mode:?}");
-        for key in ["o", "b", "f ~", "F", "t"] {
+        for key in ["o", "b", "f ~", "M", "t"] {
             assert!(
                 mode.contains(&format!(" {key}  ")),
                 "{key} crowded: {mode:?}"
             );
         }
-        assert!(mode.trim_end().ends_with("faststart on"), "{mode:?}");
-        // Help sits alone at the right of the badge bar.
-        assert!(strip.trim_end().ends_with("?  help"), "{strip:?}");
+        assert!(!mode.contains("faststart"), "{mode:?}");
+        // Faststart and help sit together at the right of the badge bar.
+        assert!(
+            strip.trim_end().ends_with("F  faststart on   ?  help"),
+            "{strip:?}"
+        );
         assert!(!strip.contains("hjkl"), "{strip:?}");
-        assert!(!strip.contains("faststart"), "{strip:?}");
     }
 
     /// The import band names both sources and previews the filename's

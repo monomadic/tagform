@@ -110,6 +110,8 @@ pub struct MediaInfo {
     pub vcodec: String,
     pub acodec: String,
     pub size: u64,
+    /// From the file's own header, never the extension (DESIGN §9.2).
+    pub container: &'static str,
 }
 
 impl MediaInfo {
@@ -119,27 +121,51 @@ impl MediaInfo {
         (self.width > 0 && self.height > 0).then(|| self.width as f32 / self.height as f32)
     }
 
-    pub fn summary(&self) -> String {
+    /// The header facts in display order, each tagged so the renderer can
+    /// give every kind its own colour.
+    pub fn facts(&self) -> Vec<(Fact, String)> {
         let mut parts = Vec::new();
+        if !self.container.is_empty() {
+            parts.push((Fact::Container, self.container.to_string()));
+        }
         if self.width > 0 {
-            parts.push(format!("{}×{}", self.width, self.height));
+            parts.push((Fact::Resolution, format!("{}×{}", self.width, self.height)));
         }
         if self.duration > 0.0 {
             let s = self.duration as u64;
-            parts.push(format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60));
+            parts.push((
+                Fact::Duration,
+                format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60),
+            ));
         }
         let codecs: Vec<&str> = [self.vcodec.as_str(), self.acodec.as_str()]
             .into_iter()
             .filter(|c| !c.is_empty())
             .collect();
         if !codecs.is_empty() {
-            parts.push(codecs.join("/"));
+            parts.push((Fact::Codecs, codecs.join("/")));
         }
         if self.size > 0 {
-            parts.push(human_size(self.size));
+            parts.push((Fact::Size, human_size(self.size)));
         }
+        parts
+    }
+
+    #[cfg(test)]
+    pub fn summary(&self) -> String {
+        let parts: Vec<String> = self.facts().into_iter().map(|(_, t)| t).collect();
         parts.join(" · ")
     }
+}
+
+/// Which header fact a piece of the summary line is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fact {
+    Container,
+    Resolution,
+    Duration,
+    Codecs,
+    Size,
 }
 
 fn human_size(n: u64) -> String {
@@ -157,6 +183,42 @@ fn human_size(n: u64) -> String {
     }
 }
 
+/// Name the container from the first bytes of the file. Empty when the
+/// header is not one we recognise; the extension is never consulted.
+pub fn sniff_container(head: &[u8]) -> &'static str {
+    if head.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
+        // The EBML header carries a DocType string, `webm` or `matroska`.
+        let doc = &head[..head.len().min(64)];
+        return if doc.windows(4).any(|w| w == b"webm") { "WebM" } else { "Matroska" };
+    }
+    if head.len() >= 12 && &head[4..8] == b"ftyp" {
+        return match &head[8..12] {
+            b"qt  " => "MOV",
+            b"M4V " | b"M4VH" | b"M4VP" => "M4V",
+            b"M4A " => "M4A",
+            b"heic" | b"heix" | b"mif1" | b"avif" => "HEIF",
+            b if b.starts_with(b"3g") => "3GP",
+            _ => "MP4",
+        };
+    }
+    if head.len() >= 12 && &head[..4] == b"RIFF" && &head[8..12] == b"AVI " {
+        return "AVI";
+    }
+    if head.starts_with(b"OggS") {
+        return "Ogg";
+    }
+    if head.starts_with(b"\x30\x26\xB2\x75") {
+        return "ASF";
+    }
+    if head.starts_with(b"FLV") {
+        return "FLV";
+    }
+    if head.first() == Some(&0x47) && head.len() > 188 && head[188] == 0x47 {
+        return "MPEG-TS";
+    }
+    ""
+}
+
 pub fn probe_media(file: &Path) -> Result<MediaInfo> {
     let out = Command::new("ffprobe")
         .args([
@@ -170,6 +232,13 @@ pub fn probe_media(file: &Path) -> Result<MediaInfo> {
         .context("running ffprobe")?;
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
     let mut info = MediaInfo::default();
+    {
+        use std::io::Read;
+        let mut head = [0u8; 192];
+        if let Ok(n) = std::fs::File::open(file).and_then(|mut f| f.read(&mut head)) {
+            info.container = sniff_container(&head[..n]);
+        }
+    }
     if let Some(streams) = v.get("streams").and_then(|s| s.as_array()) {
         for s in streams {
             match s.get("codec_type").and_then(|t| t.as_str()) {
@@ -231,6 +300,26 @@ mod tests {
         let f = fit_inside(720, 720);
         assert!(f.contains("force_original_aspect_ratio=decrease"), "{f}");
         assert!(!f.contains("crop"), "{f}");
+    }
+
+    #[test]
+    fn container_comes_from_the_header() {
+        let ftyp = |brand: &[u8; 4]| {
+            let mut h = vec![0, 0, 0, 0x18];
+            h.extend(b"ftyp");
+            h.extend(brand);
+            h
+        };
+        assert_eq!(sniff_container(&ftyp(b"qt  ")), "MOV");
+        assert_eq!(sniff_container(&ftyp(b"isom")), "MP4");
+        assert_eq!(sniff_container(&ftyp(b"M4V ")), "M4V");
+        let mut mkv = vec![0x1A, 0x45, 0xDF, 0xA3, 0x9F, 0x42, 0x82, 0x88];
+        mkv.extend(b"matroska");
+        assert_eq!(sniff_container(&mkv), "Matroska");
+        mkv.truncate(8);
+        mkv.extend(b"webm");
+        assert_eq!(sniff_container(&mkv), "WebM");
+        assert_eq!(sniff_container(b"not a video at all"), "");
     }
 
     #[test]

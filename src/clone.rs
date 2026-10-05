@@ -239,14 +239,14 @@ fn resolve(name: &str) -> Result<String> {
 /// lower-cases the name, and a key is case-sensitive, and reports a float
 /// payload as text. The one such key the schema writes, the ISO 6709
 /// coordinate, is claimed by a field and travels as that.
-fn device_key(key: &str) -> bool {
+pub(crate) fn device_key(key: &str) -> bool {
     key.contains('.')
 }
 
 /// Everything on the source worth copying, as row keys: every field with a
 /// value, then the keys no field claims (invariant 4 -- a clone that dropped
 /// them would be exactly the loss that invariant forbids).
-fn source_rows(src: &FileTags) -> BTreeMap<String, Value> {
+pub(crate) fn source_rows(src: &FileTags) -> BTreeMap<String, Value> {
     let mut rows = BTreeMap::new();
     for f in FIELDS {
         if let Some(v) = src.lookup(f) {
@@ -279,7 +279,7 @@ fn source_rows(src: &FileTags) -> BTreeMap<String, Value> {
 /// actors, `artist` keeps the artist, and nothing is asked twice. `all` is
 /// every field the source carries, so an Artist left out by `--only` still
 /// owns its key and a copied Actors does not overwrite it.
-fn untangle(
+pub(crate) fn untangle(
     mut rows: BTreeMap<String, Value>,
     all: &BTreeMap<String, Value>,
 ) -> BTreeMap<String, Value> {
@@ -318,7 +318,7 @@ fn changes(target: &FileTags, rows: &BTreeMap<String, Value>) -> BTreeMap<String
 }
 
 /// A row key as a person would name it: the field's label, or the key itself.
-fn name(key: &str) -> String {
+pub(crate) fn name(key: &str) -> String {
     field_by_id(key)
         .map(|f| f.label.to_string())
         .unwrap_or_else(|| key.to_string())
