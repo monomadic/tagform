@@ -9,7 +9,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 use ratatui_image::{protocol::StatefulProtocol, StatefulImage};
 use unicode_width::UnicodeWidthStr;
@@ -20,7 +20,8 @@ use crate::model::value::{Agg, Value};
 use crate::tags::atoms::Layout as Container;
 use crate::tags::plan::FilePlan;
 use crate::ui::app::{
-    App, FileEdit, ImportSource, Locate, Mode, QueuePlace, QueueRow, Row, WriteResults,
+    App, FileEdit, ImportSource, Locate, Mode, OpenTarget, QueuePlace, QueueRow, Row,
+    WriteResults,
 };
 use crate::ui::edit::{stars_glyphs, Opt, Validation};
 use crate::ui::keymap::{key_width, KEYMAP};
@@ -144,6 +145,9 @@ pub fn draw(f: &mut Frame, app: &App, proto: Option<&mut StatefulProtocol>) {
         }
     }
     draw_fields(f, chunks[4], app);
+    if let Some(at) = app.open_menu {
+        draw_open_menu(f, chunks[4], app, at);
+    }
     draw_mode_bar(f, chunks[5], app);
     draw_status(f, chunks[6], app);
 }
@@ -787,6 +791,60 @@ fn draw_locate(f: &mut Frame, area: Rect, app: &App, locate: &Locate) {
 
 /// The answer to "what does ‹multiple› actually contain" -- the thing the old
 /// fzf-based tagger could only show in a preview pane.
+/// The `o` menu: a small box over the middle of the form, one row a choice.
+/// It floats rather than taking the band the import menu takes, because it
+/// previews nothing -- four short lines do not earn a region of their own.
+fn draw_open_menu(f: &mut Frame, area: Rect, app: &App, at: OpenTarget) {
+    let has_url = app.url_of(app.current_file()).is_some();
+    let inner = OpenTarget::ALL
+        .iter()
+        .map(|o| o.label().width())
+        .max()
+        .unwrap_or(0) as u16
+        + 2;
+    let (w, h) = (
+        (inner + 2).min(area.width),
+        (OpenTarget::ALL.len() as u16 + 2).min(area.height),
+    );
+    let rect = Rect {
+        x: area.x + (area.width - w) / 2,
+        y: area.y + (area.height - h) / 2,
+        width: w,
+        height: h,
+    };
+    let lines: Vec<Line> = OpenTarget::ALL
+        .iter()
+        .map(|o| {
+            let text = format!(" {:<1$}", o.label(), inner as usize - 1);
+            let style = if *o == at {
+                Style::default()
+                    .bg(t::input_bg_focus())
+                    .fg(t::value())
+                    .add_modifier(Modifier::BOLD)
+            } else if *o == OpenTarget::Url && !has_url {
+                // Still reachable -- choosing it says why it does nothing.
+                Style::default().fg(t::muted())
+            } else {
+                Style::default().fg(t::value())
+            };
+            Line::from(Span::styled(text, style))
+        })
+        .collect();
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(t::accent()))
+                .title(Span::styled(
+                    " Open... ",
+                    Style::default().fg(t::accent()).add_modifier(Modifier::BOLD),
+                )),
+        ),
+        rect,
+    );
+}
+
 fn draw_inspector(f: &mut Frame, area: Rect, app: &App) {
     let Some(row) = app.rows.get(app.focus) else {
         return;
@@ -1496,6 +1554,8 @@ fn mode_of(app: &App) -> (&'static str, ratatui::style::Color, ratatui::style::C
         ("LOCATE", t::star(), t::input_bg_focus())
     } else if app.import_menu {
         ("IMPORT", t::star(), t::input_bg_focus())
+    } else if app.open_menu.is_some() {
+        ("OPEN", t::star(), t::input_bg_focus())
     } else {
         (mode_name, mode_fg, bar_bg)
     }
@@ -1520,6 +1580,8 @@ fn shortcut_pairs(app: &App) -> &'static [(&'static str, &'static str)] {
             ("l", "from a place"),
             ("esc", "cancel"),
         ]
+    } else if app.open_menu.is_some() {
+        &[("jk", "choose"), ("⏎", "open"), ("esc", "cancel")]
     } else if app.format_pending {
         &[
             ("c", "capitalize"),
@@ -3033,6 +3095,27 @@ mod tests {
             "{strip:?}"
         );
         assert!(!strip.contains("hjkl"), "{strip:?}");
+    }
+
+    #[test]
+    fn the_open_menu_floats_over_the_form_with_its_four_choices() {
+        let mut app = two_files(&[("title", "A")], &[("title", "B")]);
+        next(&mut app);
+        app.open_menu = Some(OpenTarget::Parent);
+        let (w, h) = (100, 30);
+        let mut term =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+        term.draw(|fr| draw(fr, &app, None)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let text = (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains(" Open... "), "{text}");
+        for o in OpenTarget::ALL {
+            assert!(text.contains(o.label()), "{} missing:\n{text}", o.label());
+        }
+        assert!(text.contains(" OPEN "), "{text}");
     }
 
     /// The import band names both sources and previews the filename's

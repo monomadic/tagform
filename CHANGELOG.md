@@ -8,6 +8,10 @@ in `AGENTS.md`.
 
 ### Added
 
+- `o` now brings up an **Open...** menu (`j`/`k` or arrows, `⏎`) instead of
+  opening the file at once: the default application, the parent directory,
+  the URL in the browser, or the file revealed in Finder. `o ⏎` is the old
+  `o`.
 - **Date Added**, a field for when the file joined the library, beside Date
   (when it was published or shot). `⏎` on the empty row fills in now.
   Written as the `date_added` key.

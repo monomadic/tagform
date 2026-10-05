@@ -1892,7 +1892,8 @@ Two rules do the work. `enter` opens a field and `esc` or `enter` closes it, so
 Select mode's letters are never ambiguous — `w` write, `m` merge, `i`
 import (then `j`/`k` and `⏎`, or `u`/`f` for the source outright), `I` inspector, `F` faststart, `t` theme, `y`/`p` yank and paste, `]`/`[`/`a` for
 the selection, `O`/`b` to push a field out to every file (§4.3), `o` to hand
-the file to the desktop player. `c` is a second name for `y`, because half the
+the file to the desktop (a four-line menu: the player, the folder, the URL in
+the browser, Finder). `c` is a second name for `y`, because half the
 world learned that key as copy; the two are the same command and the map says
 so rather than hiding one of them. `f` is the one
 exception: it arms a one-shot **format** menu (`c` capitalize, `t` title, `l`

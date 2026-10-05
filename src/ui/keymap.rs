@@ -45,7 +45,7 @@ pub const KEYMAP: &[Section] = &[
             b("I", "inspector — per-file values for the focused field"),
             b("] [ ^n ^p", "next / previous file"),
             b("a", "all files — back to the aggregate view"),
-            b("o", "open the file in the desktop player"),
+            b("o", "open menu — j/k a choice, ⏎ runs it: the player, the folder, the URL, or Finder"),
             b("O", "overwrite the focused field on every open file"),
             b("b", "backfill it into only the files where it is still empty"),
             b("u ^r", "undo / redo (⌘z and ⌘⇧z too)"),

@@ -406,6 +406,38 @@ impl ImportSource {
     ];
 }
 
+/// What `o` can hand to the desktop. The menu keeps a cursor on one of
+/// these; the order here is the order it paints and the cursor walks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OpenTarget {
+    /// The file, in whatever the desktop plays it with.
+    Default,
+    /// The folder the file is in.
+    Parent,
+    /// The URL field, in the browser.
+    Url,
+    /// The file, selected in a Finder window.
+    Reveal,
+}
+
+impl OpenTarget {
+    pub const ALL: [OpenTarget; 4] = [
+        OpenTarget::Default,
+        OpenTarget::Parent,
+        OpenTarget::Url,
+        OpenTarget::Reveal,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            OpenTarget::Default => "Open with the default application.",
+            OpenTarget::Parent => "Open parent directory.",
+            OpenTarget::Url => "Open URL in the default browser.",
+            OpenTarget::Reveal => "Reveal the file in Finder.",
+        }
+    }
+}
+
 /// The place lookup, after `i l` (§5.5). Modal like the import menu it came
 /// from, and painted in the same band: a place is typed, the helper runs off
 /// the UI thread, and the hits are chosen from -- or, with exactly one, taken.
@@ -471,6 +503,10 @@ pub struct App {
     /// `i` offers the source the first one used, and set to whichever source
     /// has something to offer when the menu opens on a file with no URL.
     pub import_pick: ImportSource,
+    /// The `o` menu is up: a short list of ways to hand the file in view to
+    /// the desktop. `Some` holds the cursor; it opens on the first choice
+    /// every time, so `o ⏎` is always the player.
+    pub open_menu: Option<OpenTarget>,
     /// The key-map overlay (§11). A screen of its own rather than a longer
     /// hint list: the badge bar has room for a mode's commands, not for the
     /// forty bindings the form actually has.
@@ -598,6 +634,7 @@ impl App {
             inspector: false,
             import_menu: false,
             import_pick: ImportSource::Url,
+            open_menu: None,
             help: false,
             help_scroll: 0,
             help_max: std::cell::Cell::new(0),
@@ -1964,16 +2001,21 @@ impl App {
     /// (the first in scope, in the aggregate). Computed here rather than in
     /// the painter so the preview and the import cannot disagree about what
     /// the name says.
+    /// The URL field of one file as the form shows it -- the staged edit
+    /// where there is one, else disk -- if it holds anything.
+    pub fn url_of(&self, idx: usize) -> Option<String> {
+        let f = self.files.get(idx)?;
+        let disk = disk_value(f, "url");
+        match overlay(disk, self.staged.get(&idx).and_then(|m| m.get("url")))? {
+            Value::Text(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+            _ => None,
+        }
+    }
+
     pub fn import_preview(&self) -> ImportPreview {
         let idx = self.current_file();
         let scope = self.scope();
-        let url = self.files.get(idx).and_then(|f| {
-            let disk = disk_value(f, "url");
-            match overlay(disk, self.staged.get(&idx).and_then(|m| m.get("url")))? {
-                Value::Text(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
-                _ => None,
-            }
-        });
+        let url = self.url_of(idx);
         let path = self
             .files
             .get(idx)
@@ -2390,6 +2432,22 @@ impl App {
             }
             return;
         }
+        if let Some(at) = self.open_menu {
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down | KeyCode::Tab => self.move_open(at, 1),
+                KeyCode::Char('k') | KeyCode::Up | KeyCode::BackTab => self.move_open(at, -1),
+                KeyCode::Enter => {
+                    self.open_menu = None;
+                    self.open_target(at);
+                }
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('o') => {
+                    self.open_menu = None;
+                    self.status.clear();
+                }
+                _ => {}
+            }
+            return;
+        }
         // ⌘Z is undo as well as `u`, and ⌘⇧Z redo as well as ⌃R. The vi keys
         // are the ones worth learning, but the form is a form: the undo
         // gesture every other app on the machine trains should not be the one
@@ -2447,7 +2505,7 @@ impl App {
                 self.status.clear();
             }
             (KeyCode::Char('m'), false) => self.merge_focused(),
-            (KeyCode::Char('o'), false) => self.open_file(),
+            (KeyCode::Char('o'), false) => self.open_open(),
             (KeyCode::Char('O'), false) => self.copy_out(false),
             (KeyCode::Char('b'), false) => self.copy_out(true),
             (KeyCode::Char('u'), false) => self.undo(),
@@ -2761,40 +2819,105 @@ impl App {
         n
     }
 
-    /// `o` hands the file to the desktop -- `open` on macOS, `xdg-open`
-    /// elsewhere. Tagging is a claim about what a file holds, and the one
-    /// check the form cannot make is whether the footage is the footage you
-    /// think it is.
+    /// The one file `o` acts on. The aggregate view has no one file to open,
+    /// so it names the key that picks one rather than opening an arbitrary
+    /// member of the selection.
+    fn open_subject(&self) -> Option<usize> {
+        match self.view {
+            Some(i) => Some(i),
+            None if self.files.len() == 1 => Some(0),
+            None => None,
+        }
+    }
+
+    /// `o`: the menu of ways to hand the file to the desktop. Tagging is a
+    /// claim about what a file holds, and the one check the form cannot make
+    /// is whether the footage is the footage you think it is.
+    fn open_open(&mut self) {
+        self.commit_editor();
+        if self.open_subject().is_none() {
+            self.status = "no single file in view -- pick one with ] first".into();
+            return;
+        }
+        self.open_menu = Some(OpenTarget::Default);
+        self.status.clear();
+    }
+
+    /// Walk the cursor, wrapping the way the form's own j/k do.
+    fn move_open(&mut self, at: OpenTarget, delta: isize) {
+        let all = OpenTarget::ALL;
+        let n = all.len() as isize;
+        let i = all.iter().position(|t| *t == at).unwrap_or(0) as isize;
+        self.open_menu = Some(all[(((i + delta) % n + n) % n) as usize]);
+    }
+
+    /// Run one choice from the menu through the desktop's launcher -- `open`
+    /// on macOS, `xdg-open` elsewhere.
     ///
     /// Spawned and never waited on: the launcher returns long before the
     /// player does, and this thread owes the event loop a repaint in the
-    /// meantime. The aggregate view has no one file to open, so it names the
-    /// key that picks one rather than opening an arbitrary member of the
-    /// selection.
-    fn open_file(&mut self) {
-        let idx = match self.view {
-            Some(i) => i,
-            None if self.files.len() == 1 => 0,
-            None => {
-                self.status = "no single file in view -- pick one with ] first".into();
-                return;
-            }
+    /// meantime.
+    fn open_target(&mut self, target: OpenTarget) {
+        let Some(idx) = self.open_subject() else {
+            return;
         };
         let path = self.files[idx].path.clone();
+        // A bare filename has an empty parent, which is the directory we
+        // are in.
+        let parent = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
         let tool = if cfg!(target_os = "macos") {
             "open"
         } else {
             "xdg-open"
         };
-        let spawned = std::process::Command::new(tool)
-            .arg("--")
-            .arg(&path)
+        let mut cmd = std::process::Command::new(tool);
+        let done = match target {
+            OpenTarget::Default => {
+                cmd.arg("--").arg(&path);
+                format!("opened {}", file_name(&path))
+            }
+            OpenTarget::Parent => {
+                cmd.arg("--").arg(&parent);
+                format!("opened {}", parent.display())
+            }
+            OpenTarget::Url => {
+                let Some(url) = self.url_of(idx) else {
+                    self.status = "no URL on this file".into();
+                    return;
+                };
+                // The launcher opens anything it is given, and the field is
+                // free text: only a web address goes to it, so a path typed
+                // there cannot launch whatever it names.
+                let lower = url.to_ascii_lowercase();
+                if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+                    self.status = format!("not a web address: {url}");
+                    self.status_error = true;
+                    return;
+                }
+                cmd.arg("--").arg(&url);
+                format!("opened {url}")
+            }
+            // Only Finder can select a file in its folder; elsewhere the
+            // folder itself is as near as the launcher gets.
+            OpenTarget::Reveal if cfg!(target_os = "macos") => {
+                cmd.arg("-R").arg("--").arg(&path);
+                format!("revealed {}", file_name(&path))
+            }
+            OpenTarget::Reveal => {
+                cmd.arg("--").arg(&parent);
+                format!("opened {}", parent.display())
+            }
+        };
+        let spawned = cmd
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();
         self.status = match spawned {
-            Ok(_) => format!("opened {}", file_name(&path)),
+            Ok(_) => done,
             Err(e) => format!("{tool}: {e}"),
         };
     }
@@ -4344,6 +4467,59 @@ mod tests {
         press(&mut app, KeyCode::Char('~'));
         assert!(app.staged.is_empty());
         assert!(app.status.contains("takes no formatting"), "{}", app.status);
+    }
+
+    /// The open menu owns every key while it is up, and its cursor wraps.
+    #[test]
+    fn the_open_menu_is_modal_and_wraps() {
+        let mut app = one(&[("title", "T")]);
+        press(&mut app, KeyCode::Char('o'));
+        assert_eq!(app.open_menu, Some(OpenTarget::Default));
+        press(&mut app, KeyCode::Char('w'));
+        assert!(app.open_menu.is_some() && app.pending.is_none());
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.open_menu, Some(OpenTarget::Reveal));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.open_menu, Some(OpenTarget::Url));
+        // Nothing is launched for a file with no URL: the menu closes and
+        // says why.
+        press(&mut app, KeyCode::Enter);
+        assert!(app.open_menu.is_none());
+        assert_eq!(app.status, "no URL on this file");
+        press(&mut app, KeyCode::Char('o'));
+        press(&mut app, KeyCode::Esc);
+        assert!(app.open_menu.is_none());
+        assert!(!app.quit, "esc closes the menu, not the form");
+    }
+
+    /// The URL field is free text and the launcher opens anything, so only
+    /// a web address is handed over.
+    #[test]
+    fn the_open_menu_refuses_a_url_that_is_not_a_web_address() {
+        let mut app = one(&[("purl", "/Applications/Calculator.app")]);
+        press(&mut app, KeyCode::Char('o'));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert!(app.status.starts_with("not a web address"), "{}", app.status);
+    }
+
+    /// The aggregate view has no one file to open, so the menu does not
+    /// come up over it.
+    #[test]
+    fn the_open_menu_needs_one_file() {
+        use crate::tags::probe::FileTags;
+        let mk = |n: usize| FileTags {
+            path: PathBuf::from(format!("/nonexistent/{n}.mov")),
+            atoms: BTreeMap::new(),
+            xmp: BTreeMap::new(),
+        };
+        let mut app = App::new(vec![mk(0), mk(1)], BTreeMap::new(), false);
+        press(&mut app, KeyCode::Char('o'));
+        assert!(app.open_menu.is_none());
+        assert!(app.status.contains("pick one with ]"), "{}", app.status);
     }
 
     /// The import menu owns every key while it is up: a key that means

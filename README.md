@@ -237,7 +237,7 @@ WCAG 3:1 contrast floor by a test, including the focused-row fill.
 | `m` | merge a list field across every file in the selection |
 | `I` | inspector — per-file values for the focused field |
 | `]` / `[` (or `ctrl-n` / `ctrl-p`) / `a` | next file / previous file / all files |
-| `o` | open the file in whatever the desktop plays it with |
+| `o` | open menu: `j`/`k` and `⏎` to open the file in whatever the desktop plays it with, open its folder, open its URL in the browser, or reveal it in Finder |
 | `O` / `b` | overwrite the focused field on every file / backfill it into only the files where it is empty |
 | `u` / `ctrl-r` | undo / redo — `cmd-z` and `cmd-shift-z` do the same |
 | `cmd-u` | load every video next to the open file as a fresh batch — refused while edits are staged (`cmd` needs a terminal with the kitty keyboard protocol) |
