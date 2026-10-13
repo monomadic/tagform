@@ -2093,19 +2093,19 @@ impl App {
         parts.join(", ")
     }
 
-    /// The coordinates the form shows for one file, if they parse.
-    pub fn coords_of(&self, idx: usize) -> Option<(f64, f64)> {
-        let disk = self
-            .files
-            .get(idx)
-            .and_then(|f| disk_value(f, "coordinates"));
-        match overlay(
-            disk,
-            self.staged.get(&idx).and_then(|m| m.get("coordinates")),
-        )? {
-            Value::Text(s) => geocode::parse_iso6709(&s),
+    /// The text the form shows for one file's row, staged edit over disk,
+    /// if there is any.
+    fn shown_text(&self, idx: usize, key: &str) -> Option<String> {
+        let disk = self.files.get(idx).and_then(|f| disk_value(f, key));
+        match overlay(disk, self.staged.get(&idx).and_then(|m| m.get(key)))? {
+            Value::Text(s) if !s.trim().is_empty() => Some(s),
             _ => None,
         }
+    }
+
+    /// The coordinates the form shows for one file, if they parse.
+    pub fn coords_of(&self, idx: usize) -> Option<(f64, f64)> {
+        geocode::parse_iso6709(&self.shown_text(idx, "coordinates")?)
     }
 
     /// `i l`: open the lookup prompt over the location block as it stands.
@@ -2202,13 +2202,26 @@ impl App {
 
     /// Stage one hit's location block onto every file in scope, as one
     /// undoable step, the way a fetch stages a page's answers.
+    ///
+    /// Two of the hit's parts defer to the file. A reverse hit names the
+    /// venue only on a file whose Place is empty: the nearest thing MapKit
+    /// knows is a guess, and a Place someone wrote is not. A typed lookup
+    /// leaves Coordinates the camera filled alone: a place is a name for
+    /// where the clip was shot, and the camera's fix is a measurement of
+    /// it, which the geocoder's centre of a city would only coarsen.
     fn stage_hit(&mut self, hit: Hit, named: bool) {
         self.locate = None;
-        let fields = hit.fields(named);
         let out = self
             .scope()
             .into_iter()
-            .map(|i| (i, Ok(fields.clone())))
+            .map(|i| {
+                let place_empty = self.shown_text(i, "location_place").is_none();
+                let mut fields = hit.fields(named || place_empty);
+                if named && self.coords_of(i).is_some() {
+                    fields.retain(|(k, _)| *k != "coordinates");
+                }
+                (i, Ok(fields))
+            })
             .collect();
         self.stage_import("located", "the place agrees with the file", out, false);
         if !self.status_error {
@@ -4759,9 +4772,41 @@ mod tests {
     }
 
     /// ⏎ on a Coordinates row that holds something runs the reverse lookup
-    /// at once; a reverse hit names the city but not the nearest venue.
+    /// at once; a reverse hit names the city, and the nearest venue only
+    /// when Place is empty -- one already written is a better answer than
+    /// MapKit's guess.
     #[test]
-    fn a_reverse_hit_leaves_the_venue_alone() {
+    fn a_reverse_hit_leaves_a_written_venue_alone() {
+        let mut app = one(&[("com.apple.quicktime.location.iso6709", "+14.5641+121.0300/")]);
+        app.stage("location_place".into(), Value::text("Coro Hotel"));
+        app.locate = Some(Locate::Looking);
+        app.finish_locate(Ok(vec![hit("Some Shop", "Makati")]), false);
+        assert_eq!(
+            shown(&app, "location_place"),
+            Some(Value::text("Coro Hotel"))
+        );
+        assert_eq!(shown(&app, "location"), Some(Value::text("Makati")));
+    }
+
+    /// A typed lookup names where the clip was shot; the camera's fix on
+    /// that is a measurement, kept over the geocoder's centre of town.
+    #[test]
+    fn a_typed_hit_keeps_the_cameras_coordinates() {
+        let mut app = one(&[("com.apple.quicktime.location.iso6709", "+14.5000+121.0000/")]);
+        app.locate = Some(Locate::Looking);
+        app.finish_locate(Ok(vec![hit("Coro Hotel", "Makati")]), true);
+        assert_eq!(
+            shown(&app, "location_place"),
+            Some(Value::text("Coro Hotel"))
+        );
+        assert_eq!(
+            shown(&app, "coordinates"),
+            Some(Value::text("+14.5000+121.0000/"))
+        );
+    }
+
+    #[test]
+    fn a_reverse_hit_names_an_empty_place() {
         let mut app = one(&[("com.apple.quicktime.location.iso6709", "+14.5641+121.0300/")]);
         assert_eq!(app.import_preview().coords, Some((14.5641, 121.03)));
         let at = app
@@ -4778,7 +4823,10 @@ mod tests {
         );
         assert_eq!(app.mode, Mode::Select);
         app.finish_locate(Ok(vec![hit("Some Shop", "Makati")]), false);
-        assert_eq!(shown(&app, "location_place"), None);
+        assert_eq!(
+            shown(&app, "location_place"),
+            Some(Value::text("Some Shop"))
+        );
         assert_eq!(shown(&app, "location"), Some(Value::text("Makati")));
     }
 

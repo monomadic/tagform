@@ -50,9 +50,10 @@ impl Hit {
         parts.join(", ")
     }
 
-    /// What to stage. The venue name is only an answer to a forward lookup:
-    /// asked what is *at* a coordinate, MapKit names the nearest thing it
-    /// knows, which for a clip shot in a street is a shop that was not the
+    /// What to stage. The venue name is taken from a forward lookup, and
+    /// from a reverse one only where the caller has nothing better: asked
+    /// what is *at* a coordinate, MapKit names the nearest thing it knows,
+    /// which for a clip shot in a street is a shop that was not the
     /// subject. A part the geocoder left empty is not staged, so a value the
     /// file already holds there survives.
     pub fn fields(&self, with_name: bool) -> Vec<(&'static str, Value)> {

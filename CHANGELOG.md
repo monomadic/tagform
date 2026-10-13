@@ -9,6 +9,11 @@ in `AGENTS.md`.
 ### Changed
 
 - `r` renames a file to a lower-case extension: `Clip.MOV` becomes `….mov`.
+- A place lookup typed into the Place row keeps Coordinates the camera
+  filled, instead of replacing them with the geocoder's fix.
+- `⏎` on a filled Coordinates row now fills an empty Place with the nearest
+  venue, as well as Location, State and Country. A Place already written is
+  kept.
 
 ### Added
 
