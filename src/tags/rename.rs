@@ -52,7 +52,12 @@ fn target_with(path: &Path, templates: &Templates) -> Result<PathBuf> {
         bail!("Cannot name {}: {why}. Tag it first.", name_of(path));
     }
     let current = name_of(path);
-    let ext = path.extension().map(|e| e.to_string_lossy()).unwrap_or_default();
+    // One spelling of the extension across the library, whatever the camera
+    // or the download wrote: `.MOV` is renamed to `.mov`.
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
     let Some(file) = namer::name(&fields, templates, &current, &ext) else {
         bail!("No actors, channel or title to name it after: {current}");
     };
@@ -524,6 +529,10 @@ mod tests {
             target(&f).unwrap(),
             dir.join("2025-02-02--12-23-44 Sam - Beach [1080p 25fps 1min 0mbps h264 V].mp4")
         );
+
+        // An upper-case extension comes out lower-case.
+        let shouty = make("SHOUTY.MP4", "320x180", "1", &[("title", "Loud"), ("actors", "Sam"), ("category", "Adult")]);
+        assert!(target(&shouty).unwrap().to_string_lossy().ends_with(" H].mp4"));
 
         // Untagged and unfetched: nothing to name it after.
         let bare = make("bare.mp4", "320x180", "1", &[]);

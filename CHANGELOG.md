@@ -6,6 +6,10 @@ in `AGENTS.md`.
 
 ## [Unreleased]
 
+### Changed
+
+- `r` renames a file to a lower-case extension: `Clip.MOV` becomes `….mov`.
+
 ### Added
 
 - The **Open...** menu can open the file's coordinates as a pin in Apple
