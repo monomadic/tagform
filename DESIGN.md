@@ -1514,7 +1514,7 @@ not a fallback.
 #### 9.3.3 The accepted risk
 
 This is the one writer that touches the original before a verified
-replacement exists, which §9.4's rule otherwise forbids. The 2026-09-03 audit
+replacement exists, which §9.2.1's rule otherwise forbids. The 2026-09-03 audit
 asked for it to be made transactional — copy to a sibling temp, edit that,
 verify, rename over. That would discard the inode, and with it the xattrs,
 Finder tags and ACLs that are the whole reason this path is chosen (the table
@@ -1532,7 +1532,7 @@ window is the copy-back, not the edit. What is accepted:
   original is untouched", because it is not.
 
 Both are reported, neither is silently absorbed, and the mtime is restored
-after. The fingerprint check (§9.4) runs before this path too, so it never
+after. The fingerprint check in `write::execute` runs before this path too, so it never
 edits a file that is not the one that was probed. Revisit only if a torn
 file is actually seen; the fix then is a clone-and-swap on APFS, which keeps
 the inode's data but not its identity.
