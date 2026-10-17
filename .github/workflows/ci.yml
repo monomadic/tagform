@@ -1,0 +1,47 @@
+# The gate TASKS.md item 7 asks for. Three jobs the tree had been drifting
+# on without one: formatting, strict clippy, and the test suite -- which
+# includes the fixture suite in src/tags/fixtures.rs, so ffmpeg and exiftool
+# are installed. fastmkv is a path dependency at ../fastmkv; it is checked
+# out beside the repo at the same relative path Cargo.toml names.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tagform
+      - uses: actions/checkout@v4
+        with:
+          repository: monomadic/fastmkv
+          path: fastmkv
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tagform
+      - name: install ffmpeg and exiftool
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ffmpeg libimage-exiftool-perl
+          ffmpeg -version | head -1
+          exiftool -ver
+      - name: fmt
+        working-directory: tagform
+        run: cargo fmt --check
+      - name: clippy
+        working-directory: tagform
+        run: cargo clippy --all-targets -- -D warnings
+      - name: test
+        working-directory: tagform
+        run: cargo test

@@ -57,7 +57,7 @@ genuine fail-open. Tick a box, cite the commit.
   verified temp, then fsync the directory, before `rename`. Closes the last
   gap in invariant 3 for the native and ffmpeg paths.
 
-- [ ] **7. Clippy, fmt, CI.** *(clippy and fmt green as of 2026-09-25; CI still to add.)* `cargo clippy --all-targets -- -D warnings`
+- [x] **7. Clippy, fmt, CI.** `cargo clippy --all-targets -- -D warnings`
   reported 5 errors at audit time and 14 today; `cargo fmt --check` fails.
   Fix, then add a workflow running `fmt --check`, clippy and `cargo test`
   with ffmpeg and exiftool installed (the fixture suite needs both). This

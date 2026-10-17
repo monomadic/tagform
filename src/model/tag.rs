@@ -142,7 +142,10 @@ mod tests {
     fn duplicates_are_kept_once() {
         assert_eq!(v("frog, frog"), ["frog"]);
         assert_eq!(v("frog frog #frog"), ["frog"]);
-        assert_eq!(v("frog dog, big dog, frog"), ["big-dog", "frog", "frog-dog"]);
+        assert_eq!(
+            v("frog dog, big dog, frog"),
+            ["big-dog", "frog", "frog-dog"]
+        );
         assert_eq!(v("big dog, big_dog, big-dog"), ["big-dog"]);
         assert_eq!(v("Frog, frog, FROG, ant"), ["ant", "frog"]);
     }

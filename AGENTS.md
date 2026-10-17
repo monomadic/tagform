@@ -110,7 +110,9 @@ ffmpeg to generate ~16 KB containers in a temp directory, exercises the write
 path against them, and throws them away. It needs `ffmpeg` and `exiftool` on
 PATH, and adds under a second.
 
-There is no CI. `tests/` holds two shell
+CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`, strict clippy and
+`cargo test` on every push and PR; keep all three green locally before
+pushing. `tests/` holds two shell
 scripts that mutate real files — `container-experiment.sh` regenerates
 `docs/CONTAINER.md`'s numbers, `write-paths.sh` exercises the write path.
 **Do not run them without asking**; they need real media and rewrite it.

@@ -189,7 +189,11 @@ pub fn sniff_container(head: &[u8]) -> &'static str {
     if head.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
         // The EBML header carries a DocType string, `webm` or `matroska`.
         let doc = &head[..head.len().min(64)];
-        return if doc.windows(4).any(|w| w == b"webm") { "WebM" } else { "Matroska" };
+        return if doc.windows(4).any(|w| w == b"webm") {
+            "WebM"
+        } else {
+            "Matroska"
+        };
     }
     if head.len() >= 12 && &head[4..8] == b"ftyp" {
         return match &head[8..12] {

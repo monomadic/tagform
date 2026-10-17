@@ -17,8 +17,8 @@ use std::process::{Command, Stdio};
 
 use crate::model::namer::{self, Category, Fields, Spec, Templates};
 use crate::model::schema::field_by_id;
-use crate::tags::probe::{self, FileTags};
 use crate::model::value::Value;
+use crate::tags::probe::{self, FileTags};
 
 /// Bytes a filename may hold on APFS, HFS+, ext4 and NTFS alike. A long
 /// tag list walks straight past this, so `namer` cuts to a shorter limit; this
@@ -108,7 +108,11 @@ fn fields_of(tags: &FileTags) -> Result<Fields> {
     let clip = text("variant")
         .eq_ignore_ascii_case("clip")
         .then(|| text("track"))
-        .and_then(|t| t.split('/').next().and_then(|n| n.trim().parse::<u32>().ok()))
+        .and_then(|t| {
+            t.split('/')
+                .next()
+                .and_then(|n| n.trim().parse::<u32>().ok())
+        })
         .filter(|&n| n > 0);
 
     let city = text("location");
@@ -123,7 +127,11 @@ fn fields_of(tags: &FileTags) -> Result<Fields> {
         clip,
         orientation: text("orientation"),
         // The city names the clip; a venue stands in only when none was written.
-        location: if city.is_empty() { text("location_place") } else { city },
+        location: if city.is_empty() {
+            text("location_place")
+        } else {
+            city
+        },
         // The camera's own capture date outranks the container's bookkeeping.
         date: stamp(&atom("com.apple.quicktime.creationdate"))
             .or_else(|| stamp(&text("date")))
@@ -159,7 +167,15 @@ fn birth_stamp(path: &Path) -> Option<String> {
 /// The spec block, probed fresh: what the file *is*, whatever its tags say.
 fn spec_of(path: &Path, model: &str) -> Result<Spec> {
     let out = Command::new("ffprobe")
-        .args(["-v", "error", "-show_streams", "-show_format", "-of", "json", "--"])
+        .args([
+            "-v",
+            "error",
+            "-show_streams",
+            "-show_format",
+            "-of",
+            "json",
+            "--",
+        ])
         .arg(path)
         .stdin(Stdio::null())
         .output()
@@ -167,15 +183,23 @@ fn spec_of(path: &Path, model: &str) -> Result<Spec> {
     if !out.status.success() {
         bail!("Could not read video info: {}", name_of(path));
     }
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).context("parsing ffprobe json")?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).context("parsing ffprobe json")?;
     let video = v["streams"]
         .as_array()
-        .and_then(|s| s.iter().find(|s| s["codec_type"] == "video" && s["disposition"]["attached_pic"] != 1))
+        .and_then(|s| {
+            s.iter()
+                .find(|s| s["codec_type"] == "video" && s["disposition"]["attached_pic"] != 1)
+        })
         .with_context(|| format!("Could not read video info: {}", name_of(path)))?;
     let num = |x: &serde_json::Value| -> Option<f64> {
-        x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok()))
+        x.as_f64()
+            .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
     };
-    let (mut w, mut h) = (num(&video["width"]).unwrap_or(0.0), num(&video["height"]).unwrap_or(0.0));
+    let (mut w, mut h) = (
+        num(&video["width"]).unwrap_or(0.0),
+        num(&video["height"]).unwrap_or(0.0),
+    );
     if w == 0.0 || h == 0.0 {
         bail!("Could not read video info: {}", name_of(path));
     }
@@ -201,7 +225,7 @@ fn spec_of(path: &Path, model: &str) -> Result<Spec> {
         .as_str()
         .and_then(|r| r.split_once('/'))
         .and_then(|(n, d)| Some((n.parse::<u64>().ok()?, d.parse::<u64>().ok()?)))
-        .map(|(n, d)| if d > 0 { (n + d / 2) / d } else { 0 })
+        .map(|(n, d)| (n + d / 2).checked_div(d).unwrap_or(0))
         .unwrap_or(0);
     let secs = num(&v["format"]["duration"]).unwrap_or(0.0).round() as u64;
     let duration = if secs >= 3600 {
@@ -214,7 +238,12 @@ fn spec_of(path: &Path, model: &str) -> Result<Spec> {
     let mbps = num(&video["bit_rate"])
         .map(|b| format!("{}mbps", ((b + 500_000.0) / 1_000_000.0) as u64))
         .unwrap_or_default();
-    let codec = match video["codec_name"].as_str().unwrap_or("").to_lowercase().as_str() {
+    let codec = match video["codec_name"]
+        .as_str()
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
         "hevc" | "h265" => "h265",
         "h264" | "avc1" => "h264",
         "prores" => "PRO",
@@ -447,9 +476,26 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("dl.mkv");
         let ok = Command::new("ffmpeg")
-            .args(["-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=25:duration=1"])
-            .args(["-metadata", "title=Some Title", "-metadata", "category=Adult"])
-            .args(["-metadata", "actors=Alice, Bob", "-metadata", "channel=Studio"])
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x180:rate=25:duration=1",
+            ])
+            .args([
+                "-metadata",
+                "title=Some Title",
+                "-metadata",
+                "category=Adult",
+            ])
+            .args([
+                "-metadata",
+                "actors=Alice, Bob",
+                "-metadata",
+                "channel=Studio",
+            ])
             .args(["-metadata", "keywords=one,two", "-metadata", "rating=4"])
             .arg(&file)
             .status()
@@ -457,7 +503,8 @@ mod tests {
             .unwrap_or(false);
         assert!(ok, "ffmpeg could not make the fixture");
 
-        let want = dir.join("Alice, Bob (Studio) - Some Title #one #two ★★★★☆ [480p 25fps h264 1sec H].mkv");
+        let want = dir
+            .join("Alice, Bob (Studio) - Some Title #one #two ★★★★☆ [480p 25fps h264 1sec H].mkv");
         assert_eq!(target(&file).unwrap(), want);
         assert_eq!(run(&file).unwrap(), Outcome::Renamed(want.clone()));
         assert!(want.is_file() && !file.exists());
@@ -468,8 +515,14 @@ mod tests {
 
     #[test]
     fn a_stamp_is_read_from_any_iso_date() {
-        assert_eq!(stamp("2025-02-02T12:23:44.000000Z").as_deref(), Some("2025-02-02--12-23-44"));
-        assert_eq!(stamp("2025:02:02 12:23:44").as_deref(), Some("2025-02-02--12-23-44"));
+        assert_eq!(
+            stamp("2025-02-02T12:23:44.000000Z").as_deref(),
+            Some("2025-02-02--12-23-44")
+        );
+        assert_eq!(
+            stamp("2025:02:02 12:23:44").as_deref(),
+            Some("2025-02-02--12-23-44")
+        );
         assert_eq!(stamp("0000-00-00 00:00:00"), None);
         assert_eq!(stamp("2025-02-02"), None);
     }
@@ -531,12 +584,23 @@ mod tests {
         );
 
         // An upper-case extension comes out lower-case.
-        let shouty = make("SHOUTY.MP4", "320x180", "1", &[("title", "Loud"), ("actors", "Sam"), ("category", "Adult")]);
-        assert!(target(&shouty).unwrap().to_string_lossy().ends_with(" H].mp4"));
+        let shouty = make(
+            "SHOUTY.MP4",
+            "320x180",
+            "1",
+            &[("title", "Loud"), ("actors", "Sam"), ("category", "Adult")],
+        );
+        assert!(target(&shouty)
+            .unwrap()
+            .to_string_lossy()
+            .ends_with(" H].mp4"));
 
         // Untagged and unfetched: nothing to name it after.
         let bare = make("bare.mp4", "320x180", "1", &[]);
-        assert!(target(&bare).unwrap_err().to_string().contains("source URL"));
+        assert!(target(&bare)
+            .unwrap_err()
+            .to_string()
+            .contains("source URL"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

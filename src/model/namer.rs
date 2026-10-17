@@ -35,8 +35,7 @@ use crate::config::ORIENTATION_MARKS;
 pub const NAME_MAX: usize = 220;
 
 /// `ACTORS (CHANNEL) - TITLE (Clip N) #TAGS @G ★★★☆☆ [METADATA]`
-pub const ADULT: &str =
-    "{headline}< (Clip {clip})>< {tags}>< {orientation}>< {stars}> [{meta}]";
+pub const ADULT: &str = "{headline}< (Clip {clip})>< {tags}>< {orientation}>< {stars}> [{meta}]";
 
 /// `DATE PEOPLE - TITLE (Clip N) (LOCATION) #TAGS ★★★☆☆ [METADATA]`
 pub const FOOTAGE: &str = "{headline}< (Clip {clip})>< ({location})>< {tags}>< {stars}> [{meta}]";
@@ -285,9 +284,24 @@ impl Fields {
         // The two orders are the ones the old tools left on disk, and only
         // Footage names the device.
         let order: Vec<&String> = if self.category == Category::Footage {
-            vec![&s.resolution, &s.fps, &s.duration, &s.mbps, &s.codec, &s.device, &s.shape]
+            vec![
+                &s.resolution,
+                &s.fps,
+                &s.duration,
+                &s.mbps,
+                &s.codec,
+                &s.device,
+                &s.shape,
+            ]
         } else {
-            vec![&s.resolution, &s.fps, &s.codec, &s.duration, &s.mbps, &s.shape]
+            vec![
+                &s.resolution,
+                &s.fps,
+                &s.codec,
+                &s.duration,
+                &s.mbps,
+                &s.shape,
+            ]
         };
         order
             .into_iter()
