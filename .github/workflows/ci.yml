@@ -33,7 +33,7 @@ jobs:
       - name: install ffmpeg and exiftool
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q ffmpeg libimage-exiftool-perl libchafa-dev pkg-config
+          sudo apt-get install -y -q ffmpeg libimage-exiftool-perl libchafa-dev libglib2.0-dev pkg-config
           ffmpeg -version | head -1
           exiftool -ver
       - name: fmt
