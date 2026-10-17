@@ -63,7 +63,7 @@ genuine fail-open. Tick a box, cite the commit.
   with ffmpeg and exiftool installed (the fixture suite needs both). This
   item is cheap and stops the count compounding.
 
-- [ ] **8. Document the in-place residual risk.** The exiftool in-place path
+- [x] **8. Document the in-place residual risk.** The exiftool in-place path
   is kept deliberately (DESIGN §9.3: it preserves inode, xattrs, Finder
   tags). exiftool writes its own temp and copies back only on success, so
   the exposed window is the copy-back. Record that as an accepted risk in

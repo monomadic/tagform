@@ -1511,6 +1511,32 @@ the writer falls back to the remux — **unless** the file carries XMP, in which
 case it fails loudly instead. Falling back to a writer known to destroy data is
 not a fallback.
 
+#### 9.3.3 The accepted risk
+
+This is the one writer that touches the original before a verified
+replacement exists, which §9.4's rule otherwise forbids. The 2026-09-03 audit
+asked for it to be made transactional — copy to a sibling temp, edit that,
+verify, rename over. That would discard the inode, and with it the xattrs,
+Finder tags and ACLs that are the whole reason this path is chosen (the table
+above); task 3 of the same audit then asks for those to be restored by hand,
+which is the same work done worse.
+
+The exposure is narrower than "edits in place" suggests. exiftool writes its
+own temp and copies the bytes back only once the write has succeeded, so the
+window is the copy-back, not the edit. What is accepted:
+
+- A crash or power loss *during the copy-back* can leave a torn file. The
+  write is a few kilobytes into the moov; the copy-back is of the whole file.
+- The verify runs after the copy-back. A result it rejects has already
+  replaced the original, and the report says so — it does not say "the
+  original is untouched", because it is not.
+
+Both are reported, neither is silently absorbed, and the mtime is restored
+after. The fingerprint check (§9.4) runs before this path too, so it never
+edits a file that is not the one that was probed. Revisit only if a torn
+file is actually seen; the fix then is a clone-and-swap on APFS, which keeps
+the inode's data but not its identity.
+
 ### 9.4 Filename sync
 
 ⟨built, differs⟩ **Parsing is built; composing is not.** `i` then `f` reads

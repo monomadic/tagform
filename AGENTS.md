@@ -138,7 +138,9 @@ debugging. Changing code that violates one is a regression, not a refactor.
 3. **The original is never modified until a verified replacement exists.**
    `write.rs` remuxes to a sibling temp, proves duration, tags and layout, and
    only then renames over the original. Any failure leaves the original
-   untouched. Do not add a path that edits in place without that proof.
+   untouched. The one exception is the exiftool in-place path, chosen
+   precisely because it keeps the inode and xattrs a rename would lose; its
+   accepted exposure is written down in DESIGN §9.3.3. Do not add another.
 4. **Unrecognised keys are never dropped.** Keys no field claims are carried in
    `Report::custom` and preserved through a write.
 5. **Read is deliberately wider than write.** A URL may arrive as `comment`,
