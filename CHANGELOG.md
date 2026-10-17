@@ -8,6 +8,10 @@ in `AGENTS.md`.
 
 ### Fixed
 
+- Staging Actors and Artist with different values is refused before the
+  write, with a note naming both fields, since both are stored in the
+  `artist` key. It used to fail after the writer had run, with a message
+  about a value that "did not round-trip".
 - A write now refuses a file that changed on disk after it was opened --
   by another tool, a rename, or a shell -- instead of writing the values
   staged against the older file over it. The message says to reopen the

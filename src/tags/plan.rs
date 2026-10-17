@@ -139,6 +139,58 @@ fn xmp_values(v: &Value) -> Vec<String> {
     }
 }
 
+/// Two staged fields that fan out to the same container key with different
+/// values. Actors and Artist both write `artist` (DESIGN §17.4 decided they
+/// stay independent fields), so a form with both staged can ask for two
+/// values in one atom. The verify would catch it after a writer had run;
+/// this catches it before the confirmation, and names the fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Conflict {
+    pub key: String,
+    /// Field ids, in schema order.
+    pub fields: Vec<&'static str>,
+}
+
+impl Conflict {
+    pub fn describe(&self) -> String {
+        let names: Vec<&str> = self
+            .fields
+            .iter()
+            .map(|id| field_by_id(id).map(|f| f.label).unwrap_or(id))
+            .collect();
+        format!(
+            "{} both write `{}` and disagree",
+            names.join(" and "),
+            self.key
+        )
+    }
+}
+
+/// Every container key that two or more staged fields want different
+/// values for. Empty for a form that can be written as staged.
+pub fn conflicts(staged: &BTreeMap<String, Value>) -> Vec<Conflict> {
+    let mut by_key: BTreeMap<&str, Vec<(&'static str, String)>> = BTreeMap::new();
+    for (row_key, value) in staged {
+        let Some(def) = field_by_id(row_key) else {
+            continue;
+        };
+        for k in def.mdta {
+            by_key
+                .entry(k)
+                .or_default()
+                .push((def.id, atom_text(value)));
+        }
+    }
+    by_key
+        .into_iter()
+        .filter(|(_, writers)| writers.iter().any(|(_, v)| v != &writers[0].1))
+        .map(|(key, writers)| Conflict {
+            key: key.to_string(),
+            fields: writers.into_iter().map(|(id, _)| id).collect(),
+        })
+        .collect()
+}
+
 /// Container key -> value, and XMP tag -> values.
 pub type Keys = (Vec<(String, String)>, Vec<(String, Vec<String>)>);
 
@@ -294,6 +346,33 @@ pub fn junk_clears() -> Vec<(String, String)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn actors_and_artist_disagreeing_is_a_conflict_and_agreeing_is_not() {
+        let mut staged = BTreeMap::new();
+        staged.insert(
+            "actors".to_string(),
+            Value::List(vec!["One".into(), "Two".into()]),
+        );
+        staged.insert("artist".to_string(), Value::text("Someone Else"));
+        let c = conflicts(&staged);
+        assert_eq!(c.len(), 1, "{c:?}");
+        assert_eq!(c[0].key, "artist");
+        assert_eq!(c[0].fields, vec!["actors", "artist"]);
+        assert_eq!(
+            c[0].describe(),
+            "Actors and Artist both write `artist` and disagree"
+        );
+
+        staged.insert("artist".to_string(), Value::text("One, Two"));
+        assert!(
+            conflicts(&staged).is_empty(),
+            "the same value twice is not a conflict"
+        );
+
+        staged.remove("artist");
+        assert!(conflicts(&staged).is_empty());
+    }
+
     use super::*;
     use crate::tags::probe::FileTags;
     use std::path::Path;

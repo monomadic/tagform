@@ -45,7 +45,7 @@ genuine fail-open. Tick a box, cite the commit.
   file with conflicting values declines and is untouched; the debris fixture
   still repairs.
 
-- [ ] **5. Plan-time Actors/Artist conflict error.** Both fields write the
+- [x] **5. Plan-time Actors/Artist conflict error.** Both fields write the
   `artist` key (`schema.rs`). A staged Actors and a staged Artist with
   different values currently fail late in verification after a writer has
   run. Detect by destination key in `plan.rs` before the confirmation dialog

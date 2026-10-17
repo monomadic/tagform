@@ -470,11 +470,14 @@ fn two_fields_writing_one_key_fail_rather_than_pick_a_winner() {
     let f = tagged(&dir, "collide.mp4");
     let before = std::fs::read(&f).unwrap();
 
-    let (_, r) = write_it(
-        &f,
-        &staged(&[("actors", "One, Two"), ("artist", "Someone Else")]),
-        false,
-    );
+    let edits = staged(&[("actors", "One, Two"), ("artist", "Someone Else")]);
+    // The form catches this before building a plan ...
+    let c = plan::conflicts(&edits);
+    assert_eq!(c.len(), 1, "the plan names the collision: {c:?}");
+    assert_eq!(c[0].key, "artist");
+
+    // ... and the verify is the backstop if a plan is built regardless.
+    let (_, r) = write_it(&f, &edits, false);
 
     assert!(r.is_err(), "two values for one key must not report success");
     assert!(

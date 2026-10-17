@@ -988,15 +988,34 @@ impl App {
             .staged
             .iter()
             .map(|(i, edits)| {
+                // Two fields asking one key for different values: neither is
+                // written, and the note names both, since the fix is to pick.
+                let collide: BTreeSet<&str> = plan::conflicts(edits)
+                    .into_iter()
+                    .inspect(|c| {
+                        why.get_or_insert_with(|| c.describe());
+                    })
+                    .flat_map(|c| c.fields)
+                    .collect();
                 let sound: BTreeMap<String, Value> = edits
                     .iter()
-                    .filter(|(k, v)| match field_error(k, v) {
-                        Some(e) => {
-                            refused.insert(field_by_id(k).map(|f| f.label).unwrap_or(k.as_str()));
-                            why.get_or_insert(e);
-                            false
+                    .filter(|(k, v)| {
+                        let problem = if collide.contains(k.as_str()) {
+                            Some(None)
+                        } else {
+                            field_error(k, v).map(Some)
+                        };
+                        match problem {
+                            Some(e) => {
+                                refused
+                                    .insert(field_by_id(k).map(|f| f.label).unwrap_or(k.as_str()));
+                                if let Some(e) = e {
+                                    why.get_or_insert(e);
+                                }
+                                false
+                            }
+                            None => true,
                         }
-                        None => true,
                     })
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
