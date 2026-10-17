@@ -85,7 +85,11 @@ src/tags/
                     generates at test time (§14). Needs ffmpeg + exiftool.
   write.rs          executes a plan. The remux, the verify, the rename.
 src/ui/
-  app.rs            event loop, modal state, focus ring, undo/redo (939 lines)
+  app.rs            event loop, modal state, focus ring, undo/redo, the
+                    write queue. Children in app/: `import.rs` (the `i` band:
+                    URL fetch, filename parse, place lookup, the seed on open)
+                    and `open.rs` (the `o` menu). Both reach App's private
+                    state; their tests still live in app.rs.
   edit.rs           per-control edit behaviour
   render.rs         painting
   theme.rs          four schemes + the WCAG contrast test
