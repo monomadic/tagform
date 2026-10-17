@@ -22,6 +22,10 @@ in `AGENTS.md`.
 
 ### Changed
 
+- A file carrying two metadata boxes that disagree about a key is no
+  longer repaired by the container rewrite, which took the first box's
+  value; it goes to the remux instead. A second box that only adds keys,
+  the shape exiftool leaves, is still folded in.
 - `r` renames a file to a lower-case extension: `Clip.MOV` becomes `….mov`.
 - A place lookup typed into the Place row keeps Coordinates the camera
   filled, instead of replacing them with the geocoder's fix.

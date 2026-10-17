@@ -35,7 +35,7 @@ genuine fail-open. Tick a box, cite the commit.
   re-probe". Fixture: probe, alter externally, execute the old plan, assert
   refusal and an untouched file. No content hashing — overkill here.
 
-- [ ] **4. Narrow `native::fold` to refuse conflicting keys.** `fold` merges
+- [x] **4. Narrow `native::fold` to refuse conflicting keys.** `fold` merges
   every mdta `meta` box into the first by name and drops the rest. Keep that
   for the measured exiftool split-key debris (docs/CONTAINER.md §8). Decline
   native writing when the same key carries *different payloads* across boxes,

@@ -142,6 +142,12 @@ pub fn survey_bytes(buf: &[u8]) -> Option<Survey> {
 
 /// The file's own box wins; anything only a stray box has is appended to it,
 /// because a key no field claims is still never dropped.
+///
+/// Only the measured debris shape is repaired: a second box whose keys the
+/// first lacks, or carries with the same value. Two boxes that disagree
+/// about one key are not that shape -- box order says nothing about which
+/// is right -- so the file is declined and a remux takes it, rather than
+/// this writer choosing a value by position.
 fn fold(mut boxes: Vec<Survey>) -> Option<Survey> {
     if boxes.is_empty() {
         return None;
@@ -149,8 +155,10 @@ fn fold(mut boxes: Vec<Survey>) -> Option<Survey> {
     let mut primary = boxes.remove(0);
     for other in boxes {
         for e in other.entries {
-            if !primary.entries.iter().any(|p| p.name == e.name) {
-                primary.entries.push(e);
+            match primary.entries.iter().find(|p| p.name == e.name) {
+                None => primary.entries.push(e),
+                Some(p) if p.payload == e.payload => {}
+                Some(_) => return None,
             }
         }
         primary.absorb.push(other.base);
@@ -217,6 +225,7 @@ fn scan(
 /// Parse one `meta` box, if it is an mdta one carrying `keys` and `ilst`.
 fn read_meta(buf: &[u8], mut off: usize, end: usize, path: &str) -> Option<Survey> {
     let (mut names, mut items, mut is_mdta) = (Vec::new(), Vec::new(), false);
+    let (mut seen_keys, mut seen_ilst) = (false, false);
     while off + 8 <= end {
         let size = be32(&buf[off..off + 4]) as usize;
         if size < 8 || off + size > end {
@@ -224,7 +233,14 @@ fn read_meta(buf: &[u8], mut off: usize, end: usize, path: &str) -> Option<Surve
         }
         match &buf[off + 4..off + 8] {
             b"hdlr" if off + 20 <= end => is_mdta = &buf[off + 16..off + 20] == b"mdta",
+            // A second table or item list in one box, a key in a namespace
+            // other than mdta, or a name listed twice: each is a layout this
+            // writer would have to guess at to rebuild. It rebuilds only
+            // what it understands whole, and declines the rest.
             b"keys" if off + 16 <= end => {
+                if std::mem::replace(&mut seen_keys, true) {
+                    return None;
+                }
                 let count = be32(&buf[off + 12..off + 16]) as usize;
                 let mut o = off + 16;
                 for _ in 0..count {
@@ -235,11 +251,21 @@ fn read_meta(buf: &[u8], mut off: usize, end: usize, path: &str) -> Option<Surve
                     if ks < 8 || o + ks > off + size {
                         return None;
                     }
-                    names.push(String::from_utf8_lossy(&buf[o + 8..o + ks]).into_owned());
+                    if &buf[o + 4..o + 8] != b"mdta" {
+                        return None;
+                    }
+                    let name = String::from_utf8_lossy(&buf[o + 8..o + ks]).into_owned();
+                    if names.contains(&name) {
+                        return None;
+                    }
+                    names.push(name);
                     o += ks;
                 }
             }
             b"ilst" => {
+                if std::mem::replace(&mut seen_ilst, true) {
+                    return None;
+                }
                 let mut o = off + 8;
                 while o + 8 <= off + size {
                     let isz = be32(&buf[o..o + 4]) as usize;
@@ -550,6 +576,52 @@ mod tests {
                 ("com.apple.quicktime.origin", Some("stray"))
             ],
             "the file's own box wins, and the stray value is kept rather than dropped"
+        );
+    }
+
+    /// Two boxes that disagree are not exiftool's debris, and neither box's
+    /// position says which value is the file's. Declined, so the remux takes
+    /// it, rather than repaired by guess.
+    #[test]
+    fn two_boxes_disagreeing_about_a_key_decline_the_file() {
+        let own = meta_box(false, &["title"], &[(1, "mine")]);
+        let other = meta_box(true, &["title"], &[(1, "theirs")]);
+        let mut moov = boxed(b"udta", &own);
+        moov.extend_from_slice(&other);
+        let mut f = boxed(b"ftyp", b"qt  ");
+        f.extend_from_slice(&boxed(b"moov", &moov));
+        assert!(survey_bytes(&f).is_none());
+
+        // The same value twice is the debris shape with the value copied,
+        // and is still folded.
+        let same = meta_box(true, &["title"], &[(1, "mine")]);
+        let mut moov = boxed(b"udta", &meta_box(false, &["title"], &[(1, "mine")]));
+        moov.extend_from_slice(&same);
+        let mut f = boxed(b"ftyp", b"qt  ");
+        f.extend_from_slice(&boxed(b"moov", &moov));
+        let s = survey_bytes(&f).unwrap();
+        assert_eq!(s.absorb, ["moov/meta"]);
+        assert_eq!(s.entries.len(), 1);
+    }
+
+    /// Layouts the writer cannot rebuild without guessing: a name listed
+    /// twice, a key outside the mdta namespace, two key tables in one box.
+    #[test]
+    fn a_keys_table_it_does_not_understand_whole_declines_the_file() {
+        let dup = file(&meta_box(false, &["title", "title"], &[(1, "a")]), true);
+        assert!(survey_bytes(&dup).is_none(), "duplicate names");
+
+        // The key entry is namespace then name; hdlr's own `mdta` is not
+        // followed by a name, so the window finds the table entry.
+        let mut foreign = meta_box(false, &["title"], &[(1, "a")]);
+        let ns = foreign
+            .windows(9)
+            .position(|w| &w[..4] == b"mdta" && &w[4..] == b"title")
+            .unwrap();
+        foreign[ns..ns + 4].copy_from_slice(b"udta");
+        assert!(
+            survey_bytes(&file(&foreign, true)).is_none(),
+            "foreign namespace"
         );
     }
 
