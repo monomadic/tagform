@@ -97,6 +97,9 @@ impl Writer {
 #[derive(Debug, Clone)]
 pub struct FilePlan {
     pub path: PathBuf,
+    /// The file this plan was made against; `write::execute` refuses a
+    /// file that no longer matches it.
+    pub fingerprint: Option<crate::tags::probe::Fingerprint>,
     pub writer: Writer,
     /// Container key -> new value. An empty value deletes the key.
     pub atoms: Vec<(String, String)>,
@@ -190,6 +193,7 @@ pub fn build(file: &FileTags, staged: &BTreeMap<String, Value>, want_faststart: 
         let route = crate::tags::mkv::route(&file.path, &atoms, &xmp, want_faststart);
         return FilePlan {
             path: file.path.clone(),
+            fingerprint: file.fingerprint,
             writer: Writer::Matroska,
             atoms,
             xmp,
@@ -257,6 +261,7 @@ pub fn build(file: &FileTags, staged: &BTreeMap<String, Value>, want_faststart: 
 
     FilePlan {
         path: file.path.clone(),
+        fingerprint: file.fingerprint,
         writer,
         atoms,
         xmp,
@@ -295,6 +300,7 @@ mod tests {
 
     fn file(atoms: &[(&str, &str)], xmp: &[(&str, &str)]) -> FileTags {
         FileTags {
+            fingerprint: None,
             path: PathBuf::from("/tmp/tagform-plan-test.mp4"),
             atoms: atoms
                 .iter()

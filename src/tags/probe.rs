@@ -18,10 +18,41 @@ use crate::model::value::Value;
 #[derive(Debug, Clone)]
 pub struct FileTags {
     pub path: PathBuf,
+    /// What the file was when it was read. A write checks it first: the form
+    /// stays open for hours and `rename-video`, yt-dlp, `clone` and a shell
+    /// all touch the same files, and a plan or XMP snapshot made against an
+    /// older file would write stale values over newer ones. `None` only for
+    /// a file built in a test.
+    pub fingerprint: Option<Fingerprint>,
     /// Container tags as ffprobe sees them, keys lower-cased.
     pub atoms: BTreeMap<String, Value>,
     /// XMP tags as exiftool sees them, keyed `XMP-<ns>:<Tag>`.
     pub xmp: BTreeMap<String, Value>,
+}
+
+/// Identity and shape, not content: dev/inode catch a replacement, size and
+/// mtime catch an edit. A hash would catch a same-size same-second rewrite
+/// too, at the cost of reading every file twice, and nothing that touches
+/// these files preserves the mtime but this tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fingerprint {
+    pub dev: u64,
+    pub ino: u64,
+    pub len: u64,
+    pub mtime: Option<std::time::SystemTime>,
+}
+
+impl Fingerprint {
+    pub fn of(path: &Path) -> Result<Self> {
+        use std::os::unix::fs::MetadataExt;
+        let m = std::fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+        Ok(Self {
+            dev: m.dev(),
+            ino: m.ino(),
+            len: m.len(),
+            mtime: m.modified().ok(),
+        })
+    }
 }
 
 impl FileTags {
@@ -98,12 +129,17 @@ pub fn probe(path: &Path) -> Result<FileTags> {
             crate::tags::mkv::read(path).with_context(|| format!("reading {}", path.display()))?;
         return Ok(FileTags {
             path: path.to_path_buf(),
+            fingerprint: Some(Fingerprint::of(path)?),
             atoms: read.atoms,
             xmp: read.xmp,
         });
     }
+    // Taken before the readers run, so a change during the probe reads as
+    // a change rather than being folded into it.
+    let fingerprint = Some(Fingerprint::of(path)?);
     Ok(FileTags {
         path: path.to_path_buf(),
+        fingerprint,
         atoms: probe_atoms(path)?,
         xmp: probe_xmp(path)?,
     })
@@ -235,6 +271,7 @@ mod rename_tests {
         let mut atoms = BTreeMap::new();
         atoms.insert(key.to_string(), Value::text(value));
         FileTags {
+            fingerprint: None,
             path: PathBuf::from("/tmp/x.mp4"),
             atoms,
             xmp: BTreeMap::new(),

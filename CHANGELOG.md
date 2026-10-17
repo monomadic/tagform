@@ -6,6 +6,16 @@ in `AGENTS.md`.
 
 ## [Unreleased]
 
+### Fixed
+
+- A write now refuses a file that changed on disk after it was opened --
+  by another tool, a rename, or a shell -- instead of writing the values
+  staged against the older file over it. The message says to reopen the
+  file and review the edit.
+- A write no longer bumps the file's modified time. It was meant to be
+  kept and was not, so a tag edit sorted the file to the top of a
+  by-date view.
+
 ### Changed
 
 - `r` renames a file to a lower-case extension: `Clip.MOV` becomes `….mov`.

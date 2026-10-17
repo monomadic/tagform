@@ -2494,6 +2494,7 @@ mod tests {
         use std::collections::BTreeMap;
 
         let f = FileTags {
+            fingerprint: None,
             path: std::path::PathBuf::from("/tmp/tagform-render-test.mp4"),
             atoms: BTreeMap::new(),
             xmp: BTreeMap::new(),
@@ -2572,6 +2573,7 @@ mod tests {
         use std::collections::BTreeMap;
 
         let f = FileTags {
+            fingerprint: None,
             path: std::path::PathBuf::from("/tmp/tagform-render-colours.mp4"),
             atoms: [("actors".to_string(), Value::text("Ann"))]
                 .into_iter()
@@ -2630,6 +2632,7 @@ mod tests {
         use crate::tags::probe::FileTags;
         use std::collections::BTreeMap;
         let mk = |name: &str, kv: &[(&str, &str)]| FileTags {
+            fingerprint: None,
             path: std::path::PathBuf::from(format!("/tmp/tagform-render-{name}.mp4")),
             atoms: kv
                 .iter()
@@ -2701,6 +2704,7 @@ mod tests {
         use std::collections::BTreeMap;
         let files = (0..n)
             .map(|i| FileTags {
+                fingerprint: None,
                 path: std::path::PathBuf::from(format!("/nonexistent/clip-{i}.mp4")),
                 atoms: BTreeMap::new(),
                 xmp: BTreeMap::new(),
@@ -2907,6 +2911,7 @@ mod tests {
         use std::collections::BTreeMap;
 
         let f = FileTags {
+            fingerprint: None,
             path: std::path::PathBuf::from("/tmp/tagform-render-test.mp4"),
             atoms: BTreeMap::new(),
             xmp: BTreeMap::new(),
@@ -2955,6 +2960,7 @@ mod tests {
         use std::collections::BTreeMap;
 
         let f = FileTags {
+            fingerprint: None,
             path: std::path::PathBuf::from("/tmp/tagform-band-test.mp4"),
             atoms: BTreeMap::new(),
             xmp: BTreeMap::new(),
@@ -3002,6 +3008,7 @@ mod tests {
         // them, and the real one with the choice already on disk.
         let app = crate::ui::app::App::new(
             vec![FileTags {
+                fingerprint: None,
                 path: std::path::PathBuf::from("/tmp/tagform-render-test.mp4"),
                 atoms: BTreeMap::new(),
                 xmp: BTreeMap::new(),
@@ -3014,6 +3021,7 @@ mod tests {
         atoms.insert("category".to_string(), Value::Text(chosen.clone()));
         let app = crate::ui::app::App::new(
             vec![FileTags {
+                fingerprint: None,
                 path: std::path::PathBuf::from("/tmp/tagform-render-test.mp4"),
                 atoms,
                 xmp: BTreeMap::new(),
@@ -3043,6 +3051,7 @@ mod tests {
         use std::collections::BTreeMap;
 
         let f = FileTags {
+            fingerprint: None,
             path: std::path::PathBuf::from("/tmp/tagform-strip-test.mp4"),
             atoms: BTreeMap::new(),
             xmp: BTreeMap::new(),
@@ -3130,6 +3139,7 @@ mod tests {
         use std::collections::BTreeMap;
 
         let f = FileTags {
+            fingerprint: None,
             path: std::path::PathBuf::from("/x/Ann (Ch) - A Title #pov ★★★☆☆.mp4"),
             atoms: [("title".to_string(), Value::text("Kept"))]
                 .into_iter()
@@ -3248,6 +3258,7 @@ mod progress_panel_tests {
     fn app(n: usize) -> App {
         let files = (0..n)
             .map(|i| FileTags {
+                fingerprint: None,
                 path: std::path::PathBuf::from(format!("/tmp/clip-{i:03}.mov")),
                 atoms: BTreeMap::new(),
                 xmp: BTreeMap::new(),
@@ -3473,6 +3484,7 @@ mod progress_panel_tests {
     fn confirm(n: usize, fields: &[(&str, &str)], h: u16) -> Vec<String> {
         let files = (0..n)
             .map(|i| FileTags {
+                fingerprint: None,
                 path: std::path::PathBuf::from(format!(
                     "/nonexistent/Anna Cherry, Milalzt - A Very Long Title That Will Not Fit {i:02}.mp4"
                 )),
@@ -3636,6 +3648,7 @@ mod help_tests {
     fn app() -> App {
         App::new(
             vec![FileTags {
+                fingerprint: None,
                 path: std::path::PathBuf::from("/tmp/tagform-help.mp4"),
                 atoms: BTreeMap::new(),
                 xmp: BTreeMap::new(),

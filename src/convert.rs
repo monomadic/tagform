@@ -131,6 +131,7 @@ pub fn convert(src: &Path, lossy: bool, dry_run: bool) -> Result<Outcome, WriteE
     // Planned against a file with no tags at all, which is what ffmpeg is
     // about to make: every row is a change.
     let blank = FileTags {
+        fingerprint: None,
         path: dest.clone(),
         atoms: BTreeMap::new(),
         xmp: BTreeMap::new(),
@@ -184,7 +185,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<i32> {
                 eprintln!("tagform: {shown}: {e}");
                 match e {
                     WriteError::NoSpace { .. } => no_space = true,
-                    WriteError::Failed(_) => failed = true,
+                    WriteError::Changed | WriteError::Failed(_) => failed = true,
                 }
             }
         }

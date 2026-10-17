@@ -271,6 +271,42 @@ fn the_mtime_survives_every_writer() {
     }
 }
 
+/// A plan is made against the file as it was probed; the write can come
+/// much later, from a form that has been open all afternoon, and something
+/// else may have written the file in between. The old plan -- and the XMP
+/// snapshot the two-pass path restores from -- is then wrong for the file,
+/// and must be refused rather than land.
+#[test]
+fn a_file_changed_since_it_was_probed_is_refused() {
+    let dir = workspace("changed-since-probe");
+    let f = tagged(&dir, "stale.mp4");
+    let tags = probe::probe(&f).unwrap();
+    assert!(tags.fingerprint.is_some(), "a probe records a fingerprint");
+    let plan = plan::build(&tags, &staged(&[("title", "From the old plan")]), false);
+
+    // Another process edits the file: same tool, a different value.
+    exiftool(&["-Keys:Title=From elsewhere", "--", &f.to_string_lossy()]);
+    let before = std::fs::read(&f).unwrap();
+
+    let mut on = |_: write::Step| {};
+    let r = write::execute(&plan, &tags.xmp, &mut on);
+    assert!(
+        matches!(r, Err(write::WriteError::Changed)),
+        "expected a refusal, got {r:?}"
+    );
+    assert_eq!(
+        std::fs::read(&f).unwrap(),
+        before,
+        "a refused write changed the file"
+    );
+
+    // Re-probed, the same edit goes through: the refusal is about staleness,
+    // not about the file.
+    let fresh = probe::probe(&f).unwrap();
+    let plan = plan::build(&fresh, &staged(&[("title", "From the old plan")]), false);
+    write::execute(&plan, &fresh.xmp, &mut on).expect("a fresh plan writes");
+}
+
 // ---------------------------------------------------------------------------
 // round-trips
 // ---------------------------------------------------------------------------

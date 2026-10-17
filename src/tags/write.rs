@@ -139,6 +139,10 @@ pub enum WriteError {
         need: u64,
         avail: u64,
     },
+    /// The file is not the one the plan was made against. Its own case
+    /// because the fix is specific -- re-read the file and look at the
+    /// edit again -- and nothing on disk is wrong.
+    Changed,
     Failed(anyhow::Error),
 }
 
@@ -150,6 +154,10 @@ impl std::fmt::Display for WriteError {
                 "not enough space: needs {} MB, {} MB free",
                 need / 1_048_576,
                 avail / 1_048_576
+            ),
+            WriteError::Changed => write!(
+                f,
+                "the file changed since it was opened; reopen it and review the edit"
             ),
             WriteError::Failed(e) => write!(f, "{e:#}"),
         }
@@ -214,6 +222,15 @@ pub fn execute(
 ) -> Result<(), WriteError> {
     if plan.is_empty() {
         return Ok(());
+    }
+    // Every writer, including the one that edits in place: the plan and the
+    // XMP snapshot both date from the probe, and either is wrong for a file
+    // something else has written since.
+    if let Some(expected) = plan.fingerprint {
+        let now = probe::Fingerprint::of(&plan.path).map_err(WriteError::Failed)?;
+        if now != expected {
+            return Err(WriteError::Changed);
+        }
     }
     match plan.writer {
         Writer::Exiftool => in_place(plan, on),

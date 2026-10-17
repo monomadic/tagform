@@ -1257,6 +1257,7 @@ impl App {
     pub fn fake_queue(&mut self, busy: Option<usize>, waiting: &[usize]) {
         let plan = |file: usize| FilePlan {
             path: self.files[file].path.clone(),
+            fingerprint: None,
             writer: crate::tags::plan::Writer::Native,
             atoms: Vec::new(),
             xmp: Vec::new(),
@@ -3991,6 +3992,7 @@ mod tests {
         let f = FileTags {
             // A path that cannot be probed, so the re-read leaves the fixture
             // as it is and the test stays off the disk.
+            fingerprint: None,
             path: PathBuf::from("/nonexistent/tagform-test.mov"),
             atoms: BTreeMap::new(),
             xmp: BTreeMap::new(),
@@ -4023,6 +4025,7 @@ mod tests {
         let mut atoms = BTreeMap::new();
         atoms.insert("title".to_string(), Value::Text("landed".into()));
         let f = FileTags {
+            fingerprint: None,
             path: PathBuf::from("/nonexistent/tagform-test.mov"),
             atoms,
             xmp: BTreeMap::new(),
@@ -4147,6 +4150,7 @@ mod tests {
     fn one(atoms: &[(&str, &str)]) -> App {
         use crate::tags::probe::FileTags;
         let f = FileTags {
+            fingerprint: None,
             path: PathBuf::from("/nonexistent/tagform-test.mov"),
             atoms: atoms
                 .iter()
@@ -4226,6 +4230,7 @@ mod tests {
     fn a_structured_filename_seeds_the_empty_fields_on_open() {
         use crate::tags::probe::FileTags;
         let mk = |name: &str, atoms: &[(&str, &str)]| FileTags {
+            fingerprint: None,
             path: PathBuf::from(format!("/nonexistent/{name}")),
             atoms: atoms
                 .iter()
@@ -4313,6 +4318,7 @@ mod tests {
     fn stepping_between_files_leaves_the_status_line_alone() {
         use crate::tags::probe::FileTags;
         let mk = |i: usize| FileTags {
+            fingerprint: None,
             path: PathBuf::from(format!("/nonexistent/clip-{i}.mov")),
             atoms: BTreeMap::new(),
             xmp: BTreeMap::new(),
@@ -4578,6 +4584,7 @@ mod tests {
     fn the_open_menu_needs_one_file() {
         use crate::tags::probe::FileTags;
         let mk = |n: usize| FileTags {
+            fingerprint: None,
             path: PathBuf::from(format!("/nonexistent/{n}.mov")),
             atoms: BTreeMap::new(),
             xmp: BTreeMap::new(),
@@ -4618,6 +4625,7 @@ mod tests {
     fn the_import_menu_is_a_selector() {
         use crate::tags::probe::FileTags;
         let f = FileTags {
+            fingerprint: None,
             path: PathBuf::from("/x/Ann Lee (Studio X) - A Title.mp4"),
             atoms: [(
                 "webpage_url".to_string(),
@@ -4897,6 +4905,7 @@ mod tests {
     fn a_filename_import_fills_only_the_empty_fields() {
         use crate::tags::probe::FileTags;
         let f = FileTags {
+            fingerprint: None,
             path: PathBuf::from("/x/Ann Lee, Bo Cruz (Studio X) - A Title #pov #hd ★★★★☆.mp4"),
             atoms: [("title".to_string(), Value::text("Kept Title"))]
                 .into_iter()
@@ -4997,6 +5006,7 @@ mod tests {
         let files = files
             .iter()
             .map(|(name, track)| FileTags {
+                fingerprint: None,
                 path: PathBuf::from(format!("/nonexistent/{name}.mp4")),
                 atoms: [("category", ADULT), ("variant", CLIP)]
                     .into_iter()
@@ -5014,6 +5024,7 @@ mod tests {
     fn a_bare_filename_imports_nothing() {
         use crate::tags::probe::FileTags;
         let f = FileTags {
+            fingerprint: None,
             path: PathBuf::from("/x/[1080p 30fps].mp4"),
             atoms: BTreeMap::new(),
             xmp: BTreeMap::new(),
@@ -5188,6 +5199,7 @@ mod tests {
     fn deleting_a_seeded_value_says_the_file_never_had_it() {
         use crate::tags::probe::FileTags;
         let f = FileTags {
+            fingerprint: None,
             path: PathBuf::from("/nonexistent/(Studio) - A Title.mp4"),
             atoms: [("title".to_string(), Value::text("A Title"))]
                 .into_iter()
@@ -5216,6 +5228,7 @@ mod tests {
     fn clearing_a_seeded_value_says_the_file_never_had_it() {
         use crate::tags::probe::FileTags;
         let f = FileTags {
+            fingerprint: None,
             path: PathBuf::from("/nonexistent/(Studio) - A Title.mp4"),
             atoms: BTreeMap::new(),
             xmp: BTreeMap::new(),
@@ -5251,6 +5264,7 @@ mod tests {
     fn a_mixed_category_gets_no_profile() {
         use crate::tags::probe::FileTags;
         let mk = |cat: &str| FileTags {
+            fingerprint: None,
             path: PathBuf::from(format!("/nonexistent/{cat}.mov")),
             atoms: BTreeMap::from([("category".to_string(), Value::text(cat))]),
             xmp: BTreeMap::new(),
@@ -5323,6 +5337,7 @@ mod tests {
         use crate::tags::probe::FileTags;
         let mk = |name: &str, title: Option<&str>| FileTags {
             // Paths that cannot be probed, so nothing here touches a disk.
+            fingerprint: None,
             path: PathBuf::from(format!("/nonexistent/{name}.mov")),
             atoms: title
                 .map(|t| BTreeMap::from([("title".to_string(), Value::text(t))]))
@@ -5653,6 +5668,7 @@ mod tests {
         use crate::tags::probe::FileTags;
         let mut app = pair();
         app.files.push(FileTags {
+            fingerprint: None,
             path: PathBuf::from("/nonexistent/c.mov"),
             atoms: BTreeMap::new(),
             xmp: BTreeMap::new(),
@@ -5706,6 +5722,7 @@ mod mixed_set_tests {
     fn trio() -> App {
         use crate::tags::probe::FileTags;
         let mk = |name: &str, variant: &str| FileTags {
+            fingerprint: None,
             path: PathBuf::from(format!("/nonexistent/{name}.mov")),
             atoms: BTreeMap::from([("variant".to_string(), Value::text(variant))]),
             xmp: BTreeMap::new(),

@@ -134,7 +134,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<i32> {
                 eprintln!("tagform: {shown}: {e}");
                 match e {
                     WriteError::NoSpace { .. } => no_space = true,
-                    WriteError::Failed(_) => failed = true,
+                    WriteError::Changed | WriteError::Failed(_) => failed = true,
                 }
             }
         }
@@ -330,6 +330,7 @@ mod tests {
 
     fn file(atoms: &[(&str, &str)], xmp: &[(&str, &str)]) -> FileTags {
         FileTags {
+            fingerprint: None,
             path: PathBuf::from("/tmp/tagform-clone-test.mp4"),
             atoms: atoms
                 .iter()

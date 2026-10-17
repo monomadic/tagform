@@ -27,7 +27,7 @@ genuine fail-open. Tick a box, cite the commit.
   non-empty. Fixtures: mtime survives a native write; an XMP-only in-place
   write is verified.
 
-- [ ] **3. Fingerprint files at probe time.** The form now stays open after a
+- [x] **3. Fingerprint files at probe time.** The form now stays open after a
   write and `rename-video`, yt-dlp, `clone` and the user's shell can all touch
   a file between probe and write. A stale XMP snapshot in the two-pass path can
   overwrite newer XMP. Record `(dev, ino, size, mtime)` on `FileTags`, check
