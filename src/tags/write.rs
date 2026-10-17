@@ -294,7 +294,7 @@ pub fn to_matroska(
         }
     }
 
-    let seated = temp_beside(dest);
+    let seated = fresh_temp(dest).map_err(WriteError::Failed)?;
     let muxed = seated.with_extension("mux.mkv");
     let _muxed = TempGuard(muxed.clone());
     let _seated = TempGuard(seated.clone());
@@ -377,7 +377,7 @@ fn matroska(plan: &FilePlan, on: OnStep<'_>) -> Result<(), WriteError> {
     }
 
     let shapes = probe_streams(path);
-    let tmp = temp_beside(path);
+    let tmp = fresh_temp(path).map_err(WriteError::Failed)?;
     let _guard = TempGuard(tmp.clone());
 
     step(on, "writing tags", 0.10);
@@ -491,7 +491,7 @@ fn native_write(plan: &FilePlan, on: OnStep<'_>) -> Result<(), WriteError> {
         })?;
 
     let shapes = probe_streams(path);
-    let tmp = temp_beside(path);
+    let tmp = fresh_temp(path).map_err(WriteError::Failed)?;
     let _guard = TempGuard(tmp.clone());
 
     // Junk keys are cleared here as they are on a remux: this writer does not
@@ -560,7 +560,7 @@ fn remux(
         }
     }
 
-    let tmp = temp_beside(path);
+    let tmp = fresh_temp(path).map_err(WriteError::Failed)?;
     let _guard = TempGuard(tmp.clone());
 
     let mut args: Vec<String> = vec![
@@ -695,9 +695,43 @@ fn temp_beside(path: &Path) -> PathBuf {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let tail = format!(".tagform.{}.{ext}", std::process::id());
+    let tail = format!(".tagform.{}.{ext}", token());
     let room = NAME_MAX.saturating_sub(1 + tail.len());
     dir.join(format!(".{}{tail}", crop(&stem, room)))
+}
+
+/// A name no other process is about to pick. The PID alone was predictable
+/// and repeated across a crash-and-rerun, so a stale temp from the last run
+/// could be opened by this one and the tools then wrote into it.
+fn token() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    // FNV-1a over the three, so the name is short and carries no clock.
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in [std::process::id() as u64, nanos, n] {
+        h ^= b;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+/// A sibling temp path that does not exist. Every writer below opens it
+/// itself -- ffmpeg, the native rewrite, fastmkv's `create_new` -- so the
+/// name is checked rather than reserved, and the odds are what `token`
+/// makes them.
+fn fresh_temp(path: &Path) -> Result<PathBuf> {
+    for _ in 0..8 {
+        let tmp = temp_beside(path);
+        if !tmp.exists() {
+            return Ok(tmp);
+        }
+    }
+    bail!("could not find a free temp name beside {}", path.display())
 }
 
 /// The longest prefix of `s` that fits in `max` bytes without splitting a
@@ -719,7 +753,19 @@ fn swap(tmp: &Path, path: &Path) -> Result<()> {
     if let Some(t) = mtime(path) {
         restore_mtime(tmp, t);
     }
-    std::fs::rename(tmp, path).with_context(|| format!("replacing {}", path.display()))
+    // The rename is atomic against a crash; the bytes behind it are not
+    // until they are synced. A power cut between the two would leave the
+    // original's name on a file whose tail was never written.
+    std::fs::File::open(tmp)
+        .and_then(|f| f.sync_all())
+        .with_context(|| format!("syncing {}", tmp.display()))?;
+    std::fs::rename(tmp, path).with_context(|| format!("replacing {}", path.display()))?;
+    // Then the directory entry. Best effort: not every filesystem lets a
+    // directory be synced, and the data above is already safe.
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::File::open(dir).and_then(|d| d.sync_all());
+    }
+    Ok(())
 }
 
 /// The staged edits win over the snapshot; everything else is restored as it was.
@@ -1043,7 +1089,17 @@ mod tests {
     fn short_names_are_not_cropped() {
         let tmp = temp_beside(Path::new("/v/clip ★.mov"));
         let n = tmp.file_name().unwrap().to_str().unwrap();
-        assert_eq!(n, format!(".clip ★.tagform.{}.mov", std::process::id()));
+        assert!(
+            n.starts_with(".clip ★.tagform.") && n.ends_with(".mov"),
+            "{n}"
+        );
+    }
+
+    #[test]
+    fn two_temps_for_one_file_differ() {
+        let a = temp_beside(Path::new("/v/clip.mov"));
+        let b = temp_beside(Path::new("/v/clip.mov"));
+        assert_ne!(a, b);
     }
 
     #[test]

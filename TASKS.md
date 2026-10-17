@@ -52,7 +52,7 @@ genuine fail-open. Tick a box, cite the commit.
   and show a direct error. Product rule is settled — DESIGN §17.4 rejected
   auto-mirroring; the fields stay independent.
 
-- [ ] **6. Unpredictable temp name, fsync before rename.** `temp_beside` uses
+- [x] **6. Unpredictable temp name, fsync before rename.** `temp_beside` uses
   the PID; use a random suffix and create with `create_new`. `sync_all` the
   verified temp, then fsync the directory, before `rename`. Closes the last
   gap in invariant 3 for the native and ffmpeg paths.
