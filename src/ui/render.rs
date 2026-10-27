@@ -7,7 +7,7 @@
 //! form before you focus anything.
 
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap};
 use ratatui::Frame;
@@ -1085,11 +1085,19 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
         // Star colour belongs to stars on the file. An empty rating draws the
         // same "—" as every other empty field and must look like one, and a
         // rating about to be written is green like every other staged value.
-        let has_value = app.shown_value(row).is_some();
-        let value_fg = if row.control.is_rating() && !editing && has_value && !staged {
-            t::star()
-        } else {
-            fg
+        // Quality is the one row whose colour is its verdict: red, orange or
+        // green by the count, in the palette's own error, warn and staged
+        // tones, which are the three already held to the contrast floor.
+        let shown = app.shown_value(row);
+        let value_fg = match (&shown, row.control) {
+            (Some(_), c) if c.is_rating() && !editing && !staged => {
+                let n = match &shown {
+                    Some(Value::Text(s)) => s.trim().parse::<u8>().unwrap_or(0),
+                    _ => 0,
+                };
+                score_fg(c, n)
+            }
+            _ => fg,
         };
 
         // A fixed set is always drawn as its set, laid along the value box
@@ -1474,6 +1482,21 @@ fn tag_list(row: &Row) -> Option<(Vec<String>, bool)> {
     match row.shown()? {
         Value::List(l) if !l.is_empty() => Some((l.clone(), hash)),
         _ => None,
+    }
+}
+
+/// The colour a score draws in. Stars are always star-coloured: a rating is
+/// taste, and the row does not grade it. Quality is a verdict, and the row
+/// says which: one tick or none is red, two or three orange, four or five
+/// green.
+fn score_fg(control: Control, n: u8) -> Color {
+    match control {
+        Control::Ticks => match n {
+            0 | 1 => t::error(),
+            2 | 3 => t::warn(),
+            _ => t::staged(),
+        },
+        _ => t::star(),
     }
 }
 

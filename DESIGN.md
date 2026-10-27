@@ -948,7 +948,9 @@ entering an edit at all. Renders five glyphs always (filled + hollow), which is
 the exact form the filename grammar parses back.
 
 ⟨built⟩ Quality is a second row of the same control, drawn as ticks
-(`✓✓✓··`) so the two scores never read as one: how good the file is as a
+(`✓✓✓··`) so the two scores never read as one, and coloured by its
+verdict -- red up to one tick, orange at two or three, green at four or
+five, in the palette's error, warn and staged tones: how good the file is as a
 file, where Rating is how good the work is. Its own `quality` key and no XMP
 tag. `rename-video` carries it in the name's spec block as `q1`..`q5`, not as
 a glyph run, and the filename import reads it back from there.
