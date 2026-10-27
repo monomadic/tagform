@@ -8,7 +8,7 @@ in `AGENTS.md`.
 
 ### Added
 
-- A **Quality** row under Rating: a second five-point score, drawn as circles,
+- A **Quality** row under Rating: a second five-point score, drawn as ticks,
   for how good the file is as a file. `h`/`l` and `0`-`5` set it as they do
   a rating. It is written to a new `quality` key. `rename-video` puts it in
   the filename's spec block as `q1`..`q5`, as in `[720p 24fps h264 9min H q5]`,

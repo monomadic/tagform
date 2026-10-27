@@ -2711,7 +2711,7 @@ impl App {
         }
         let empty = match row.control {
             Control::List | Control::HashTags => Value::List(Vec::new()),
-            Control::Stars | Control::Circles => Value::Text("0".into()),
+            Control::Stars | Control::Ticks => Value::Text("0".into()),
             _ => Value::Text(String::new()),
         };
         let (key, label) = (row.key.clone(), row.label.clone());

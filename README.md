@@ -230,7 +230,7 @@ WCAG 3:1 contrast floor by a test, including the focused-row fill.
 |---|---|
 | `j` / `k`, arrows, `tab` | move between fields (`g` / `G` first / last) |
 | `h` / `l` | step a fixed set, or nudge a rating — both are edited only this way |
-| `0`–`5` | on a rating or a quality: jump straight to that many stars or circles |
+| `0`–`5` | on a rating or a quality: jump straight to that many stars or ticks |
 | `0`–`9` | on Track: start typing that number straight away, no `enter` first |
 | `enter` | edit the focused field — on an empty date, fill it with now first; a set and a rating never open |
 | `w` | write staged edits (shows a plan first) |
@@ -294,7 +294,7 @@ the order becomes Category, Variant, Date, People, Rating, Tags, Title,
 Description. Hiding is display only: those keys are still read and written
 back untouched.
 
-**Quality is a second five-point score**, under Rating, drawn as circles:
+**Quality is a second five-point score**, under Rating, drawn as ticks:
 how good the file is as a file -- the encode, the source, the artefacts --
 where Rating is how good the work is. Same keys (`h`/`l`, `0`-`5`), its own
 `quality` key, and `rename-video` carries it in the name's spec block as

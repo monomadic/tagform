@@ -20,9 +20,9 @@ pub enum Control {
     HashTags,
     Url,
     Stars,
-    /// The same 0-5 score as Stars, drawn as five circles: Quality, beside
-    /// Rating, and the glyph is what keeps the two rows from reading as one.
-    Circles,
+    /// The same 0-5 score as Stars, drawn as ticks: Quality, beside Rating,
+    /// and the glyph is what keeps the two rows from reading as one.
+    Ticks,
     Enum,
     Date,
     /// Displayed, never edited — probed or write-once data.
@@ -33,7 +33,7 @@ impl Control {
     /// A five-glyph 0-5 score. One editor and one set of keys (`h`/`l`,
     /// `0`-`5`) serve both; only the glyph differs.
     pub fn is_rating(self) -> bool {
-        matches!(self, Control::Stars | Control::Circles)
+        matches!(self, Control::Stars | Control::Ticks)
     }
 }
 
@@ -170,11 +170,11 @@ pub static FIELDS: &[FieldDef] = &[
         mdta: ["rating"], read: ["rating"], xmp: ["XMP-xmp:Rating"], ilst: None),
     // How good the file is as a file -- the encode, the source, the
     // artefacts -- as distinct from how good the work is, which is Rating.
-    // The same 0-5 control drawn with circles, so the two rows never read as
+    // The same 0-5 control drawn with ticks, so the two rows never read as
     // one. Its own key and no XMP tag: no standard has one and nothing else
     // in the library writes it. rename-video carries it in the name's spec
     // block as `q1`..`q5`, beside the facts it was judged on.
-    field!("quality", "Quality", Control::Circles,
+    field!("quality", "Quality", Control::Ticks,
         mdta: ["quality"], read: ["quality"], xmp: [], ilst: None),
     field!("description", "Description", Control::TextArea,
         mdta: ["description"], read: ["description"],

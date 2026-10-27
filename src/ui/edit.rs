@@ -85,7 +85,7 @@ impl Editor {
     pub fn new(control: Control, value: Option<&Value>, options: Vec<Opt>) -> Self {
         let text = value.map(render_value).unwrap_or_default();
         match control {
-            Control::Stars | Control::Circles => Editor::Rating {
+            Control::Stars | Control::Ticks => Editor::Rating {
                 n: parse_stars(&text),
                 control,
             },
@@ -368,15 +368,18 @@ pub fn stars_glyphs(n: u8) -> String {
     (1..=5).map(|i| if i <= n { '★' } else { '☆' }).collect()
 }
 
-/// Quality's glyphs: the same five slots, filled with circles.
-pub fn circles_glyphs(n: u8) -> String {
-    (1..=5).map(|i| if i <= n { '●' } else { '○' }).collect()
+/// Quality's glyphs: the same five slots, a tick in each one earned and a
+/// dot in each one not. Not circles -- five of those read as a password
+/// field -- and not crosses for the empty slots, which would say "bad"
+/// where the row only means "not that good".
+pub fn ticks_glyphs(n: u8) -> String {
+    (1..=5).map(|i| if i <= n { '✓' } else { '·' }).collect()
 }
 
 /// The five glyphs a 0-5 score draws, by the control that holds it.
 pub fn rating_glyphs(control: Control, n: u8) -> String {
     match control {
-        Control::Circles => circles_glyphs(n),
+        Control::Ticks => ticks_glyphs(n),
         _ => stars_glyphs(n),
     }
 }
@@ -384,7 +387,7 @@ pub fn rating_glyphs(control: Control, n: u8) -> String {
 fn parse_stars(s: &str) -> u8 {
     s.trim()
         .parse::<u8>()
-        .unwrap_or_else(|_| s.chars().filter(|c| *c == '★' || *c == '●').count() as u8)
+        .unwrap_or_else(|_| s.chars().filter(|c| *c == '★' || *c == '✓').count() as u8)
         .min(5)
 }
 
@@ -562,15 +565,15 @@ mod tests {
     /// Quality is the same control in different clothes: the keys are the
     /// stars' keys, and only the glyphs change.
     #[test]
-    fn circles_take_the_stars_keys() {
-        let mut e = Editor::new(Control::Circles, Some(&Value::Text("2".into())), vec![]);
-        assert_eq!(e.display().0, "●●○○○");
+    fn ticks_take_the_stars_keys() {
+        let mut e = Editor::new(Control::Ticks, Some(&Value::Text("2".into())), vec![]);
+        assert_eq!(e.display().0, "✓✓···");
         e.handle(key('4'));
         assert_eq!(e.value(), Value::Text("4".into()));
         e.handle(key('h'));
         assert_eq!(e.value(), Value::Text("3".into()));
         assert_eq!(
-            Editor::new(Control::Circles, Some(&Value::Text("●●●○○".into())), vec![]).value(),
+            Editor::new(Control::Ticks, Some(&Value::Text("✓✓✓··".into())), vec![]).value(),
             Value::Text("3".into())
         );
     }
@@ -735,8 +738,8 @@ mod tests {
             (Control::Text, Some(Value::Text("hi".into())), vec![]),
             (Control::Stars, None, vec![]),
             (Control::Stars, Some(Value::Text("3".into())), vec![]),
-            (Control::Circles, None, vec![]),
-            (Control::Circles, Some(Value::Text("3".into())), vec![]),
+            (Control::Ticks, None, vec![]),
+            (Control::Ticks, Some(Value::Text("3".into())), vec![]),
             (Control::List, None, vec![]),
             (
                 Control::List,
