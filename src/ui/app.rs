@@ -2049,7 +2049,7 @@ impl App {
             Some(row) if row.control == Control::Enum => {
                 self.status = format!("{} · h/l or ←→ to choose", row.label);
             }
-            Some(row) if row.control == Control::Stars => {
+            Some(row) if row.control.is_rating() => {
                 self.status = format!("{} · h/l or ←→ to nudge, 0-5 to set", row.label);
             }
             // Place is not typed into so much as asked: ⏎ on it is `i l`, the
@@ -2124,7 +2124,7 @@ impl App {
         };
         let key = row.key.clone();
 
-        if row.control == Control::Stars {
+        if row.control.is_rating() {
             let now: u8 = match self.shown_value(row) {
                 Some(Value::Text(s)) => s.trim().parse().unwrap_or(0),
                 _ => 0,
@@ -2204,7 +2204,7 @@ impl App {
         let Some(row) = self.rows.get(self.focus) else {
             return;
         };
-        if row.control == Control::Stars {
+        if row.control.is_rating() {
             if let Some(n) = c.to_digit(6) {
                 self.set_stars(n as u8);
             }
@@ -2225,7 +2225,7 @@ impl App {
         let Some(row) = self.rows.get(self.focus) else {
             return;
         };
-        if row.control != Control::Stars {
+        if !row.control.is_rating() {
             return;
         }
         let key = row.key.clone();
@@ -2711,7 +2711,7 @@ impl App {
         }
         let empty = match row.control {
             Control::List | Control::HashTags => Value::List(Vec::new()),
-            Control::Stars => Value::Text("0".into()),
+            Control::Stars | Control::Circles => Value::Text("0".into()),
             _ => Value::Text(String::new()),
         };
         let (key, label) = (row.key.clone(), row.label.clone());
@@ -2930,6 +2930,12 @@ fn build_rows(
                 return None;
             }
             if adult && !edited && ADULT_HIDDEN.contains(&def.id) {
+                return None;
+            }
+            // Kind is the iTunes media kind, and a Category that was never
+            // iTunes media has no honest answer to it. Same display-only
+            // rule, same escape for an edit.
+            if def.id == "kind" && !edited && schema::hides_kind(category.as_deref()) {
                 return None;
             }
             // Offered on an adult file; otherwise only once it holds something.
@@ -4338,7 +4344,7 @@ mod tests {
         for hidden in FOOTAGE_HIDDEN {
             assert!(!k.contains(hidden), "{hidden} should be hidden: {k:?}");
         }
-        let head: Vec<&str> = k.iter().take(10).copied().collect();
+        let head: Vec<&str> = k.iter().take(11).copied().collect();
         assert_eq!(
             head,
             [
@@ -4348,6 +4354,7 @@ mod tests {
                 "date_added",
                 "actors",
                 "rating",
+                "quality",
                 "tags",
                 "location_place",
                 "title",
@@ -4355,8 +4362,8 @@ mod tests {
             ]
         );
         // The fields the profile does not name keep their schema order behind
-        // the ones it does.
-        assert_eq!(k[10..], ["genre", "kind", "origin"]);
+        // the ones it does -- minus Kind, which a camera clip has no use for.
+        assert_eq!(k[11..], ["genre", "origin"]);
         assert_eq!(row(&app, "actors").label, "People");
     }
 
@@ -4370,8 +4377,35 @@ mod tests {
             for hidden in FOOTAGE_HIDDEN {
                 assert!(k.contains(hidden), "{hidden} should be shown: {k:?}");
             }
+            assert!(k.contains(&"kind"), "{k:?}");
             assert_eq!(row(&app, "actors").label, "Actors");
         }
+    }
+
+    /// Kind is the iTunes media kind. The Categories that are not iTunes
+    /// media lose the row, with or without a profile of their own; an edit
+    /// to it brings the row back so the edit is never written unseen.
+    #[test]
+    fn kind_is_hidden_where_the_file_was_never_itunes_media() {
+        for cat in schema::KIND_HIDDEN_FOR {
+            let app = one(&[("category", cat)]);
+            assert!(!keys(&app).contains(&"kind"), "{cat}: {:?}", keys(&app));
+        }
+        for cat in ["Music Video", "Karaoke"] {
+            let app = one(&[("category", cat)]);
+            assert!(keys(&app).contains(&"kind"), "{cat}: {:?}", keys(&app));
+        }
+        let mut app = one(&[("category", "Meme"), ("media_type", "9")]);
+        assert!(
+            !keys(&app).contains(&"kind"),
+            "a value alone does not show it"
+        );
+        app.stage("kind".into(), Value::Text("10".into()));
+        assert!(
+            keys(&app).contains(&"kind"),
+            "an edit does: {:?}",
+            keys(&app)
+        );
     }
 
     /// Adult is the second profile: no Artist row, an Orientation set under
@@ -4384,7 +4418,7 @@ mod tests {
         assert!(!k.contains(&"artist"), "{k:?}");
         assert!(!k.contains(&"track"), "not a clip: {k:?}");
         assert_eq!(
-            k[..15],
+            k,
             [
                 "category",
                 "variant",
@@ -4393,6 +4427,7 @@ mod tests {
                 "channel",
                 "actors",
                 "rating",
+                "quality",
                 "url",
                 "tags",
                 "date",
@@ -4403,7 +4438,10 @@ mod tests {
                 "origin"
             ]
         );
-        assert_eq!(k[15..], ["kind"]);
+        assert!(
+            !k.contains(&"kind"),
+            "an adult file is not iTunes media: {k:?}"
+        );
         let opts: Vec<String> = app
             .options_for(row(&app, "orientation"))
             .into_iter()

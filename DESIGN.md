@@ -947,6 +947,12 @@ The control from `media-set-rating`, made reusable:
 entering an edit at all. Renders five glyphs always (filled + hollow), which is
 the exact form the filename grammar parses back.
 
+⟨built⟩ Quality is a second row of the same control, drawn as five circles
+(`●●●○○`) so the two scores never read as one: how good the file is as a
+file, where Rating is how good the work is. Its own `quality` key and no XMP
+tag. `rename-video` carries it in the name's spec block as `q1`..`q5`, not as
+a glyph run, and the filename import reads it back from there.
+
 **Built, differs: there is no open state at all**, exactly as in §5.7.
 ⟨built, differs⟩ A rating is a six-member fixed set and is now treated as one:
 `h`/`l` nudge it, `0`–`5` name it, `⏎` says so rather than opening anything,

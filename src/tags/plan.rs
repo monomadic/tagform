@@ -20,6 +20,7 @@ pub const EXIFTOOL_KEY_NAMES: &[(&str, &str)] = &[
     ("actors", "Actors"),
     ("artist", "Artist"),
     ("rating", "RatingStars"),
+    ("quality", "QualityK"),
     ("description", "Description"),
     ("webpage_url", "WebpageUrl"),
     ("source_url", "SourceUrl"),

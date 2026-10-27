@@ -22,7 +22,7 @@ use crate::tags::plan::FilePlan;
 use crate::ui::app::{
     App, FileEdit, ImportSource, Locate, Mode, OpenTarget, QueuePlace, QueueRow, Row, WriteResults,
 };
-use crate::ui::edit::{stars_glyphs, Opt, Validation};
+use crate::ui::edit::{rating_glyphs, Opt, Validation};
 use crate::ui::keymap::{key_width, KEYMAP};
 use crate::ui::theme as t;
 
@@ -638,7 +638,10 @@ fn draw_import(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(t::staged()),
             ));
             let shown = match value {
-                Value::Text(s) if label == "Rating" => stars_glyphs(s.parse().unwrap_or(0)),
+                Value::Text(s) if rating_control(label).is_some() => rating_glyphs(
+                    rating_control(label).unwrap_or(Control::Stars),
+                    s.parse().unwrap_or(0),
+                ),
                 Value::Text(s) => s.clone(),
                 Value::List(l) => l.join(", "),
             };
@@ -1083,7 +1086,7 @@ fn draw_fields(f: &mut Frame, area: Rect, app: &App) {
         // same "—" as every other empty field and must look like one, and a
         // rating about to be written is green like every other staged value.
         let has_value = app.shown_value(row).is_some();
-        let value_fg = if row.control == Control::Stars && !editing && has_value && !staged {
+        let value_fg = if row.control.is_rating() && !editing && has_value && !staged {
             t::star()
         } else {
             fg
@@ -1474,11 +1477,23 @@ fn tag_list(row: &Row) -> Option<(Vec<String>, bool)> {
     }
 }
 
+/// The rating control behind a field label in the import preview, where the
+/// preview carries labels and values but no rows: a number for Rating or
+/// Quality is drawn as its glyphs there too.
+fn rating_control(label: &str) -> Option<Control> {
+    crate::model::schema::FIELDS
+        .iter()
+        .find(|d| d.label == label)
+        .map(|d| d.control)
+        .filter(|c| c.is_rating())
+}
+
 /// An unfocused row shows the staged edit if there is one, else what is on disk.
 fn display_row(app: &App, row: &Row) -> Option<String> {
     let v = app.shown_value(row)?;
     Some(match (&v, row.control) {
-        (_, Control::Stars) => stars_glyphs(
+        (_, c) if c.is_rating() => rating_glyphs(
+            c,
             match &v {
                 Value::Text(s) => s.trim().parse::<u8>().unwrap_or(0),
                 _ => 0,

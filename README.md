@@ -230,7 +230,7 @@ WCAG 3:1 contrast floor by a test, including the focused-row fill.
 |---|---|
 | `j` / `k`, arrows, `tab` | move between fields (`g` / `G` first / last) |
 | `h` / `l` | step a fixed set, or nudge a rating — both are edited only this way |
-| `0`–`5` | on a rating: jump straight to that many stars |
+| `0`–`5` | on a rating or a quality: jump straight to that many stars or circles |
 | `0`–`9` | on Track: start typing that number straight away, no `enter` first |
 | `enter` | edit the focused field — on an empty date, fill it with now first; a set and a rating never open |
 | `w` | write staged edits (shows a plan first) |
@@ -273,7 +273,7 @@ while a field is open, so Select mode's single letters are untouched.
 
 ## The fields
 
-Twenty-one fields in one flat list. Place is always shown; the five other
+Twenty-two fields in one flat list. Place is always shown; the five other
 footage fields (Location, State, Country, Coordinates, Original name) appear
 only when a file in the selection carries them, or once an edit or a place
 lookup fills one. Anything on disk that no field claims gets a row of its own at
@@ -293,6 +293,17 @@ canonical set. That asymmetry is what makes `tagform` idempotent.
 the order becomes Category, Variant, Date, People, Rating, Tags, Title,
 Description. Hiding is display only: those keys are still read and written
 back untouched.
+
+**Quality is a second five-point score**, under Rating, drawn as circles:
+how good the file is as a file -- the encode, the source, the artefacts --
+where Rating is how good the work is. Same keys (`h`/`l`, `0`-`5`), its own
+`quality` key, and `rename-video` carries it in the name's spec block as
+`q1`..`q5` (`[720p 24fps h264 9min H q5]`), where `i f` reads it back.
+
+**Kind is hidden under Adult, Footage, Tutorial, Meme, Texture and Live
+Visual.** It is the iTunes media kind, and a file in one of those Categories
+has no honest answer to it. Display only, like the footage hiding above; an
+edit to it brings the row back.
 
 **Category and Variant are not hardcoded.** They are parsed out of
 `~/.config/yt-dlp/config`'s `--alias` lines, so adding an alias there adds a

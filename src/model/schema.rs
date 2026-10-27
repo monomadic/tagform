@@ -20,10 +20,21 @@ pub enum Control {
     HashTags,
     Url,
     Stars,
+    /// The same 0-5 score as Stars, drawn as five circles: Quality, beside
+    /// Rating, and the glyph is what keeps the two rows from reading as one.
+    Circles,
     Enum,
     Date,
     /// Displayed, never edited — probed or write-once data.
     ReadOnly,
+}
+
+impl Control {
+    /// A five-glyph 0-5 score. One editor and one set of keys (`h`/`l`,
+    /// `0`-`5`) serve both; only the glyph differs.
+    pub fn is_rating(self) -> bool {
+        matches!(self, Control::Stars | Control::Circles)
+    }
 }
 
 /// Serialised by `--print-schema`, so the schema is emitted from the one
@@ -157,6 +168,14 @@ pub static FIELDS: &[FieldDef] = &[
     // standard 0-5 field and is authoritative wherever it is present.
     field!("rating", "Rating", Control::Stars,
         mdta: ["rating"], read: ["rating"], xmp: ["XMP-xmp:Rating"], ilst: None),
+    // How good the file is as a file -- the encode, the source, the
+    // artefacts -- as distinct from how good the work is, which is Rating.
+    // The same 0-5 control drawn with circles, so the two rows never read as
+    // one. Its own key and no XMP tag: no standard has one and nothing else
+    // in the library writes it. rename-video carries it in the name's spec
+    // block as `q1`..`q5`, beside the facts it was judged on.
+    field!("quality", "Quality", Control::Circles,
+        mdta: ["quality"], read: ["quality"], xmp: [], ilst: None),
     field!("description", "Description", Control::TextArea,
         mdta: ["description"], read: ["description"],
         xmp: ["XMP-dc:Description"], ilst: Some("desc")),
@@ -342,6 +361,7 @@ pub static FOOTAGE_ORDER: &[&str] = &[
     "date_added",
     "actors",
     "rating",
+    "quality",
     "tags",
     "location_place",
     "title",
@@ -372,6 +392,24 @@ pub const CLIP: &str = "Clip";
 /// Same display-only rule as `FOOTAGE_HIDDEN`.
 pub static ADULT_HIDDEN: &[&str] = &["artist", "location_place"];
 
+/// Categories whose files were never iTunes media. Kind is the `stik` media
+/// kind -- Movie, TV Show, Music Video -- and a camera clip, a meme or a
+/// texture has no honest answer to it, so the row goes. Display only, like
+/// `FOOTAGE_HIDDEN`: the key is still read, carried and written back.
+pub static KIND_HIDDEN_FOR: &[&str] = &[
+    "Adult",
+    "Footage",
+    "Tutorial",
+    "Meme",
+    "Texture",
+    "Live Visual",
+];
+
+/// Whether the Kind row is hidden under this Category.
+pub fn hides_kind(category: Option<&str>) -> bool {
+    category.is_some_and(|c| KIND_HIDDEN_FOR.iter().any(|k| k.eq_ignore_ascii_case(c)))
+}
+
 /// The order an adult file is filled in. Orientation sits with the other two
 /// closed sets, because it is one; Track sits with Title because it
 /// qualifies it -- "this work, cut N"; Date Added sits under Date, the two
@@ -386,6 +424,7 @@ pub static ADULT_ORDER: &[&str] = &[
     "channel",
     "actors",
     "rating",
+    "quality",
     "url",
     "tags",
     "date",

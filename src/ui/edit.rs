@@ -67,9 +67,16 @@ pub struct Chips {
 }
 
 pub enum Editor {
-    Line { input: Input, kind: LineKind },
+    Line {
+        input: Input,
+        kind: LineKind,
+    },
     Chips(Chips),
-    Stars(u8),
+    /// A 0-5 score; the control says which glyph draws it.
+    Rating {
+        n: u8,
+        control: Control,
+    },
     Enum(EnumEdit),
     ReadOnly(String),
 }
@@ -78,7 +85,10 @@ impl Editor {
     pub fn new(control: Control, value: Option<&Value>, options: Vec<Opt>) -> Self {
         let text = value.map(render_value).unwrap_or_default();
         match control {
-            Control::Stars => Editor::Stars(parse_stars(&text)),
+            Control::Stars | Control::Circles => Editor::Rating {
+                n: parse_stars(&text),
+                control,
+            },
             Control::Enum => {
                 let mut options = options;
                 // Show the label for a stored code, so an existing `9` reads
@@ -139,7 +149,7 @@ impl Editor {
             Editor::ReadOnly(_) => Reaction::Pass,
             Editor::Line { input, .. } => line_key(input, key),
             Editor::Chips(c) => line_key(&mut c.input, key),
-            Editor::Stars(n) => stars_key(n, key),
+            Editor::Rating { n, .. } => stars_key(n, key),
             // A set is never open, so every key belongs to the app.
             Editor::Enum(_) => Reaction::Pass,
         }
@@ -163,7 +173,7 @@ impl Editor {
             } else {
                 split_list(c.input.value())
             }),
-            Editor::Stars(n) => Value::Text(n.to_string()),
+            Editor::Rating { n, .. } => Value::Text(n.to_string()),
             Editor::Enum(e) => {
                 let shown = e.input.value().trim();
                 let code = e
@@ -183,7 +193,7 @@ impl Editor {
             Editor::ReadOnly(s) => (s.clone(), None),
             Editor::Line { input, .. } => (input.value().to_string(), Some(input.visual_cursor())),
             Editor::Chips(c) => (c.input.value().to_string(), Some(c.input.visual_cursor())),
-            Editor::Stars(n) => (stars_glyphs(*n), None),
+            Editor::Rating { n, control } => (rating_glyphs(*control, *n), None),
             // A set has nothing to type into, so it shows no caret.
             Editor::Enum(e) => (e.input.value().to_string(), None),
         }
@@ -358,10 +368,23 @@ pub fn stars_glyphs(n: u8) -> String {
     (1..=5).map(|i| if i <= n { '★' } else { '☆' }).collect()
 }
 
+/// Quality's glyphs: the same five slots, filled with circles.
+pub fn circles_glyphs(n: u8) -> String {
+    (1..=5).map(|i| if i <= n { '●' } else { '○' }).collect()
+}
+
+/// The five glyphs a 0-5 score draws, by the control that holds it.
+pub fn rating_glyphs(control: Control, n: u8) -> String {
+    match control {
+        Control::Circles => circles_glyphs(n),
+        _ => stars_glyphs(n),
+    }
+}
+
 fn parse_stars(s: &str) -> u8 {
     s.trim()
         .parse::<u8>()
-        .unwrap_or_else(|_| s.chars().filter(|c| *c == '★').count() as u8)
+        .unwrap_or_else(|_| s.chars().filter(|c| *c == '★' || *c == '●').count() as u8)
         .min(5)
 }
 
@@ -536,6 +559,22 @@ mod tests {
         assert_eq!(e.value(), Value::Text("5".into()));
     }
 
+    /// Quality is the same control in different clothes: the keys are the
+    /// stars' keys, and only the glyphs change.
+    #[test]
+    fn circles_take_the_stars_keys() {
+        let mut e = Editor::new(Control::Circles, Some(&Value::Text("2".into())), vec![]);
+        assert_eq!(e.display().0, "●●○○○");
+        e.handle(key('4'));
+        assert_eq!(e.value(), Value::Text("4".into()));
+        e.handle(key('h'));
+        assert_eq!(e.value(), Value::Text("3".into()));
+        assert_eq!(
+            Editor::new(Control::Circles, Some(&Value::Text("●●●○○".into())), vec![]).value(),
+            Value::Text("3".into())
+        );
+    }
+
     #[test]
     fn hashtags_round_trip_without_storing_the_hash() {
         let mut e = Editor::new(
@@ -696,6 +735,8 @@ mod tests {
             (Control::Text, Some(Value::Text("hi".into())), vec![]),
             (Control::Stars, None, vec![]),
             (Control::Stars, Some(Value::Text("3".into())), vec![]),
+            (Control::Circles, None, vec![]),
+            (Control::Circles, Some(Value::Text("3".into())), vec![]),
             (Control::List, None, vec![]),
             (
                 Control::List,

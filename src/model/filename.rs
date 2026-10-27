@@ -18,7 +18,8 @@
 //!
 //! The parts are pulled off in the order that makes each one unambiguous: a
 //! `[...]` block is the probed spec `rename-footage` appends and is never a
-//! field, so it goes first; stars, `#tags` and the `@G`/`@L`/`@T` orientation
+//! field -- bar the one `q1`..`q5` token `rename-video` puts there, which is
+//! the Quality score and is read on the way past -- so it goes first; stars, `#tags` and the `@G`/`@L`/`@T` orientation
 //! mark are single tokens anywhere in the stem; a leading timestamp is a fixed shape; and only then is what remains
 //! split on the first ` - ` into the people (with their `(Channel)`) and the
 //! title. A name with no ` - ` is all title, because guessing that a plain
@@ -55,7 +56,7 @@ pub fn parse_path(path: &Path) -> Vec<(&'static str, Value)> {
 
 /// The field values a stem yields. The extension is the caller's to drop.
 pub fn parse(stem: &str) -> Vec<(&'static str, Value)> {
-    let mut rest = strip_meta(stem);
+    let (mut rest, quality) = strip_meta(stem);
 
     // Stars: the count of ★ in the run. An outline-only run (☆☆☆☆☆) is a
     // rating of zero, which stages nothing on an unrated file and is left to
@@ -140,6 +141,9 @@ pub fn parse(stem: &str) -> Vec<(&'static str, Value)> {
     if let Some(n) = rating {
         out.push(("rating", Value::Text(n.to_string())));
     }
+    if let Some(n) = quality {
+        out.push(("quality", Value::Text(n.to_string())));
+    }
     if !tags.is_empty() {
         out.push(("tags", Value::List(tags)));
     }
@@ -150,22 +154,40 @@ pub fn parse(stem: &str) -> Vec<(&'static str, Value)> {
 }
 
 /// Drop every `[...]` block. It is the spec block (`[1080p 30fps h264]`) in a
-/// footage name and free-form notes elsewhere; neither is a field. An
-/// unclosed `[` is kept as text rather than swallowing the rest of the name.
-fn strip_meta(s: &str) -> String {
+/// footage name and free-form notes elsewhere; neither is a field. The one
+/// exception is a `q1`..`q5` token inside a block: that is the Quality
+/// score `rename-video` writes beside the facts it was judged on, and it is
+/// returned alongside. Exactly that shape -- `q0` and `q10` are not scores,
+/// and a `q5` outside a block is a word in a title. An unclosed `[` is kept
+/// as text rather than swallowing the rest of the name.
+fn strip_meta(s: &str) -> (String, Option<u8>) {
     let mut out = String::with_capacity(s.len());
+    let mut quality = None;
     let mut rest = s;
     while let Some(open) = rest.find('[') {
         match rest[open..].find(']') {
             Some(close) => {
                 out.push_str(&rest[..open]);
+                let block = &rest[open + 1..open + close];
+                quality = quality.or_else(|| block.split_whitespace().find_map(quality_token));
                 rest = &rest[open + close + 1..];
             }
             None => break,
         }
     }
     out.push_str(rest);
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
+    (
+        out.split_whitespace().collect::<Vec<_>>().join(" "),
+        quality,
+    )
+}
+
+/// `q1`..`q5`, and nothing else, as a score.
+fn quality_token(tok: &str) -> Option<u8> {
+    match tok.as_bytes() {
+        [b'q', d @ b'1'..=b'5'] => Some(d - b'0'),
+        _ => None,
+    }
 }
 
 /// `YYYY-MM-DD`, optionally followed by `--HH-MM-SS` (rename-footage) or
@@ -445,6 +467,25 @@ mod tests {
                 "{stem}"
             );
         }
+    }
+
+    /// Quality lives in the spec block, as `qN`, and only there: the block is
+    /// still dropped, and the same token in the title is a word.
+    #[test]
+    fn quality_is_read_from_the_meta_block() {
+        let out = parse("Ann (Ch) - T #a ★★★☆☆ [720p 24fps h264 9min H q5]");
+        assert_eq!(text(&out, "quality").as_deref(), Some("5"));
+        assert_eq!(text(&out, "rating").as_deref(), Some("3"));
+        assert_eq!(text(&out, "title").as_deref(), Some("T"));
+        assert!(!out.iter().any(|(_, v)| format!("{v:?}").contains("720p")));
+        assert_eq!(text(&parse("T [q1]"), "quality").as_deref(), Some("1"));
+        for stem in ["T q5", "T [q0]", "T [q6]", "T [q10]", "T [Q5]", "T [1080p]"] {
+            assert!(get(&parse(stem), "quality").is_none(), "{stem}");
+        }
+        assert_eq!(
+            text(&parse("The q5 Report [x]"), "title").as_deref(),
+            Some("The q5 Report")
+        );
     }
 
     /// Only ★ counts; ☆ is the empty slot and is discarded, and a run of

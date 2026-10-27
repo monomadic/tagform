@@ -6,6 +6,20 @@ in `AGENTS.md`.
 
 ## [Unreleased]
 
+### Added
+
+- A **Quality** row under Rating: a second five-point score, drawn as circles,
+  for how good the file is as a file. `h`/`l` and `0`-`5` set it as they do
+  a rating. It is written to a new `quality` key. `rename-video` puts it in
+  the filename's spec block as `q1`..`q5`, as in `[720p 24fps h264 9min H q5]`,
+  and `i f` reads it back from there.
+
+### Changed
+
+- The Kind row is hidden on files whose Category is Adult, Footage, Tutorial,
+  Meme, Texture or Live Visual. The key is still read and written back; an
+  edit to it shows the row again.
+
 ### Fixed
 
 - Staging Actors and Artist with different values is refused before the
